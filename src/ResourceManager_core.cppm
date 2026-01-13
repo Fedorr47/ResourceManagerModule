@@ -12,8 +12,9 @@ module;
 #include <utility>
 #include <stdexcept>
 #include <functional>
+#include <mutex>
 
-export module resource_manager:core;
+export module core:resource_manager_core;
 
 export enum class TextureFormat : uint8_t
 {
@@ -164,25 +165,33 @@ public:
 	{
 		Id key{ id };
 
-		if (auto aliveResource = cache_.find(key); aliveResource != cache_.end())
+		// Fast path: return an alive cached resource.
 		{
-			if (auto alive = aliveResource->second.lock())
+			std::scoped_lock lock(mutex_);
+			if (auto it = cache_.find(key); it != cache_.end())
 			{
-				return alive;
+				if (auto alive = it->second.lock())
+				{
+					return alive;
+				}
+				cache_.erase(it);
 			}
-
-			cache_.erase(aliveResource);
 		}
 
+		// Slow path: load outside the lock.
 		Handle resource = ResourceTraits<ResourceType>::Load(key, std::forward<Args>(args)...);
-		cache_[std::move(key)] = resource;
+
+		{
+			std::scoped_lock lock(mutex_);
+			cache_[std::move(key)] = resource;
+		}
 		return resource;
 	}
 
 	Handle Find(const Id& id) const
 	{
-		Id key{ id };
-		if (auto it = cache_.find(key); it != cache_.end())
+		std::scoped_lock lock(mutex_);
+		if (auto it = cache_.find(id); it != cache_.end())
 		{
 			return it->second.lock();
 		}
@@ -191,6 +200,7 @@ public:
 
 	void UnloadUnused()
 	{
+		std::scoped_lock lock(mutex_);
 		for (auto it = cache_.begin(); it != cache_.end(); )
 		{
 			if (it->second.expired())
@@ -206,10 +216,12 @@ public:
 
 	void Clear()
 	{
+		std::scoped_lock lock(mutex_);
 		cache_.clear();
 	}
 
 private:
+	mutable std::mutex mutex_{};
 	std::unordered_map<Id, WeakHandle> cache_;
 };
 
@@ -256,7 +268,44 @@ public:
 	template <typename T>
 	std::shared_ptr<T> Get(std::string_view id)
 	{
-		return storage<T>().Find(Id{id});
+		return storage<T>().Find(Id{ id });
+	}
+
+	// Optional helpers for storages that expose extended APIs.
+	// These are intentionally template-based to avoid coupling the manager
+	// to any particular resource type.
+	template <typename T>
+	ResourceState GetState(std::string_view id) const
+	{
+		const auto& stg = storage<T>();
+		if constexpr (requires { stg.GetState(id); })
+		{
+			return stg.GetState(id);
+		}
+		return ResourceState::Unknown;
+	}
+
+	template <typename T>
+	std::string_view GetError(std::string_view id) const
+	{
+		static constexpr std::string_view kEmpty{};
+		const auto& stg = storage<T>();
+		if constexpr (requires { stg.GetError(id); })
+		{
+			return stg.GetError(id);
+		}
+		return kEmpty;
+	}
+
+	template <typename T, typename IO, typename... Args>
+	bool ProcessUploads(IO& io, Args&&... args)
+	{
+		auto& stg = storage<T>();
+		if constexpr (requires { stg.ProcessUploads(io, std::forward<Args>(args)...); })
+		{
+			return stg.ProcessUploads(io, std::forward<Args>(args)...);
+		}
+		return false;
 	}
 
 	template <typename T>

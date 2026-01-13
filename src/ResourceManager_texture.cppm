@@ -1,15 +1,20 @@
 module;
 
 #include <deque>
+#include <cstdint>
+#include <utility>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <optional>
 #include <unordered_map>
 #include <mutex>
+#include <concepts>
+#include <type_traits>
 
-export module resource_manager:texture;
+export module core:resource_manager_texture;
 
-import :core;
+import :resource_manager_core;
 
 constexpr int SyncLoadNumberPerCall = 64;
 
@@ -21,8 +26,15 @@ export struct TextureEntry
 
 	Handle textureHandle;
 	ResourceState state{ ResourceState::Unloaded };
+	std::uint64_t generation{ 0 };
 	std::optional<TextureCPUData> pendingCpu{};
 	std::string error{};
+};
+
+struct TextureUploadTicket
+{
+	std::string id;
+	std::uint64_t generation{};
 };
 
 export template <>
@@ -44,23 +56,41 @@ public:
 		requires std::same_as<std::remove_cvref_t<PropertiesType>, typename Resource::Properties>
 	Handle LoadAsync(std::string_view id, TextureIO& io, PropertiesType&& properties)
 	{
-		Id stableKey = Id{ id }
+		Id stableKey = Id{ id };
 		Handle handle{};
+		std::uint64_t generation{};
 
 		{
 			std::scoped_lock lock(mutex_);
-			if (auto it = entries_.find(key); it != entries_.end())
+			if (auto it = entries_.find(stableKey); it != entries_.end())
 			{
-				return it->second.textureHandle;
+				// If the resource exists, return it. If it previously failed, restart loading.
+				TextureEntry& existing = it->second;
+				handle = existing.textureHandle;
+				if (existing.state != ResourceState::Failed)
+				{
+					return handle;
+				}
+
+				// Restart failed load.
+				existing.state = ResourceState::Loading;
+				existing.error.clear();
+				existing.pendingCpu.reset();
+				++existing.generation;
+				generation = existing.generation;
+				handle->SetProperties(std::forward<PropertiesType>(properties));
 			}
+			else
+			{
+				TextureEntry entry{};
+				entry.textureHandle = std::make_shared<Resource>(std::forward<PropertiesType>(properties));
+				entry.state = ResourceState::Loading;
+				entry.generation = 1;
 
-			TextureEntry entry{};
-			entry.textureHandle = std::make_shared<Resource>(std::forward<PropertiesType>(properties));
-			entry.state = ResourceState::Loading;
-
-			handle = entry.textureHandle;
-			Id mapKey = stableKey;
-			entries_.emplace(std::move(mapKey), std::move(entry));
+				handle = entry.textureHandle;
+				generation = entry.generation;
+				entries_.emplace(stableKey, std::move(entry));
+			}
 		}
 
 		TextureProperties propertiesCopy = handle->GetProperties();
@@ -68,9 +98,14 @@ public:
 
 		TextureIO ioCopy = io;
 
-		io.jobs.Enqueue([this, key = std::move(stableKey), propertiesCopy = std::move(propertiesCopy), path = std::move(path), ioCopy]() mutable
+		ioCopy.jobs.Enqueue([this,
+			key = stableKey,
+			generation,
+			propertiesCopy = std::move(propertiesCopy),
+			path = std::move(path),
+			ioCopy]() mutable
 			{
-				auto cpuOpt = io.decoder.Decode(propertiesCopy, path);
+				auto cpuOpt = ioCopy.decoder.Decode(propertiesCopy, path);
 
 				std::scoped_lock lock(mutex_);
 
@@ -81,6 +116,10 @@ public:
 				}
 
 				TextureEntry& entry = it->second;
+				if (entry.generation != generation)
+				{
+					return;
+				}
 
 				if (entry.state != ResourceState::Loading)
 				{
@@ -96,9 +135,9 @@ public:
 				}
 
 				entry.pendingCpu = std::move(*cpuOpt);
-				uploadQueue_.push_back(key);
+				uploadQueue_.push_back(TextureUploadTicket{ key, generation });
 			});
-		
+
 		return handle;
 	}
 
@@ -231,10 +270,11 @@ public:
 
 		while (uploaded < maxPerCall)
 		{
-			Id id{};
+			TextureUploadTicket ticket{};
 			TextureProperties properties{};
 			Handle handle{};
 			TextureCPUData cpuData{};
+			std::uint64_t generation{};
 
 			{
 				std::scoped_lock lock(mutex_);
@@ -244,16 +284,21 @@ public:
 					break;
 				}
 
-				id = std::move(uploadQueue_.front());
+				ticket = std::move(uploadQueue_.front());
 				uploadQueue_.pop_front();
 
-				auto it = entries_.find(id);
+				auto it = entries_.find(ticket.id);
 				if (it == entries_.end())
 				{
 					continue;
 				}
 
 				TextureEntry& entry = it->second;
+				generation = ticket.generation;
+				if (entry.generation != generation)
+				{
+					continue;
+				}
 
 				if (entry.state != ResourceState::Loading || !entry.pendingCpu.has_value())
 				{
@@ -269,46 +314,56 @@ public:
 
 			auto cpuPtr = std::make_shared<TextureCPUData>(std::move(cpuData));
 			TextureIO ioCopy = io;
-			Id idCopy = id;
+			std::string idCopy = ticket.id;
 			auto props = std::move(properties);
+			const std::uint64_t genCopy = generation;
 
-			ioCopy.render.Enqueue([this, ioCopy, idCopy, cpuPtr, props, handle]()
+			ioCopy.render.Enqueue([this, ioCopy, idCopy = std::move(idCopy), genCopy, cpuPtr, props = std::move(props), handle]() mutable
 				{
 					auto gpuOpt = ioCopy.uploader.CreateAndUpload(*cpuPtr, props);
+					GPUTexture toDestroy{};
+					bool shouldDestroy = false;
 
-					std::scoped_lock lock(mutex_);
-
-					auto it = entries_.find(idCopy);
-					if (it == entries_.end())
 					{
-						if (gpuOpt && gpuOpt->id != 0)
+						std::scoped_lock lock(mutex_);
+
+						auto it = entries_.find(idCopy);
+						if (it == entries_.end())
 						{
-							ioCopy.uploader.Destroy(*gpuOpt);
+							shouldDestroy = (gpuOpt && gpuOpt->id != 0);
+							if (shouldDestroy)
+							{
+								toDestroy = *gpuOpt;
+							}
 						}
-						return;
-					}
-
-					TextureEntry& entry = it->second;
-
-					if (entry.textureHandle != handle || entry.state != ResourceState::Loading)
-					{
-						if (gpuOpt && gpuOpt->id != 0)
+						else
 						{
-							ioCopy.uploader.Destroy(*gpuOpt);
+							TextureEntry& entry = it->second;
+							if (entry.generation != genCopy || entry.textureHandle != handle || entry.state != ResourceState::Loading)
+							{
+								shouldDestroy = (gpuOpt && gpuOpt->id != 0);
+								if (shouldDestroy)
+								{
+									toDestroy = *gpuOpt;
+								}
+							}
+							else if (!gpuOpt)
+							{
+								entry.state = ResourceState::Failed;
+								entry.error = "GPU texture upload failed";
+							}
+							else
+							{
+								entry.textureHandle->SetResource(*gpuOpt);
+								entry.state = ResourceState::Loaded;
+								entry.error.clear();
+							}
 						}
-						return;
 					}
 
-					if (!gpuOpt)
+					if (shouldDestroy)
 					{
-						entry.state = ResourceState::Failed;
-						entry.error = "GPU texture upload failed";
-					}
-					else
-					{
-						entry.textureHandle->SetResource(*gpuOpt);
-						entry.state = ResourceState::Loaded;
-						entry.error.clear();
+						ioCopy.uploader.Destroy(toDestroy);
 					}
 				});
 
@@ -330,40 +385,6 @@ private:
 
 	mutable std::mutex mutex_{};
 	std::unordered_map<Id, TextureEntry> entries_;
-	std::deque<Id> uploadQueue_;
+	std::deque<TextureUploadTicket> uploadQueue_;
 	std::deque<GPUTexture> destroyQueue_;
-};
-
-export template <>
-struct ResourceTraits<TextureResource>
-{
-	using Resource = TextureResource;
-	using Handle = std::shared_ptr<Resource>;
-	using Properties = typename Resource::Properties;
-
-	struct LoadResult
-	{
-		std::optional<TextureCPUData> pendingCpu{};
-		ResourceState state{ ResourceState::Failed };
-		std::string error{};
-	};
-
-	static LoadResult Load(std::string_view id, TextureIO& io, Properties properties)
-	{
-		LoadResult Result{};
-
-		std::string_view path = properties.filePath.empty() ? id : std::string_view{ properties.filePath };
-
-		auto cpuOpt = io.decoder.Decode(properties, path);
-		if (!cpuOpt)
-		{
-			Result.state = ResourceState::Failed;
-			Result.error = "Texture decode failed";
-			return Result;
-		}
-
-		Result.pendingCpu = std::move(*cpuOpt);
-		Result.state = ResourceState::Loading;
-		return Result;
-	}
 };

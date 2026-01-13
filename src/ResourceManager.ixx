@@ -1,4 +1,4 @@
-export module resource_manager;
+export module core:resource_manager;
 
-export import :core;
-export import :texture;
+export import :resource_manager_core;
+export import :resource_manager_texture;

@@ -6,7 +6,7 @@
 #include <unordered_map>
 #include <cstdint>
 
-import resource_manager;
+import core;
 
 struct FakeTextureDecoder final : ITextureDecoder
 {
