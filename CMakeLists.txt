@@ -40,6 +40,8 @@ target_sources(CoreEngineModuleLib
         src/Render/GpuMemory.cppm
         src/Render/Renderer.cppm
         src/Render/SceneBridge.cppm
+        src/Render/ShaderSystem.cppm
+        src/Render/Sync.cppm
 
         src/Assets/ResourceManager.ixx
         src/Assets/ResourceManager_core.cppm

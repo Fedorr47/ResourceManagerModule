@@ -8,6 +8,8 @@ export import :render_gpu_memory;
 export import :render_renderer;
 export import :scene_bridge;
 export import :render_renderer;
+export import :shader_system;
+export import :sync;
 
 //export import :rhi_gl;
 //export import :render_core_gl;
