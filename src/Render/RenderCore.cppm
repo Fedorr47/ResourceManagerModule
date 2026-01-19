@@ -16,7 +16,7 @@ export namespace render
 {
 	struct FrameContext
 	{
-		std::uint64_t frameNumber{};
+		std::uint64_t frameIndex{};
 	};
 
 	struct ShaderKey
@@ -49,7 +49,7 @@ export namespace render
 	public:
 		explicit ShaderLibrary(rhi::IRHIDevice& device) : device_(device) {}
 
-		rhi::ShaderHandle GetOrCreateShader(const ShaderKey& key, std::string_view sourceOfByteCode)
+		rhi::ShaderHandle GetOrCreateShader(const ShaderKey& key, std::string_view sourceOrBytecode)
 		{
 			
 			if (auto it = shaderCache_.find(key); it != shaderCache_.end())
@@ -57,7 +57,7 @@ export namespace render
 				return it->second;
 			}
 
-			rhi::ShaderHandle shader = device_.CreateShader(key.name, sourceOfByteCode);
+			rhi::ShaderHandle shader = device_.CreateShader(key.name, sourceOrBytecode);
 			shaderCache_.emplace(key, shader);
 			return shader;
 		}
@@ -81,7 +81,7 @@ export namespace render
 	public:
 		explicit PSOCache(rhi::IRHIDevice& device) : device_(device) {}
 
-		rhi::PipelineHandle GetOrCreatePipeline(std::string_view name, rhi::ShaderHandle vertexShader, rhi::ShaderHandle fragmentShader)
+		rhi::PipelineHandle GetOrCreate(std::string_view name, rhi::ShaderHandle vertexShader, rhi::ShaderHandle fragmentShader)
 		{
 			const std::string key = std::string(name) + "_" + std::to_string(vertexShader.id) + "_" + std::to_string(fragmentShader.id);
 
@@ -137,11 +137,11 @@ export namespace render
 	public:
 		explicit NullTextureUploader(rhi::IRHIDevice& device) : device_(device) {}
 
-		std::optional<GPUTexture> CreateAndUpload(const TextureCPUData& cpuData, const TextureProperties& properties) override
+		std::optional<GPUTexture> CreateAndUpload([[maybe_unused]] const TextureCPUData& cpuData, const TextureProperties& properties) override
 		{
 			GPUTexture gpuTexture{};
 
-			const rhi::Extend2D extent{
+			const rhi::Extent2D extent{
 				properties.width,
 				properties.height
 			};

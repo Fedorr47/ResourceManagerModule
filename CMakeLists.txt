@@ -36,7 +36,10 @@ target_sources(CoreEngineModuleLib
         src/Render/RenderCore.cppm
         src/Render/RHI.cppm
         src/Render/RenderGraph.cppm
-        #src/Render/Renderer.cppm
+        src/Render/Bindless.cppm
+        src/Render/GpuMemory.cppm
+        src/Render/Renderer.cppm
+        src/Render/SceneBridge.cppm
 
         src/Assets/ResourceManager.ixx
         src/Assets/ResourceManager_core.cppm

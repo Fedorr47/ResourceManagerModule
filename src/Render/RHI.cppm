@@ -5,6 +5,9 @@ module;
 #include <string>
 #include <memory>
 #include <array>
+#include <variant>
+#include <span>
+#include <unordered_map>
 
 export module core:rhi;
 
@@ -90,8 +93,16 @@ export namespace rhi
 	{
 		std::uint32_t id{};
 	};
+	struct FenceHandle
+	{
+		std::uint32_t id{};
+	};
 
-	struct Extend2D
+	// Vulkan/DX12 backends can map these indices into global descriptor tables.
+	// The OpenGL backend emulates them by keeping a small mapping.
+	using TextureDescIndex = std::uint32_t;
+
+	struct Extent2D
 	{
 		std::uint32_t width{};
 		std::uint32_t height{};
@@ -99,8 +110,8 @@ export namespace rhi
 
 	struct SwapChainDesc
 	{
-		Extend2D extent{};
-		Format format{ Format::BGRA8_UNORM };
+		Extent2D extent{};
+		Format backbufferFormat{ Format::BGRA8_UNORM };
 		bool vsync{ true };
 	};
 
@@ -124,8 +135,8 @@ export namespace rhi
 
 	struct DepthState
 	{
-		bool depthTestEnable{ true };
-		bool depthWriteEnable{ true };
+		bool testEnable{ true };
+		bool writeEnable{ true };
 		CompareOp depthCompareOp{ CompareOp::LessEqual };
 	};
 
@@ -137,14 +148,14 @@ export namespace rhi
 
 	struct BlendState
 	{
-		bool blendEnable{ false };
+		bool enable{ false };
 	};
 
 	struct GraphicsState
 	{
-		DepthState depthState{};
-		RasterizerState rasterizerState{};
-		BlendState blendState{};
+		DepthState depth{};
+		RasterizerState rasterizer{};
+		BlendState blend{};
 	};
 
 	struct ClearDesc
@@ -156,18 +167,137 @@ export namespace rhi
 	};
 
 	struct BeginPassDesc {
-		FramebufferHandle framebuffer{};
-		Extend2D extent{};
+		FramebufferHandle frameBuffer{};
+		Extent2D extent{};
 		ClearDesc clearDesc{};
 	};
 
+	//------------------------ Command Stream ------------------------/
+
+	struct CommandBeginPass
+	{
+		BeginPassDesc desc{};
+	};
+	struct CommandEndPass
+	{
+	};
+	struct CommandSetVieport
+	{
+		int x{ 0 };
+		int y{ 0 };
+		int width{ 0 };
+		int height{ 0 };
+	};
+	struct CommandSetState
+	{
+		GraphicsState state{};
+	};
+	struct CommandBindPipeline
+	{
+		PipelineHandle pso{};
+	};
+	struct CommandVertexArray
+	{
+		VertexArrayHandle vao{};
+	};
+	struct CommnadBindTextue2D
+	{
+		std::uint32_t slot{ 0 };
+		TextureHandle texture{};
+	};
+	struct CommandTextureDesc
+	{
+		std::uint32_t slot{ 0 };
+		TextureDescIndex texture{};
+	};
+	struct CommandSetUniformInt
+	{
+		std::string name{};
+		int value{ 0 };
+	};
+	struct CommandUniformFloat4
+	{
+		std::string name{};
+		std::array<float, 4> value{};
+	};
+	struct CommandDrawIndexed
+	{
+		std::uint32_t indexCount{ 0 };
+		IndexType indexType{ IndexType::UINT16 };
+		std::uint32_t firstIndex{ 0 };
+		int baseVertex{ 0 };
+	};
+	struct CommandDraw
+	{
+		std::uint32_t vertexCount{ 0 };
+		std::uint32_t firstVertex{ 0 };
+	};
+
+	using Command = std::variant<
+		CommandBeginPass,
+		CommandEndPass,
+		CommandSetVieport,
+		CommandSetState,
+		CommandBindPipeline,
+		CommandVertexArray,
+		CommnadBindTextue2D,
+		CommandTextureDesc,
+		CommandSetUniformInt,
+		CommandUniformFloat4,
+		CommandDrawIndexed,
+		CommandDraw>;
+
 	struct CommandList
 	{
-		std::vector<std::string> debug;
+		std::vector<Command> commands;
 
-		void Add(std::string_view text)
+		void BeginPass(const BeginPassDesc& desc)
 		{
-			debug.emplace_back(text);
+			commands.emplace_back(CommandBeginPass{ desc });
+		}
+		void EndPass()
+		{
+			commands.emplace_back(CommandEndPass{});
+		}
+		void SetViewport(int x, int y, int width, int height)
+		{
+			commands.emplace_back(CommandSetVieport{ x, y, width, height });
+		}
+		void SetState(const GraphicsState& state)
+		{
+			commands.emplace_back(CommandSetState{ state });
+		}
+		void BindPipeline(PipelineHandle pso)
+		{
+			commands.emplace_back(CommandBindPipeline{ pso });
+		}
+		void BindVertexArray(VertexArrayHandle vao)
+		{
+			commands.emplace_back(CommandVertexArray{ vao });
+		}
+		void BindTexture2D(std::uint32_t slot, TextureHandle texture)
+		{
+			commands.emplace_back(CommnadBindTextue2D{ slot, texture });
+		}
+		void BindTextureDesc(std::uint32_t slot, TextureDescIndex textureIndex)
+		{
+			commands.emplace_back(CommandTextureDesc{ slot, textureIndex });
+		}
+		void SetUniformInt(std::string name, int value)
+		{
+			commands.emplace_back(CommandSetUniformInt{ std::move(name), value });
+		}
+		void SetUniformFloat4(std::string name, std::array<float, 4> value)
+		{
+			commands.emplace_back(CommandUniformFloat4{ std::string(name), value });
+		}
+		void DrawIndexed(std::uint32_t indexCount, IndexType indexType, std::uint32_t firstIndex = 0, int baseVertex = 0)
+		{
+			commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex });
+		}
+		void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0)
+		{
+			commands.emplace_back(CommandDraw{ vertexCount, firstVertex });
 		}
 	};
 
@@ -176,32 +306,57 @@ export namespace rhi
 	public:
 		virtual ~IRHISwapChain() = default;
 		virtual SwapChainDesc GetDesc() const = 0;
-		virtual TextureHandle GetCurrentBackBuffer() const = 0;
+		virtual FramebufferHandle GetCurrentBackBuffer() const = 0;
 		virtual void Present() = 0;
 	};
 
 	class IRHIDevice
 	{
-		public:
+	public:
 		virtual ~IRHIDevice() = default;
 
 		virtual std::string_view GetName() const = 0;
 
-		virtual TextureHandle CreateTexture2D(Extend2D extent, Format format) = 0;
+		// Textures
+		virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;
 		virtual void DestroyTexture(TextureHandle texture) noexcept = 0;
 
-		virtual BufferHandle CreateBuffer(std::size_t sizeInBytes) = 0;
+		// Framebuffers
+		virtual FramebufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
+		virtual void DestroyFramebuffer(FramebufferHandle frameBuffer) noexcept = 0;
+
+		// Buffers
+		virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
+		virtual void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) = 0;
 		virtual void DestroyBuffer(BufferHandle buffer) noexcept = 0;
 
-		virtual ShaderHandle CreateShader(std::string_view debugName, std::string_view sourceOfByteCode) = 0;
+		// Vertex Arrays
+		virtual VertexArrayHandle CreateVertexArray(std::string_view debugName = {}) = 0;
+		virtual void SetVertexArrayLayout(VertexArrayHandle vao, BufferHandle vbo, std::span<const VertexAttributeDesc> attributes) = 0;
+		virtual void SetVertexArrayIndexBuffer(VertexArrayHandle vao, BufferHandle ibo, IndexType indexType) = 0;
+		virtual void DestroyVertexArray(VertexArrayHandle vao) noexcept = 0;
+
+		// Shaders and Pipelines
+		virtual ShaderHandle CreateShader(std::string_view debugName, std::string_view sourceOrBytecode) = 0;
 		virtual void DestroyShader(ShaderHandle shader) noexcept = 0;
 
 		virtual PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle fragmentShader) = 0;
-		virtual void DestroyPipeline(PipelineHandle pipeline) noexcept = 0;
+		virtual void DestroyPipeline(PipelineHandle pso) noexcept = 0;
 
-		virtual CommandList BeginFrame() = 0;
+		// Submission
 		virtual void SubmitCommandList(CommandList&& commandList) = 0;
-		virtual void EndFrame() = 0;
+
+		// Bindless-style descriptor indices
+		virtual TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) = 0;
+		virtual void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) = 0;
+		virtual void FreeTextureDescriptor(TextureDescIndex index) noexcept = 0;
+
+		// Synchronization
+		virtual FenceHandle CreateFence(bool signaled = false) = 0;
+		virtual void DestroyFence(FenceHandle fence) noexcept = 0;
+		virtual void SignalFence(FenceHandle fence) = 0;
+		virtual void WaitFence(FenceHandle fence) = 0;
+		virtual bool IsFenceSignaled(FenceHandle fence) = 0;
 	};
 
 	std::unique_ptr<IRHIDevice> CreateNullDevice();
@@ -213,60 +368,75 @@ namespace rhi
 	class NullSwapChain : public rhi::IRHISwapChain
 	{
 	public:
-		explicit NullSwapChain(SwapChainDesc desc) : desc_(desc) 
-		{
-			backBuffer_.id = 1;
-		}
+		explicit NullSwapChain(SwapChainDesc desc) : desc_(std::move(desc)) {}
 		~NullSwapChain() override = default;
 
-		rhi::SwapChainDesc GetDesc() const override 
-		{ 
-			return desc_; 
+		rhi::SwapChainDesc GetDesc() const override
+		{
+			return desc_;
 		}
-		rhi::TextureHandle GetCurrentBackBuffer() const override 
-		{ 
-			return backBuffer_; 
+		FramebufferHandle GetCurrentBackBuffer() const override
+		{
+			return FramebufferHandle{ 0 };
 		}
 		void Present() override {}
 
 	private:
 		SwapChainDesc desc_;
-		TextureHandle backBuffer_{};
 	};
 
 	class NullDevice : public rhi::IRHIDevice
 	{
-		public:
-		std::string_view GetName() const override 
-		{ 
-			return "Null RHI Device"; 
+	public:
+		std::string_view GetName() const override
+		{
+			return "Null RHI Device";
 		}
 
-		TextureHandle CreateTexture2D(Extend2D extent, Format format) override
+		TextureHandle CreateTexture2D(Extent2D, Format) override
 		{
 			TextureHandle handle{};
 			handle.id = ++nextId_;
 			return handle;
 		}
-		void DestroyTexture(TextureHandle texture) noexcept override {}
+		void DestroyTexture(TextureHandle) noexcept override {}
 
-		BufferHandle CreateBuffer(std::size_t sizeInBytes) override
+		FramebufferHandle CreateFramebuffer(TextureHandle,TextureHandle) override
+		{
+			FramebufferHandle handle{};
+			handle.id = ++nextId_;
+			return handle;
+		}
+		void DestroyFramebuffer(FramebufferHandle) noexcept override {}
+
+		BufferHandle CreateBuffer(const BufferDesc&) override
 		{
 			BufferHandle handle{};
 			handle.id = ++nextId_;
 			return handle;
 		}
-		void DestroyBuffer(BufferHandle buffer) noexcept override {}
+		void UpdateBuffer(BufferHandle, std::span<const std::byte>, std::size_t) override {}
+		void DestroyBuffer(BufferHandle) noexcept override {}
 
-		ShaderHandle CreateShader(std::string_view debugName, std::string_view sourceOfByteCode) override
+		VertexArrayHandle CreateVertexArray(std::string_view) override
+		{
+			VertexArrayHandle handle{};
+			handle.id = ++nextId_;
+			return handle;
+		}
+		void SetVertexArrayLayout(VertexArrayHandle, BufferHandle, std::span<const VertexAttributeDesc>) override {}
+		void SetVertexArrayIndexBuffer(VertexArrayHandle, BufferHandle, IndexType) override {}
+		void DestroyVertexArray(VertexArrayHandle) noexcept override {}
+
+		ShaderHandle CreateShader(std::string_view, std::string_view) override
 		{
 			ShaderHandle handle{};
 			handle.id = ++nextId_;
 			return handle;
 		}
-		void DestroyShader(ShaderHandle shader) noexcept override {}
+		void DestroyShader(ShaderHandle) noexcept override {}
 
-		PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle fragmentShader) override
+		PipelineHandle CreatePipeline(std::string_view, ShaderHandle, ShaderHandle) override
 		{
 			PipelineHandle handle{};
 			handle.id = ++nextId_;
@@ -274,28 +444,63 @@ namespace rhi
 		}
 		void DestroyPipeline(PipelineHandle pipeline) noexcept override {}
 
-		CommandList BeginFrame() override
+		void SubmitCommandList(CommandList&& commandList) override {}
+
+		TextureDescIndex AllocateTextureDesctiptor(TextureHandle tex) override
 		{
-			CommandList commandList{};
-			commandList.Add("Begin Frame");
-			return commandList;
+			const auto idx = ++nextDescId_;
+			descToTex_[idx] = tex;
+			return idx;
 		}
 
-		void SubmitCommandList(CommandList&& commandList) override 
+		void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) override
 		{
-			last_ = std::move(commandList);
+			descToTex_[index] = texture;
 		}
-		void EndFrame() override 
+
+		void FreeTextureDescriptor(TextureDescIndex index) noexcept override
 		{
-			if (!last_.debug.empty())
+			descToTex_.erase(index);
+		}
+
+		FenceHandle CreateFence(bool signaled = false) override
+		{
+			FenceHandle handle{};
+			handle.id = ++nextFenceId_;
+			fenceSignaled_[handle.id] = signaled;
+			return handle;
+		}
+
+		void DestroyFence(FenceHandle fence) noexcept override
+		{
+			fenceSignaled_.erase(fence.id);
+		}
+
+		void SignalFence(FenceHandle fence) override
+		{
+			fenceSignaled_[fence.id] = true;
+		}
+
+		void WaitFence(FenceHandle fence) override
+		{
+			// Null backend: always immediate.
+		}
+
+		bool IsFenceSignaled(FenceHandle fence) override
+		{
+			if (auto it = fenceSignaled_.find(fence.id); it != fenceSignaled_.end())
 			{
-				last_.debug.clear();
+				return it->second;
 			}
+			return true;
 		}
 
 	private:
-		std::uint64_t nextId_{ 100 };
-		CommandList last_;
+		std::uint32_t nextId_{ 100 };
+		std::uint32_t nextDescId_{ 0 };
+		std::uint32_t nextFenceId_{ 0 };
+		std::unordered_map<TextureDescIndex, TextureHandle> descToTex_{};
+		std::unordered_map<std::uint32_t, bool> fenceSignaled_{};
 	};
 
 	std::unique_ptr<IRHIDevice> CreateNullDevice()
@@ -305,6 +510,6 @@ namespace rhi
 
 	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc)
 	{
-		return std::make_unique<NullSwapChain>(desc);
+		return std::make_unique<NullSwapChain>(std::move(desc));
 	}
 }
