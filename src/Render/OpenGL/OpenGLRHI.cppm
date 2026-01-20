@@ -190,18 +190,17 @@ namespace
 
 	static GLenum GuessShaderType(std::string_view debugName)
 	{
-		if (debugName.starts_with("VS") || debugName.starts_with("VS_") != std::string_view::npos)
+		if (debugName.starts_with("VS") || debugName.starts_with("VS_"))
 		{
 			return GL_VERTEX_SHADER;
 		}
-		else if (debugName.starts_with("PS") || debugName.starts_with("PS_") != std::string_view::npos)
+		if (debugName.starts_with("PS") || debugName.starts_with("PS_") ||
+			debugName.starts_with("FS") || debugName.starts_with("FS_"))
 		{
 			return GL_FRAGMENT_SHADER;
 		}
-		else
-		{
-			return GL_FRAGMENT_SHADER;
-		}
+
+		return GL_FRAGMENT_SHADER;
 	}
 
 	static std::string EnsureGLSLVersion(std::string_view source)
