@@ -10,6 +10,7 @@ import :rhi;
 import :render_core;
 import :render_graph;
 import :scene_bridge;
+import :file_system;
 
 export namespace rendern
 {
@@ -133,16 +134,19 @@ export namespace rendern
 
 			device_.SetVertexArrayLayout(vao_, vbo_, attributes);
 
+			std::filesystem::path vertexShaderPath= corefs::ResolveAsset("shaders\\FullScreen.vert");
+			std::filesystem::path pixelShaderPath= corefs::ResolveAsset("shaders\\FullScreen.frag");
+
 			const auto vertexShader = shaderLibrary_.GetOrCreateShader(ShaderKey{
 				.stage = rhi::ShaderStage::Vertex,
 				.name = "VS_FullScreen",
-				.filePath = "assets/shaders/FullScreen.vert",
+				.filePath = vertexShaderPath.string(),
 				.defines = {}
 				});
 			const auto pixelShader = shaderLibrary_.GetOrCreateShader(ShaderKey{ 
 				.stage = rhi::ShaderStage::Pixel,
 				.name = "PS_FullScreen",
-				.filePath = "assets/shaders/FullScreen.frag",
+				.filePath = pixelShaderPath.string(),
 				.defines = {} });
 			pso_ = psoCache_.GetOrCreate("PSO_FullScreen", vertexShader, pixelShader);
 

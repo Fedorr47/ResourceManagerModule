@@ -12,6 +12,7 @@ export module core:render_core;
 import :resource_manager;
 import :rhi;
 import :shader_files;
+import :file_system;
 
 export namespace rendern
 {
@@ -64,7 +65,7 @@ export namespace rendern
 				return it->second;
 			}
 
-			const auto textSource = LoadTextFile(std::filesystem::path(key.filePath));
+			const auto textSource = FILE_UTILS::LoadTextFile(std::filesystem::path(key.filePath));
 			rhi::ShaderHandle shader = device_.CreateShader(key.stage, key.name, textSource.text);
 			shaderCache_.emplace(key, shader);
 			return shader;

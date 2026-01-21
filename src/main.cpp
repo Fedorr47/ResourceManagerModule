@@ -59,53 +59,23 @@ int main()
 
 	std::cout << "Device: " << device->GetName() << "\n";
 
-	// --- ResourceManager + GL uploader demo ---
-	// We create a tiny procedural decoder (checkerboard) and let ResourceManager
-	// drive the CPU->GPU upload through IRenderQueue.
-	struct CheckerDecoder final : public ITextureDecoder
-	{
-		std::optional<TextureCPUData> Decode(const TextureProperties& properties, std::string_view) override
-		{
-			TextureCPUData out;
-			out.width = properties.width;
-			out.height = properties.height;
-			out.channels = 4;
-			out.format = TextureFormat::RGBA;
-			out.pixels.resize(static_cast<std::size_t>(out.width) * out.height * 4);
-
-			for (std::uint32_t y = 0; y < out.height; ++y)
-			{
-				for (std::uint32_t x = 0; x < out.width; ++x)
-				{
-					const bool dark = (((x / 32) ^ (y / 32)) & 1) != 0;
-					const unsigned char c = dark ? 40 : 220;
-					const std::size_t i = (static_cast<std::size_t>(y) * out.width + x) * 4;
-					out.pixels[i + 0] = c;
-					out.pixels[i + 1] = c;
-					out.pixels[i + 2] = c;
-					out.pixels[i + 3] = 255;
-				}
-			}
-			return out;
-		}
-	};
-
-	CheckerDecoder decoder;
+	StbTextureDecoder decoder;
 	rendern::JobSystemImmediate jobs;
 	rendern::RenderQueueImmediate renderQueue;
 	rendern::GLTextureUploader uploader;
+
 	TextureIO io{ decoder, uploader, jobs, renderQueue };
 
 	ResourceManager rm;
+
 	TextureProperties props{};
-	props.width = 256;
-	props.height = 256;
-	props.format = TextureFormat::RGBA;
 	props.srgb = true;
 	props.generateMips = true;
-	props.filePath = "";
 
-	auto tex = rm.LoadAsync<TextureResource>("checker", io, props);
+	// ВАЖНО: это относительный путь от assets/
+	props.filePath = "textures/brick.png";
+
+	auto tex = rm.LoadAsync<TextureResource>("brick", io, props);
 
 	rendern::Renderer renderer(*device);
 
@@ -113,14 +83,11 @@ int main()
 	{
 		glfwPollEvents();
 
-		// Pump CPU->GPU uploads (runs immediately in this demo).
 		rm.ProcessUploads<TextureResource>(io, 8, 8);
 
 		rhi::TextureHandle sampled{};
-		if (rm.GetState<TextureResource>("checker") == ResourceState::Loaded)
-		{
+		if (rm.GetState<TextureResource>("brick") == ResourceState::Loaded)
 			sampled = rhi::TextureHandle{ tex->GetResource().id };
-		}
 
 		renderer.RenderFrame(*swapchain, sampled);
 	}

@@ -11,6 +11,7 @@ import :rhi_gl;
 import :scene_bridge;
 import :resource_manager_core;
 import :shader_files;
+import :file_system;
 
 export namespace RHI_GL_UTILS
 {
@@ -84,11 +85,11 @@ export namespace rendern
 				-1.0f,  3.0f,  0.0f, 2.0f
 			};
 
-			static constexpr const char* kVS = "assets/shaders/FullScreen.vert";
-			static constexpr const char* kFS = "assets/shaders/FullScreen.frag";
+			auto pathToVertexShader = corefs::ResolveAsset(std::filesystem::path("shaders\\FullScreen.vert"));
+			auto pathToPixelShader = corefs::ResolveAsset(std::filesystem::path("shaders\\FullScreen.frag"));
 
-			const auto vsFile = rendern::LoadGLSLWithIncludes(kVS);
-			const auto fsFile = rendern::LoadGLSLWithIncludes(kFS);
+			const auto vsFile = rendern::LoadGLSLWithIncludes(pathToVertexShader);
+			const auto fsFile = rendern::LoadGLSLWithIncludes(pathToPixelShader);
 
 			const std::string vsSrc = vsFile.text;
 			const std::string fsSrc = fsFile.text;

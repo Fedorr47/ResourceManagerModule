@@ -128,6 +128,18 @@ if (NOT TARGET GLEW::GLEW)
 endif()
 
 # ------------------------------------------------------------
+# STB
+# ------------------------------------------------------------
+FetchContent_Declare(stb
+  GIT_REPOSITORY https://github.com/nothings/stb.git
+  GIT_TAG master
+)
+FetchContent_MakeAvailable(stb)
+
+add_library(stb_headers INTERFACE)
+target_include_directories(stb_headers INTERFACE "${stb_SOURCE_DIR}")
+
+# ------------------------------------------------------------
 # CoreEngineModuleLib
 # ------------------------------------------------------------
 add_library(CoreEngineModuleLib STATIC)
@@ -155,10 +167,13 @@ target_sources(CoreEngineModuleLib
         src/Render/ShaderSystem.cppm
         src/Render/Sync.cppm
         src/Render/ShaderFiles.cppm
+        src/Render/FileSystem.cppm
 
         src/Render/OpenGL/OpenGLRHI.cppm
         src/Render/OpenGL/OpenGLCore.cppm
         src/Render/OpenGL/OpenGLRenderer.cppm
+
+        src/Render/Decoders/TextureDecoderSTB.cppm
 
         src/Assets/ResourceManager.ixx
         src/Assets/ResourceManager_core.cppm
@@ -177,6 +192,7 @@ target_link_libraries(CoreEngineModuleLib
     glm::glm
     GLEW::GLEW
     ${OPENGL_TARGET}
+    stb_headers
 )
 
 target_compile_definitions(CoreEngineModuleLib
