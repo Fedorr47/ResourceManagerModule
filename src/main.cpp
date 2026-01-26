@@ -1,16 +1,22 @@
+#if defined(CORE_USE_DX12)
+#include <GLFW/glfw3.h>
+#else
 #include <GL/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
+#endif
 
 import core;
 import std;
 
+#if !defined(CORE_USE_DX12)
 static rhi::Extent2D GetDrawableExtent(GLFWwindow* wnd)
 {
     int width = 0, height = 0;
     glfwGetFramebufferSize(wnd, &width, &height);
     return rhi::Extent2D{ static_cast<std::uint32_t>(width), static_cast<std::uint32_t>(height) };
 }
+#endif
 
 int main()
 {
@@ -20,6 +26,30 @@ int main()
         return 1;
     }
 
+#if defined(CORE_USE_DX12)
+    // DX12 path (skeleton): create a window without OpenGL context and just init the DX12 device.
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+
+    GLFWwindow* wnd = glfwCreateWindow(1280, 720, "CoreEngineModule DX12 (skeleton)", nullptr, nullptr);
+    if (!wnd)
+    {
+        std::cerr << "Failed to create window\n";
+        glfwTerminate();
+        return 1;
+    }
+
+    auto device = rhi::CreateDX12Device();
+    std::cout << "Device: " << device->GetName() << "\n";
+
+    while (!glfwWindowShouldClose(wnd))
+    {
+        glfwPollEvents();
+    }
+
+    glfwDestroyWindow(wnd);
+    glfwTerminate();
+    return 0;
+#else
     // OpenGL context
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 4);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
@@ -55,7 +85,6 @@ int main()
     swapChain.base.extent = GetDrawableExtent(wnd);
     swapChain.base.vsync = true;
     swapChain.base.backbufferFormat = rhi::Format::BGRA8_UNORM;
-    
     swapChain.hooks.present = [wnd] { glfwSwapBuffers(wnd); };
     swapChain.hooks.getDrawableExtent = [wnd] { return GetDrawableExtent(wnd); };
     swapChain.hooks.setVsync = [](bool vsync) { glfwSwapInterval(vsync ? 1 : 0); };
@@ -106,4 +135,6 @@ int main()
     glfwDestroyWindow(wnd);
     glfwTerminate();
     return 0;
+#endif
+
 }

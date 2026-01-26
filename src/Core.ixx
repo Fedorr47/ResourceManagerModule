@@ -5,3 +5,9 @@ export import :gametimer;
 export import :render;
 export import :mesh;
 export import :obj_loader;
+
+#if defined(CORE_USE_DX12)
+export import :render_dx12;
+#else
+export import :render_gl;
+#endif

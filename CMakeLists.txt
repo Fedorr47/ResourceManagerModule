@@ -11,6 +11,8 @@ if (ENABLE_IMPORT_STD AND NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
     CACHE STRING "" FORCE)
 endif()
 
+set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP 1)
+
 project(CoreEngineModule LANGUAGES C CXX)
 
 include(FetchContent)
@@ -28,6 +30,7 @@ endif()
 
 option(USE_SUBMODULES "Prefer extern/* submodules if present" ON)
 option(WITH_TESTS "Build tests" ON)
+option(CORE_USE_DX12 "Enable DirectX12 render backend (Windows only)" OFF)
 
 # ------------------------------------------------------------
 # GLFW
@@ -176,6 +179,8 @@ target_sources(CoreEngineModuleLib
         src/Render/OpenGL/OpenGLCore.cppm
         src/Render/OpenGL/OpenGLRenderer.cppm
 
+        src/Render/OpenGL/RenderGL.ixx
+
         src/Render/Decoders/TextureDecoderSTB.cppm
 
         src/Assets/ResourceManager.ixx
@@ -215,6 +220,45 @@ add_custom_command(TARGET app POST_BUILD
 )
 target_compile_features(app PRIVATE cxx_std_23)
 target_link_libraries(app PRIVATE CoreEngineModuleLib)
+
+# ------------------------------------------------------------
+# --- Backend switch (cache) ---
+# ------------------------------------------------------------
+set(CORE_RENDER_BACKEND "GL" CACHE STRING "Render backend: GL or DX12")
+set_property(CACHE CORE_RENDER_BACKEND PROPERTY STRINGS "GL" "DX12")
+
+if (CORE_RENDER_BACKEND STREQUAL "DX12")
+  if (NOT WIN32)
+    message(FATAL_ERROR "DX12 backend selected but platform is not Windows")
+  endif()
+  target_compile_definitions(CoreEngineModuleLib PUBLIC CORE_USE_DX12=1)
+elseif (CORE_RENDER_BACKEND STREQUAL "GL")
+  target_compile_definitions(CoreEngineModuleLib PUBLIC CORE_USE_GL=1)
+else()
+  message(FATAL_ERROR "Unknown CORE_RENDER_BACKEND='${CORE_RENDER_BACKEND}' (use GL or DX12)")
+endif()
+
+# ------------------------------------------------------------
+# DirectX12 backend (Windows only)
+# ------------------------------------------------------------
+if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
+  # Needed so "extern/d3dx12.h" can be included from module sources
+  target_include_directories(CoreEngineModuleLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  target_sources(CoreEngineModuleLib
+    PUBLIC
+      FILE_SET cxx_modules TYPE CXX_MODULES
+        BASE_DIRS
+          ${CMAKE_CURRENT_SOURCE_DIR}/src
+        FILES
+          src/Render/DirectX12/RenderDX12.ixx
+          src/Render/DirectX12/DirectX12Core.cppm
+          src/Render/DirectX12/DirectX12RHI.cppm
+          src/Render/DirectX12/DirectX12Renderer.cppm
+  )
+
+  target_link_libraries(CoreEngineModuleLib PUBLIC d3d12 dxgi dxguid)
+endif()
 
 # ------------------------------------------------------------
 # Tests

@@ -199,17 +199,17 @@ namespace
 	{
 		switch (bindFlag)
 		{
-		case rhi::BufferBindFlag::VertexBuffer:    
+		case rhi::BufferBindFlag::VertexBuffer:
 			return GL_ARRAY_BUFFER;
-		case rhi::BufferBindFlag::IndexBuffer:     
+		case rhi::BufferBindFlag::IndexBuffer:
 			return GL_ELEMENT_ARRAY_BUFFER;
-		case rhi::BufferBindFlag::ConstantBuffer:  
+		case rhi::BufferBindFlag::ConstantBuffer:
 			return GL_UNIFORM_BUFFER;
-		case rhi::BufferBindFlag::UniformBuffer:   
+		case rhi::BufferBindFlag::UniformBuffer:
 			return GL_UNIFORM_BUFFER;
 		case rhi::BufferBindFlag::StructuredBuffer:
 			return GL_SHADER_STORAGE_BUFFER;
-		default:                                   
+		default:
 			return GL_ARRAY_BUFFER;
 		}
 	}
@@ -303,25 +303,26 @@ namespace
 	{
 		switch (format)
 		{
-		case rhi::VertexFormat::R32G32B32_FLOAT:    
-			outComponents = 3; 
-			outType = GL_FLOAT; 
+		case rhi::VertexFormat::R32G32B32_FLOAT:
+			outComponents = 3;
+			outType = GL_FLOAT;
 			break;
-		case rhi::VertexFormat::R32G32_FLOAT:       
-			outComponents = 2; 
-			outType = GL_FLOAT; 
+		case rhi::VertexFormat::R32G32_FLOAT:
+			outComponents = 2;
+			outType = GL_FLOAT;
+			outType = GL_FLOAT;
 			break;
-		case rhi::VertexFormat::R32G32B32A32_FLOAT: 
-			outComponents = 4; 
-			outType = GL_FLOAT; 
+		case rhi::VertexFormat::R32G32B32A32_FLOAT:
+			outComponents = 4;
+			outType = GL_FLOAT;
 			break;
-		case rhi::VertexFormat::R8G8B8A8_UNORM:     
-			outComponents = 4; 
-			outType = GL_UNSIGNED_BYTE; 
+		case rhi::VertexFormat::R8G8B8A8_UNORM:
+			outComponents = 4;
+			outType = GL_UNSIGNED_BYTE;
 			break;
-		default:                                    
-			outComponents = 4; 
-			outType = GL_FLOAT; 
+		default:
+			outComponents = 4;
+			outType = GL_FLOAT;
 			break;
 		}
 	}
@@ -471,6 +472,11 @@ namespace rhi
 			fences_.clear();
 		}
 
+		Backend GetBackend() const noexcept override
+		{
+			return Backend::OpenGL;
+		}
+
 		std::string_view GetName() const override
 		{
 			return name_;
@@ -610,7 +616,6 @@ namespace rhi
 			}
 			InvalidateVaoCache();
 		}
-		
 		// ---------------- Input Layouts ----------------
 		InputLayoutHandle CreateInputLayout(const InputLayoutDesc& desc) override
 		{
@@ -869,7 +874,7 @@ namespace rhi
 		bool IsFenceSignaled(FenceHandle fence) override
 		{
 			GLFence* ptrFence = GetFence(fence);
-			if (!ptrFence) 
+			if (!ptrFence)
 			{
 				return true;
 			}
@@ -1293,10 +1298,10 @@ namespace rhi
 		// Current bindings for VAO build
 		rhi::InputLayoutHandle currentLayout_{};
 		std::array<VertexBufferState, 1> vertexBuffer_{};
-		struct { 
-			rhi::BufferHandle buffer{}; 
-			rhi::IndexType indexType{ rhi::IndexType::UINT16 }; 
-			std::uint32_t offsetBytes{ 0 }; 
+		struct {
+			rhi::BufferHandle buffer{};
+			rhi::IndexType indexType{ rhi::IndexType::UINT16 };
+			std::uint32_t offsetBytes{ 0 };
 		} indexBuffer_{};
 
 		// VAO cache

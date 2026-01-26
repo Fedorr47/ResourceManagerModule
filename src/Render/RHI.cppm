@@ -13,6 +13,13 @@ export module core:rhi;
 
 export namespace rhi
 {
+	enum class Backend
+	{
+		Null,
+		OpenGL,
+		DirectX12
+	};
+
 	template <typename Tag>
 	struct Handle
 	{
@@ -28,12 +35,12 @@ export namespace rhi
 	struct FenceTag {};
 	struct InputLayoutTag {};
 
-	using BufferHandle		= Handle<BufferTag>;
-	using TextureHandle		= Handle<TextureTag>;
-	using ShaderHandle		= Handle<ShaderTag>;
-	using PipelineHandle	= Handle<PipelineTag>;
+	using BufferHandle = Handle<BufferTag>;
+	using TextureHandle = Handle<TextureTag>;
+	using ShaderHandle = Handle<ShaderTag>;
+	using PipelineHandle = Handle<PipelineTag>;
 	using FrameBufferHandle = Handle<FrameBufferTag>;
-	using FenceHandle		= Handle<FenceTag>;
+	using FenceHandle = Handle<FenceTag>;
 	using InputLayoutHandle = Handle<InputLayoutTag>;
 
 	enum class Format : std::uint8_t
@@ -223,9 +230,9 @@ export namespace rhi
 	{
 		PipelineHandle pso{};
 	};
-	struct CommandBindInputLayout 
-	{ 
-		InputLayoutHandle layout{}; 
+	struct CommandBindInputLayout
+	{
+		InputLayoutHandle layout{};
 	};
 	struct CommandBindVertexBuffer
 	{
@@ -260,10 +267,10 @@ export namespace rhi
 		std::string name{};
 		std::array<float, 4> value{};
 	};
-	struct CommandUniformMat4 
-	{ 
-		std::string name{}; 
-		std::array<float, 16> value{}; 
+	struct CommandUniformMat4
+	{
+		std::string name{};
+		std::array<float, 16> value{};
 	};
 	struct CommandDrawIndexed
 	{
@@ -347,9 +354,9 @@ export namespace rhi
 		{
 			commands.emplace_back(CommandUniformFloat4{ std::string(name), value });
 		}
-		void SetUniformMat4(std::string_view name, const std::array<float, 16>& v) 
-		{ 
-			commands.emplace_back(CommandUniformMat4{ std::string(name), v }); 
+		void SetUniformMat4(std::string_view name, const std::array<float, 16>& v)
+		{
+			commands.emplace_back(CommandUniformMat4{ std::string(name), v });
 		}
 		void DrawIndexed(std::uint32_t indexCount, IndexType indexType, std::uint32_t firstIndex = 0, int baseVertex = 0)
 		{
@@ -376,6 +383,8 @@ export namespace rhi
 	{
 	public:
 		virtual ~IRHIDevice() = default;
+
+		virtual Backend GetBackend() const noexcept = 0;
 
 		virtual std::string_view GetName() const = 0;
 
@@ -453,6 +462,11 @@ namespace rhi
 			return "Null RHI Device";
 		}
 
+		Backend GetBackend() const noexcept override
+		{
+			return Backend::Null;
+		}
+
 		TextureHandle CreateTexture2D(Extent2D, Format) override
 		{
 			TextureHandle handle{};
@@ -461,7 +475,7 @@ namespace rhi
 		}
 		void DestroyTexture(TextureHandle) noexcept override {}
 
-		FrameBufferHandle CreateFramebuffer(TextureHandle,TextureHandle) override
+		FrameBufferHandle CreateFramebuffer(TextureHandle, TextureHandle) override
 		{
 			FrameBufferHandle handle{};
 			handle.id = ++nextId_;
