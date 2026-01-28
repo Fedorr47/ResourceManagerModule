@@ -5,9 +5,9 @@
 			"generator": "Ninja",
 			"configurationType": "Debug",
 			"inheritEnvironments": [ "msvc_x64_x64" ],
-			"buildRoot": "${projectDir}\\build\\${name}",
-			"installRoot": "${projectDir}\\install\\${name}",
-			"cmakeCommandArgs": "-DCORE_RENDER_BACKEND=GL",1
+			"buildRoot": "${projectDir}\\out\\build\\${name}",
+			"installRoot": "${projectDir}\\out\\install\\${name}",
+			"cmakeCommandArgs": "-DCORE_RENDER_BACKEND=GL",
 			"buildCommandArgs": "",
 			"ctestCommandArgs": ""
 		},
@@ -16,8 +16,8 @@
 			"generator": "Ninja",
 			"configurationType": "Debug",
 			"inheritEnvironments": [ "msvc_x64_x64" ],
-			"buildRoot": "${projectDir}\\build\\${name}",
-			"installRoot": "${projectDir}\\install\\${name}",
+			"buildRoot": "${projectDir}\\out\\build\\${name}",
+			"installRoot": "${projectDir}\\out\\install\\${name}",
 			"cmakeCommandArgs": "-DCORE_RENDER_BACKEND=DX12",
 			"buildCommandArgs": "",
 			"ctestCommandArgs": ""

@@ -17,16 +17,14 @@ export module core:dx12_core;
 #if defined(_WIN32)
 using Microsoft::WRL::ComPtr;
 
-namespace
+export void ThrowIfFailed(HRESULT hr, const char* msg)
 {
-    inline void ThrowIfFailed(HRESULT hr, const char* msg)
+    if (FAILED(hr))
     {
-        if (FAILED(hr))
-        {
-            throw std::runtime_error(msg);
-        }
+        throw std::runtime_error(msg);
     }
 }
+
 #endif
 
 export namespace dx12
