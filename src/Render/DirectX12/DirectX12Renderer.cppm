@@ -89,7 +89,7 @@ export namespace rendern
 
 					glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspect, 0.01f, 200.0f);
 					glm::mat4 view = glm::lookAt(glm::vec3(2.2f, 1.6f, 2.2f), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-					glm::mat4 model = glm::rotate(glm::mat4(1.0f), timeS * 0.8f, glm::vec3(0, 1, 0));
+					glm::mat4 model = glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
 					glm::mat4 mvp = proj * view * model;
 
 					std::memcpy(constants.uMVP.data(), glm::value_ptr(mvp), sizeof(float) * 16);

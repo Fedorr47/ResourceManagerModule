@@ -178,6 +178,8 @@ export namespace rhi
         FrameBufferHandle GetCurrentBackBuffer() const override;
         void Present() override;
 
+        std::uint32_t FrameIndex() const noexcept { return static_cast<std::uint32_t>(frameIndex_); }
+
         ID3D12Resource* CurrentBackBuffer() const { return backBuffers_[frameIndex_].Get(); }
         D3D12_CPU_DESCRIPTOR_HANDLE CurrentRTV() const
         {
@@ -220,53 +222,23 @@ export namespace rhi
         {
             core_.Init();
 
-            // Command allocator/list
-            ThrowIfFailed(NativeDevice()->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&cmdAlloc_)),
-                "DX12: CreateCommandAllocator failed");
-            ThrowIfFailed(NativeDevice()->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, cmdAlloc_.Get(), nullptr, IID_PPV_ARGS(&cmdList_)),
-                "DX12: CreateCommandList failed");
-            cmdList_->Close();
-
-            // Fence
-            ThrowIfFailed(NativeDevice()->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)),
-                "DX12: CreateFence failed");
-            fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-            if (!fenceEvent_) 
+            // -----------------------------------------------------------------
+            // Frame resources (allocator + small persistent CB upload buffer)
+            // -----------------------------------------------------------------
+            for (std::uint32_t i = 0; i < kFramesInFlight; ++i)
             {
-                throw std::runtime_error("DX12: CreateEvent failed");
-            }
+                ThrowIfFailed(NativeDevice()->CreateCommandAllocator(
+                    D3D12_COMMAND_LIST_TYPE_DIRECT,
+                    IID_PPV_ARGS(&frames_[i].cmdAlloc)),
+                    "DX12: CreateCommandAllocator failed");
 
-            // SRV heap (shader visible)
-            {
-                D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
-                heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-                heapDesc.NumDescriptors = 1024;
-                heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
-                ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&srvHeap_)),
-                    "DX12: Create SRV heap failed");
-                srvInc_ = NativeDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-                // null SRV in slot 0
-                D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
-                D3D12_SHADER_RESOURCE_VIEW_DESC nullSrv{};
-                nullSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-                nullSrv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-                nullSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-                nullSrv.Texture2D.MipLevels = 1;
-                NativeDevice()->CreateShaderResourceView(nullptr, &nullSrv, cpu);
-
-                nextSrvIndex_ = 1;
-            }
-
-            // Constant buffer (upload) – 64KB
-            {
-                const UINT constBufSize = 64u * 1024u;
+                // Per-frame constant upload buffer (persistently mapped).
                 D3D12_HEAP_PROPERTIES heapProps{};
                 heapProps.Type = D3D12_HEAP_TYPE_UPLOAD;
 
                 D3D12_RESOURCE_DESC resourceDesc{};
                 resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
-                resourceDesc.Width = constBufSize;
+                resourceDesc.Width = static_cast<UINT64>(kPerFrameCBUploadBytes);
                 resourceDesc.Height = 1;
                 resourceDesc.DepthOrArraySize = 1;
                 resourceDesc.MipLevels = 1;
@@ -275,16 +247,66 @@ export namespace rhi
                 resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
 
                 ThrowIfFailed(NativeDevice()->CreateCommittedResource(
-                    &heapProps, 
-                    D3D12_HEAP_FLAG_NONE, 
+                    &heapProps,
+                    D3D12_HEAP_FLAG_NONE,
                     &resourceDesc,
-                    D3D12_RESOURCE_STATE_GENERIC_READ, 
+                    D3D12_RESOURCE_STATE_GENERIC_READ,
                     nullptr,
-                    IID_PPV_ARGS(&constantBufferUpload_)),
-                    "DX12: Create constant upload buffer failed");
+                    IID_PPV_ARGS(&frames_[i].cbUpload)),
+                    "DX12: Create per-frame constant upload buffer failed");
 
-                ThrowIfFailed(constantBufferUpload_->Map(0, nullptr, reinterpret_cast<void**>(&constantBufferMapped_)),
-                    "DX12: Map constant upload buffer failed");
+                void* mapped = nullptr;
+                ThrowIfFailed(frames_[i].cbUpload->Map(0, nullptr, &mapped),
+                    "DX12: Map per-frame constant upload buffer failed");
+
+                frames_[i].cbMapped = reinterpret_cast<std::byte*>(mapped);
+                frames_[i].cbCursor = 0;
+                frames_[i].fenceValue = 0;
+            }
+
+            // Command list (created once, reset per frame).
+            ThrowIfFailed(NativeDevice()->CreateCommandList(
+                0,
+                D3D12_COMMAND_LIST_TYPE_DIRECT,
+                frames_[0].cmdAlloc.Get(),
+                nullptr,
+                IID_PPV_ARGS(&cmdList_)),
+                "DX12: CreateCommandList failed");
+            cmdList_->Close();
+
+            // Fence
+            ThrowIfFailed(NativeDevice()->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence_)),
+                "DX12: CreateFence failed");
+            fenceEvent_ = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+            if (!fenceEvent_)
+            {
+                throw std::runtime_error("DX12: CreateEvent failed");
+            }
+
+            // SRV heap (shader visible)
+            {
+                D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
+                heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
+                heapDesc.NumDescriptors = 4096;
+                heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
+                ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&srvHeap_)),
+                    "DX12: Create SRV heap failed");
+
+                srvInc_ = NativeDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+                // null SRV in slot 0 (so BindTexture2D can always bind something)
+                {
+                    D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+                    D3D12_SHADER_RESOURCE_VIEW_DESC nullSrv{};
+                    nullSrv.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                    nullSrv.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+                    nullSrv.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                    nullSrv.Texture2D.MipLevels = 1;
+                    NativeDevice()->CreateShaderResourceView(nullptr, &nullSrv, cpu);
+                }
+
+                nextSrvIndex_ = 1;
+                freeSrv_.clear();
             }
 
             CreateRootSignature();
@@ -292,11 +314,32 @@ export namespace rhi
 
         ~DX12Device() override
         {
-            if (constantBufferUpload_)
+            // Make sure GPU is idle before we release resources referenced by the queue.
+            try
             {
-                constantBufferUpload_->Unmap(0, nullptr);
+                if (fence_ && core_.cmdQueue)
+                {
+                    FlushGPU();
+                }
             }
-            constantBufferMapped_ = nullptr;
+            catch (...)
+            {
+                // Avoid exceptions from destructors.
+            }
+
+            for (auto& fr : frames_)
+            {
+                if (fr.cbUpload)
+                {
+                    fr.cbUpload->Unmap(0, nullptr);
+                    fr.cbMapped = nullptr;
+                }
+
+                fr.deferredResources.clear();
+                fr.deferredFreeSrv.clear();
+                fr.deferredFreeRtv.clear();
+                fr.deferredFreeDsv.clear();
+            }
 
             if (fenceEvent_)
             {
@@ -405,8 +448,9 @@ export namespace rhi
                     "DX12: Create depth texture failed");
 
                 EnsureDSVHeap();
-                textureEntry.dsv = AllocateDSV(textureEntry.resource.Get(), dxFmt);
-            }
+                textureEntry.dsv = AllocateDSV(textureEntry.resource.Get(), dxFmt, textureEntry.dsvIndex);
+                textureEntry.hasDSV = true;
+}
             else
             {
                 resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_RENDER_TARGET;
@@ -425,8 +469,9 @@ export namespace rhi
                     "DX12: Create color texture failed");
 
                 EnsureRTVHeap();
-                textureEntry.rtv = AllocateRTV(textureEntry.resource.Get(), dxFmt);
-            }
+                textureEntry.rtv = AllocateRTV(textureEntry.resource.Get(), dxFmt, textureEntry.rtvIndex);
+                textureEntry.hasRTV = true;
+}
 
             textures_[textureHandle.id] = std::move(textureEntry);
             return textureHandle;
@@ -434,12 +479,39 @@ export namespace rhi
 
         void DestroyTexture(TextureHandle texture) noexcept override
         {
-            if (texture.id == 0) 
+            if (texture.id == 0)
             {
                 return;
             }
-            textures_.erase(texture.id);
-            // SRV slot reclaim
+
+            auto it = textures_.find(texture.id);
+            if (it == textures_.end())
+            {
+                return;
+            }
+
+            TextureEntry entry = std::move(it->second);
+            textures_.erase(it);
+
+            // Keep the resource alive until GPU finishes the frame that referenced it.
+            if (entry.resource)
+            {
+                CurrentFrame().deferredResources.push_back(std::move(entry.resource));
+            }
+
+            // Recycle descriptor indices only after the same fence is completed (see BeginFrame()).
+            if (entry.hasSRV && entry.srvIndex != 0)
+            {
+                CurrentFrame().deferredFreeSrv.push_back(entry.srvIndex);
+            }
+            if (entry.hasRTV)
+            {
+                CurrentFrame().deferredFreeRtv.push_back(entry.rtvIndex);
+            }
+            if (entry.hasDSV)
+            {
+                CurrentFrame().deferredFreeDsv.push_back(entry.dsvIndex);
+            }
         }
 
         // ---------------- Framebuffers ----------------
@@ -516,7 +588,24 @@ export namespace rhi
 
         void DestroyBuffer(BufferHandle buffer) noexcept override
         {
-            buffers_.erase(buffer.id);
+            if (buffer.id == 0)
+            {
+                return;
+            }
+
+            auto it = buffers_.find(buffer.id);
+            if (it == buffers_.end())
+            {
+                return;
+            }
+
+            BufferEntry entry = std::move(it->second);
+            buffers_.erase(it);
+
+            if (entry.resource)
+            {
+                CurrentFrame().deferredResources.push_back(std::move(entry.resource));
+            }
         }
 
         // ---------------- Input layouts ----------------
@@ -629,9 +718,8 @@ export namespace rhi
                 throw std::runtime_error("DX12: swapchain is not set on device (CreateDX12SwapChain must set it).");
             }
 
-            // Reset native command list
-            ThrowIfFailed(cmdAlloc_->Reset(), "DX12: cmdAlloc reset failed");
-            ThrowIfFailed(cmdList_->Reset(cmdAlloc_.Get(), nullptr), "DX12: cmdList reset failed");
+            // Begin frame: wait/recycle per-frame stuff + reset allocator/list
+            BeginFrame();
 
             // Set descriptor heaps (SRV)
             ID3D12DescriptorHeap* heaps[] = { NativeSRVHeap() };
@@ -662,26 +750,27 @@ export namespace rhi
 			std::uint32_t perDrawSize = 0;
 			std::uint32_t perDrawSlot = 0;
 
-            constantBufferCursor_ = 0;
-
 			auto WriteCBAndBind = [&]()
                 {
-					const std::uint32_t used = (perDrawSize == 0) ? 1u : perDrawSize;
-					const std::uint32_t cbSize = AlignUp(used, 256);
-                    if (constantBufferCursor_ + cbSize > (64u * 1024u))
+                    FrameResource& fr = CurrentFrame();
+
+                    const std::uint32_t used = (perDrawSize == 0) ? 1u : perDrawSize;
+                    const std::uint32_t cbSize = AlignUp(used, 256);
+
+                    if (fr.cbCursor + cbSize > kPerFrameCBUploadBytes)
                     {
-                        constantBufferCursor_ = 0; // wrap 
+                        throw std::runtime_error("DX12: per-frame constant upload ring overflow (increase kPerFrameCBUploadBytes)");
                     }
 
-					if (perDrawSize != 0)
-					{
-						std::memcpy(constantBufferMapped_ + constantBufferCursor_, perDrawBytes.data(), perDrawSize);
-					}
+                    if (perDrawSize != 0)
+                    {
+                        std::memcpy(fr.cbMapped + fr.cbCursor, perDrawBytes.data(), perDrawSize);
+                    }
 
-                    const D3D12_GPU_VIRTUAL_ADDRESS gpuVA = constantBufferUpload_->GetGPUVirtualAddress() + constantBufferCursor_;
-					cmdList_->SetGraphicsRootConstantBufferView(perDrawSlot, gpuVA);
+                    const D3D12_GPU_VIRTUAL_ADDRESS gpuVA = fr.cbUpload->GetGPUVirtualAddress() + fr.cbCursor;
+                    cmdList_->SetGraphicsRootConstantBufferView(perDrawSlot, gpuVA);
 
-                    constantBufferCursor_ += cbSize;
+                    fr.cbCursor += cbSize;
                 };
 
             auto ResolveTextureHandleFromDesc = [&](TextureDescIndex idx) -> TextureHandle
@@ -975,14 +1064,9 @@ export namespace rhi
                     }, command);
             }
 
-            ThrowIfFailed(cmdList_->Close(), "DX12: cmdList close failed");
-
-            ID3D12CommandList* lists[] = { cmdList_.Get() };
-            NativeQueue()->ExecuteCommandLists(1, lists);
-
-            // Wait GPU (простая, но надежная синхронизация для демо)
-            SignalAndWait();
-        }
+            // Close + execute + signal fence for the current frame resource
+            EndFrame();
+}
 
         // ---------------- Bindless descriptor indices ----------------
         TextureDescIndex AllocateTextureDesctiptor(TextureHandle tex) override
@@ -1084,6 +1168,8 @@ export namespace rhi
             // Render targets / depth
             bool hasRTV{ false };
             bool hasDSV{ false };
+            UINT rtvIndex{ 0 };
+            UINT dsvIndex{ 0 };
             D3D12_CPU_DESCRIPTOR_HANDLE rtv{};
             D3D12_CPU_DESCRIPTOR_HANDLE dsv{};
 
@@ -1099,15 +1185,102 @@ export namespace rhi
             TextureHandle depth{};
         };
 
-        void SignalAndWait()
+        static constexpr std::uint32_t kFramesInFlight = 3;
+        static constexpr UINT kPerFrameCBUploadBytes = 256u * 1024u;
+
+        struct FrameResource
         {
-            const UINT64 v = ++fenceValue_;
-            ThrowIfFailed(NativeQueue()->Signal(fence_.Get(), v), "DX12: Signal failed");
+            ComPtr<ID3D12CommandAllocator> cmdAlloc;
+
+            // Small persistent upload buffer for per-draw constants.
+            ComPtr<ID3D12Resource> cbUpload;
+            std::byte* cbMapped{ nullptr };
+            std::uint32_t cbCursor{ 0 };
+
+            // Fence value that marks when GPU finished using this frame resource.
+            UINT64 fenceValue{ 0 };
+
+            // Deferred lifetime management:
+            //  - keep resources alive until GPU is done with this frame
+            //  - recycle descriptor indices only after the same fence is completed
+            std::vector<ComPtr<ID3D12Resource>> deferredResources;
+            std::vector<UINT> deferredFreeSrv;
+            std::vector<UINT> deferredFreeRtv;
+            std::vector<UINT> deferredFreeDsv;
+
+            void ResetForRecording() noexcept
+            {
+                cbCursor = 0;
+            }
+
+            void ReleaseDeferred(
+                std::vector<UINT>& globalFreeSrv,
+                std::vector<UINT>& globalFreeRtv,
+                std::vector<UINT>& globalFreeDsv)
+            {
+                deferredResources.clear();
+
+                globalFreeSrv.insert(globalFreeSrv.end(), deferredFreeSrv.begin(), deferredFreeSrv.end());
+                globalFreeRtv.insert(globalFreeRtv.end(), deferredFreeRtv.begin(), deferredFreeRtv.end());
+                globalFreeDsv.insert(globalFreeDsv.end(), deferredFreeDsv.begin(), deferredFreeDsv.end());
+
+                deferredFreeSrv.clear();
+                deferredFreeRtv.clear();
+                deferredFreeDsv.clear();
+            }
+        };
+
+        void WaitForFence(UINT64 v)
+        {
+            if (v == 0)
+                return;
+
             if (fence_->GetCompletedValue() < v)
             {
                 ThrowIfFailed(fence_->SetEventOnCompletion(v, fenceEvent_), "DX12: SetEventOnCompletion failed");
                 WaitForSingleObject(fenceEvent_, INFINITE);
             }
+        }
+
+        FrameResource& CurrentFrame() noexcept
+        {
+            return frames_[activeFrameIndex_];
+        }
+
+        void BeginFrame()
+        {
+            const std::uint32_t swapIdx = static_cast<std::uint32_t>(swapChain_->FrameIndex());
+            activeFrameIndex_ = swapIdx % kFramesInFlight;
+
+            FrameResource& fr = frames_[activeFrameIndex_];
+
+            // Wait until GPU is done with this frame resource, then recycle deferred objects/indices.
+            WaitForFence(fr.fenceValue);
+            fr.ReleaseDeferred(freeSrv_, freeRTV_, freeDSV_);
+
+            ThrowIfFailed(fr.cmdAlloc->Reset(), "DX12: cmdAlloc reset failed");
+            ThrowIfFailed(cmdList_->Reset(fr.cmdAlloc.Get(), nullptr), "DX12: cmdList reset failed");
+
+            fr.ResetForRecording();
+        }
+
+        void EndFrame()
+        {
+            ThrowIfFailed(cmdList_->Close(), "DX12: cmdList close failed");
+
+            ID3D12CommandList* lists[] = { cmdList_.Get() };
+            NativeQueue()->ExecuteCommandLists(1, lists);
+
+            const UINT64 v = ++fenceValue_;
+            ThrowIfFailed(NativeQueue()->Signal(fence_.Get(), v), "DX12: Signal failed");
+            frames_[activeFrameIndex_].fenceValue = v;
+        }
+
+        void FlushGPU()
+        {
+            const UINT64 v = ++fenceValue_;
+            ThrowIfFailed(NativeQueue()->Signal(fence_.Get(), v), "DX12: Signal failed");
+            WaitForFence(v);
         }
 
         void CreateRootSignature()
@@ -1181,6 +1354,7 @@ export namespace rhi
                 "DX12: Create RTV heap failed");
             rtvInc_ = NativeDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
             nextRTV_ = 0;
+            freeRTV_.clear();
         }
 
         void EnsureDSVHeap()
@@ -1191,19 +1365,36 @@ export namespace rhi
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-            heapDesc.NumDescriptors = 64;
+            heapDesc.NumDescriptors = 256;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&dsvHeap_)),
                 "DX12: Create DSV heap failed");
             dsvInc_ = NativeDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_DSV);
             nextDSV_ = 0;
+            freeDSV_.clear();
         }
 
-        D3D12_CPU_DESCRIPTOR_HANDLE AllocateRTV(ID3D12Resource* res, DXGI_FORMAT fmt)
+        D3D12_CPU_DESCRIPTOR_HANDLE AllocateRTV(ID3D12Resource* res, DXGI_FORMAT fmt, UINT& outIndex)
         {
+            UINT idx = 0;
+            if (!freeRTV_.empty())
+            {
+                idx = freeRTV_.back();
+                freeRTV_.pop_back();
+            }
+            else
+            {
+                idx = nextRTV_++;
+            }
+            outIndex = idx;
+
+            if (idx >= 256u)
+            {
+                throw std::runtime_error("DX12: RTV heap exhausted (increase EnsureRTVHeap() NumDescriptors).");
+            }
+
             D3D12_CPU_DESCRIPTOR_HANDLE handle = rtvHeap_->GetCPUDescriptorHandleForHeapStart();
-            handle.ptr += static_cast<SIZE_T>(nextRTV_) * rtvInc_;
-            ++nextRTV_;
+            handle.ptr += static_cast<SIZE_T>(idx) * rtvInc_;
 
             D3D12_RENDER_TARGET_VIEW_DESC viewDesc{};
             viewDesc.ViewDimension = D3D12_RTV_DIMENSION_TEXTURE2D;
@@ -1214,11 +1405,27 @@ export namespace rhi
             return handle;
         }
 
-        D3D12_CPU_DESCRIPTOR_HANDLE AllocateDSV(ID3D12Resource* res, DXGI_FORMAT fmt)
+        D3D12_CPU_DESCRIPTOR_HANDLE AllocateDSV(ID3D12Resource* res, DXGI_FORMAT fmt, UINT& outIndex)
         {
+            UINT idx = 0;
+            if (!freeDSV_.empty())
+            {
+                idx = freeDSV_.back();
+                freeDSV_.pop_back();
+            }
+            else
+            {
+                idx = nextDSV_++;
+            }
+            outIndex = idx;
+
+            if (idx >= 256u)
+            {
+                throw std::runtime_error("DX12: DSV heap exhausted (increase EnsureDSVHeap() NumDescriptors).");
+            }
+
             D3D12_CPU_DESCRIPTOR_HANDLE handle = dsvHeap_->GetCPUDescriptorHandleForHeapStart();
-            handle.ptr += static_cast<SIZE_T>(nextDSV_) * dsvInc_;
-            ++nextDSV_;
+            handle.ptr += static_cast<SIZE_T>(idx) * dsvInc_;
 
             D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc{};
             viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
@@ -1231,22 +1438,38 @@ export namespace rhi
 
         void AllocateSRV(TextureEntry& texureEntry, DXGI_FORMAT fmt, UINT mipLevels)
         {
-            const UINT idx = nextSrvIndex_++;
+            UINT idx = 0;
+            if (!freeSrv_.empty())
+            {
+                idx = freeSrv_.back();
+                freeSrv_.pop_back();
+            }
+            else
+            {
+                idx = nextSrvIndex_++;
+            }
+
+            // The heap is created with a fixed size (see constructor). Grow it if you need more.
+            if (idx >= 4096u)
+            {
+                throw std::runtime_error("DX12: SRV heap exhausted (increase heapDesc.NumDescriptors).");
+            }
+
             D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
             cpu.ptr += static_cast<SIZE_T>(idx) * srvInc_;
 
-            D3D12_SHADER_RESOURCE_VIEW_DESC resViewDesc{};
-            resViewDesc.Format = fmt;
-            resViewDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
-            resViewDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
-            resViewDesc.Texture2D.MostDetailedMip = 0;
-            resViewDesc.Texture2D.MipLevels = mipLevels;
-            resViewDesc.Texture2D.ResourceMinLODClamp = 0.0f;
-
-            NativeDevice()->CreateShaderResourceView(texureEntry.resource.Get(), &resViewDesc, cpu);
-
             D3D12_GPU_DESCRIPTOR_HANDLE gpu = srvHeap_->GetGPUDescriptorHandleForHeapStart();
             gpu.ptr += static_cast<SIZE_T>(idx) * srvInc_;
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+            srvDesc.Format = fmt;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+            srvDesc.Texture2D.MostDetailedMip = 0;
+            srvDesc.Texture2D.MipLevels = mipLevels;
+            srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+
+            NativeDevice()->CreateShaderResourceView(texureEntry.resource.Get(), &srvDesc, cpu);
 
             texureEntry.hasSRV = true;
             texureEntry.srvIndex = idx;
@@ -1256,7 +1479,10 @@ export namespace rhi
     private:
         dx12::Core core_{};
 
-        ComPtr<ID3D12CommandAllocator> cmdAlloc_;
+        // Frame resources (allocator + per-frame constant upload ring)
+        std::array<FrameResource, kFramesInFlight> frames_{};
+        std::uint32_t activeFrameIndex_{ 0 };
+
         ComPtr<ID3D12GraphicsCommandList> cmdList_;
 
         ComPtr<ID3D12Fence> fence_;
@@ -1266,10 +1492,11 @@ export namespace rhi
         // Shared root signature
         ComPtr<ID3D12RootSignature> rootSig_;
 
-        // SRV heap
+        // SRV heap (shader visible)
         ComPtr<ID3D12DescriptorHeap> srvHeap_;
         UINT srvInc_{ 0 };
         UINT nextSrvIndex_{ 1 };
+        std::vector<UINT> freeSrv_;
 
         // RTV/DSV heaps for transient textures (swapchain has its own RTV/DSV)
         ComPtr<ID3D12DescriptorHeap> rtvHeap_;
@@ -1278,11 +1505,8 @@ export namespace rhi
         UINT dsvInc_{ 0 };
         UINT nextRTV_{ 0 };
         UINT nextDSV_{ 0 };
-
-        // Constant upload
-        ComPtr<ID3D12Resource> constantBufferUpload_;
-        std::uint8_t* constantBufferMapped_{ nullptr };
-        std::uint32_t constantBufferCursor_{ 0 };
+        std::vector<UINT> freeRTV_;
+        std::vector<UINT> freeDSV_;
 
         // Pointers
         DX12SwapChain* swapChain_{ nullptr };
