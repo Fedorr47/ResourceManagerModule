@@ -842,14 +842,18 @@ export namespace rhi
                     auto it = descToTex_.find(idx);
                     if (it == descToTex_.end()) 
                     {
-                        return {};
+                        throw std::runtime_error("DX12: TextureDescIndex not mapped");
+                        //return {};
                     }
                     return it->second;
                 };
 
             auto GetTextureSRV = [&](TextureHandle textureHandle) -> D3D12_GPU_DESCRIPTOR_HANDLE
                 {
-                    if (!textureHandle) return srvHeap_->GetGPUDescriptorHandleForHeapStart();
+                    if (!textureHandle)
+                    {
+                        return srvHeap_->GetGPUDescriptorHandleForHeapStart();
+                    }
                     auto it = textures_.find(textureHandle.id);
                     if (it == textures_.end()) 
                     {
@@ -1155,6 +1159,17 @@ export namespace rhi
                         {
                             if (cmd.slot < boundTex.size())
                             {
+                                auto it = textures_.find(cmd.texture.id);
+                                if (it == textures_.end())
+                                {
+                                    throw std::runtime_error("DX12: BindTexture2D: texture not found in textures_ map");
+                                }
+                                    
+                                if (!it->second.hasSRV)
+                                {
+                                    throw std::runtime_error("DX12: BindTexture2D: texture has no SRV");
+                                }
+
                                 TransitionTexture(cmd.texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                                 boundTex[cmd.slot] = GetTextureSRV(cmd.texture);
                             }
@@ -1166,7 +1181,8 @@ export namespace rhi
                                 TextureHandle handle = ResolveTextureHandleFromDesc(cmd.texture);
                                 if (!handle)
                                 {
-                                    boundTex[cmd.slot] = {};
+                                    // null SRV
+                                    boundTex[cmd.slot] = srvHeap_->GetGPUDescriptorHandleForHeapStart();
                                     return;
                                 }
 
@@ -1261,6 +1277,7 @@ export namespace rhi
 
                             WriteCBAndBind();
                             cmdList_->SetGraphicsRootDescriptorTable(1, boundTex[0]);
+                            cmdList_->SetGraphicsRootDescriptorTable(2, boundTex[1]);
 
                             cmdList_->DrawInstanced(cmd.vertexCount, 1, cmd.firstVertex, 0);
                         }
@@ -1277,21 +1294,51 @@ export namespace rhi
         }
 
         // ---------------- Bindless descriptor indices ----------------
-        TextureDescIndex AllocateTextureDesctiptor(TextureHandle tex) override
+        TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) override
         {
-            const auto idx = ++nextDescId_;
-            descToTex_[idx] = tex;
+            // 0 = invalid
+            TextureDescIndex idx{};
+            if (!freeTexDesc_.empty())
+            {
+                idx = freeTexDesc_.back();
+                freeTexDesc_.pop_back();
+            }
+            else
+            {
+                idx = TextureDescIndex{ nextTexDesc_++ };
+            }
+
+            UpdateTextureDescriptor(idx, texture);
             return idx;
         }
 
         void UpdateTextureDescriptor(TextureDescIndex idx, TextureHandle tex) override
         {
             descToTex_[idx] = tex;
+
+            auto it = textures_.find(tex.id);
+            if (it == textures_.end())
+            {
+                throw std::runtime_error("DX12: UpdateTextureDescriptor: texture not found");
+            }
+               
+            auto& te = it->second;
+            if (!te.hasSRV)
+            {
+                if (te.srvFormat == DXGI_FORMAT_UNKNOWN)
+                {
+                    throw std::runtime_error("DX12: UpdateTextureDescriptor: texture has no SRV format");
+                }
+                    
+
+                AllocateSRV(te, te.srvFormat, /*mips*/ 1);
+            }
         }
 
-        void FreeTextureDescriptor(TextureDescIndex idx) noexcept override
+        void FreeTextureDescriptor(TextureDescIndex index) noexcept override
         {
-            descToTex_.erase(idx);
+            descToTex_.erase(index);
+            freeTexDesc_.push_back(index);
         }
 
         // ---------------- Fences (минимально) ----------------
@@ -1793,7 +1840,7 @@ export namespace rhi
         std::uint32_t nextPsoId_{ 1 };
         std::uint32_t nextLayoutId_{ 1 };
         std::uint32_t nextFBId_{ 1 };
-        std::uint32_t nextDescId_{ 1 };
+        std::uint32_t nextDescId_{ 0 };
         std::uint32_t nextFenceId_{ 1 };
 
         std::unordered_map<std::uint32_t, BufferEntry> buffers_;
@@ -1804,6 +1851,8 @@ export namespace rhi
         std::unordered_map<std::uint32_t, FramebufferEntry> framebuffers_;
 
         std::unordered_map<TextureDescIndex, TextureHandle> descToTex_;
+        std::vector<TextureDescIndex> freeTexDesc_{};
+        uint32_t nextTexDesc_ = 1;
         std::unordered_map<std::uint32_t, bool> fences_;
 
         std::unordered_map<std::uint64_t, ComPtr<ID3D12PipelineState>> psoCache_;
@@ -1921,6 +1970,7 @@ export namespace rhi
 
         backBufferStates_.resize(backBuffers_.size());
         ResetBackBufferStates(D3D12_RESOURCE_STATE_PRESENT);
+        currBackBuffer_ = swapChain_->GetCurrentBackBufferIndex();
     }
 
     SwapChainDesc DX12SwapChain::GetDesc() const

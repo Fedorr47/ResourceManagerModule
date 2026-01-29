@@ -3,6 +3,10 @@ module;
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+// D3D-style clip-space helpers (Z in [0..1]).
+// NOTE: glm::perspective()/ortho() default to OpenGL clip space (Z in [-1..1]),
+// which in D3D12 will clip most geometry and may make objects appear tiny or disappear.
+#include <glm/ext/matrix_clip_space.hpp>
 
 #include <array>
 #include <span>
@@ -94,7 +98,8 @@ export namespace rendern
 						const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
 
 						const float orthoHalf = 4.0f;
-						const glm::mat4 lightProj = glm::ortho(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
+						// D3D clip space expects Z in [0..1].
+						const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
 
 						const glm::mat4 model = glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
 						const glm::mat4 lightMVP = lightProj * lightView * model;
@@ -160,7 +165,9 @@ export namespace rendern
 						: 1.0f;
 
 					// Camera
-					const glm::mat4 proj = glm::perspective(glm::radians(60.0f), aspect, 0.01f, 200.0f);
+					// D3D clip space expects Z in [0..1]. Using glm::perspective() (OpenGL [-1..1])
+					// can clip most geometry and make the mesh effectively invisible.
+					const glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.01f, 200.0f);
 					const glm::mat4 view = glm::lookAt(glm::vec3(2.2f, 1.6f, 2.2f), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 					const glm::mat4 model = glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
 
@@ -170,7 +177,7 @@ export namespace rendern
 					const glm::vec3 lightPos = center - lightDir * 6.0f;
 					const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
 					const float orthoHalf = 4.0f;
-					const glm::mat4 lightProj = glm::ortho(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
+					const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
 
 					const glm::mat4 mvp = proj * view * model;
 					const glm::mat4 lightMVP = lightProj * lightView * model;
@@ -203,9 +210,13 @@ export namespace rendern
 					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
 
 					if (hasIndices)
+					{
 						ctx.commandList.DrawIndexed(mesh_.indexCount, mesh_.indexType, 0, 0);
+					}
 					else
+					{
 						ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
+					}
 				});
 
 			graph.Execute(device_, swapChain);
