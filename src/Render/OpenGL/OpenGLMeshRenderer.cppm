@@ -23,10 +23,10 @@ import :obj_loader;
 
 export namespace rendern
 {
-	class GLMeshRenderer
+	class GLRenderer
 	{
 	public:
-		GLMeshRenderer(rhi::IRHIDevice& device, RendererSettings settings = {})
+		GLRenderer(rhi::IRHIDevice& device, RendererSettings settings = {})
 			: device_(device)
 			, settings_(std::move(settings))
 			, shaderLibrary_(device)

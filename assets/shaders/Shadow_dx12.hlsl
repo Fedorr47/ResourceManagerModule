@@ -1,12 +1,12 @@
 cbuffer PerDraw : register(b0)
 {
-    float4x4 uMVP; // lightMVP
+    float4x4 uMVP; // lightMVP (already includes Model)
 };
 
 struct VSIn
 {
-    float3 pos : POSITION0;
-    float3 nrm : NORMAL0;
+    float3 pos : POSITION;
+    float3 nrm : NORMAL;
     float2 uv : TEXCOORD0;
 };
 
@@ -18,10 +18,8 @@ struct VSOut
 VSOut VSMain(VSIn vin)
 {
     VSOut o;
-    const float4 p = float4(vin.pos, 1.0f);
-
     // column-major (glm) => M * v
-    o.posH = mul(uMVP, p);
+    o.posH = mul(uMVP, float4(vin.pos, 1.0f));
     return o;
 }
 

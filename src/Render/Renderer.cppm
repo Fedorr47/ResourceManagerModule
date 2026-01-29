@@ -61,7 +61,7 @@ namespace rendern
             }
 
         private:
-            GLMeshRenderer impl_;
+            GLRenderer impl_;
         };
         #endif
 

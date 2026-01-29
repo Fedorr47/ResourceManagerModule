@@ -60,6 +60,27 @@ export namespace rendern
 				.debugName = "ShadowMap"
 				});
 
+			// Shared light-space setup (directional light shadow)
+			const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f)); // FROM light towards the scene
+			const glm::vec3 center = glm::vec3(0.0f, 0.0f, 0.0f);
+			const float lightDist = 10.0f;
+			const glm::vec3 lightPos = center - lightDir * lightDist;
+			const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
+
+			const float orthoHalf = 8.0f;
+			// D3D clip space expects Z in [0..1].
+			const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 40.0f);
+
+			// Scene transforms (cube + ground plane)
+			const glm::mat4 cubeModel =
+				glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.6f, 0.0f)) *
+				glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
+
+			const glm::mat4 groundModel =
+				glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, -0.6f, 0.0f)) *
+				glm::rotate(glm::mat4(1.0f), glm::radians(-90.0f), glm::vec3(1, 0, 0)) *
+				glm::scale(glm::mat4(1.0f), glm::vec3(8.0f, 8.0f, 8.0f));
+
 			{
 				rhi::ClearDesc clear{};
 				clear.clearColor = false;
@@ -73,7 +94,7 @@ export namespace rendern
 				att.clearDesc = clear;
 
 				graph.AddPass("ShadowPass", std::move(att),
-					[this](renderGraph::PassContext& ctx)
+					[this, lightView, lightProj, cubeModel, groundModel](renderGraph::PassContext& ctx)
 					{
 						ctx.commandList.SetViewport(0, 0,
 							static_cast<int>(ctx.passExtent.width),
@@ -82,40 +103,41 @@ export namespace rendern
 						ctx.commandList.SetState(shadowState_);
 						ctx.commandList.BindPipeline(psoShadow_);
 
-						ctx.commandList.BindInputLayout(mesh_.layout);
-						ctx.commandList.BindVertexBuffer(0, mesh_.vertexBuffer, mesh_.vertexStrideBytes, 0);
-
-						const bool hasIndices = (mesh_.indexBuffer.id != 0) && (mesh_.indexCount != 0);
-						if (hasIndices)
-						{
-							ctx.commandList.BindIndexBuffer(mesh_.indexBuffer, mesh_.indexType, 0);
-						}
-
-						// Light-space matrix (simple demo)
-						const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f));
-						const glm::vec3 center = glm::vec3(0.0f, 0.0f, 0.0f);
-						const glm::vec3 lightPos = center - lightDir * 6.0f;
-						const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
-
-						const float orthoHalf = 4.0f;
-						// D3D clip space expects Z in [0..1].
-						const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
-
-						const glm::mat4 model = glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
-						const glm::mat4 lightMVP = lightProj * lightView * model;
-
 						struct alignas(16) ShadowConstants
 						{
 							std::array<float, 16> uMVP{}; // for Shadow_dx12.hlsl: uMVP == lightMVP
-						} constants{};
+						};
 
-						std::memcpy(constants.uMVP.data(), glm::value_ptr(lightMVP), sizeof(float) * 16);
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+						auto DrawShadowMesh = [&](const MeshRHI& mesh, const glm::mat4& model)
+							{
+								ctx.commandList.BindInputLayout(mesh.layout);
+								ctx.commandList.BindVertexBuffer(0, mesh.vertexBuffer, mesh.vertexStrideBytes, 0);
 
-						if (hasIndices)
-							ctx.commandList.DrawIndexed(mesh_.indexCount, mesh_.indexType, 0, 0);
-						else
-							ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
+								const bool hasIndices = (mesh.indexBuffer.id != 0) && (mesh.indexCount != 0);
+								if (hasIndices)
+								{
+									ctx.commandList.BindIndexBuffer(mesh.indexBuffer, mesh.indexType, 0);
+								}
+
+								const glm::mat4 lightMVP = lightProj * lightView * model;
+
+								ShadowConstants constants{};
+								std::memcpy(constants.uMVP.data(), glm::value_ptr(lightMVP), sizeof(float) * 16);
+								ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+
+								if (hasIndices)
+								{
+									ctx.commandList.DrawIndexed(mesh.indexCount, mesh.indexType, 0, 0);
+								}
+								else
+								{
+									ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
+								}
+							};
+
+						// Draw ground first (so it's in the map) then the cube
+						DrawShadowMesh(groundMesh_, groundModel);
+						DrawShadowMesh(cubeMesh_, cubeModel);
 					});
 			}
 
@@ -126,7 +148,7 @@ export namespace rendern
 			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
 			graph.AddSwapChainPass("MainPass", clearDesc,
-				[this, sampledTexture, sampledTextureDescIndex, shadowRG](renderGraph::PassContext& ctx)
+				[this, sampledTexture, sampledTextureDescIndex, shadowRG, lightView, lightProj, lightDir, cubeModel, groundModel](renderGraph::PassContext& ctx)
 				{
 					const auto extent = ctx.passExtent;
 
@@ -137,95 +159,143 @@ export namespace rendern
 					ctx.commandList.SetState(state_);
 					ctx.commandList.BindPipeline(pso_);
 
-					ctx.commandList.BindInputLayout(mesh_.layout);
-					ctx.commandList.BindVertexBuffer(0, mesh_.vertexBuffer, mesh_.vertexStrideBytes, 0);
-
-					const bool hasIndices = (mesh_.indexBuffer.id != 0) && (mesh_.indexCount != 0);
-					if (hasIndices)
+					// Shadow map (slot1 / t1)
 					{
-						ctx.commandList.BindIndexBuffer(mesh_.indexBuffer, mesh_.indexType, 0);
+						const auto shadowTex = ctx.resources.GetTexture(shadowRG);
+						ctx.commandList.BindTexture2D(1, shadowTex);
 					}
 
-					// Per-draw constants for Mesh_dx12.hlsl
-					struct alignas(16) PerDrawConstants
-					{
-						std::array<float, 16> uMVP{};
-						std::array<float, 16> uLightMVP{};
-						std::array<float, 4>  uColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+					// Optional albedo texture (slot0 / t0)
+					const bool hasAlbedo =
+						(sampledTextureDescIndex != 0) || (sampledTexture.id != 0);
 
-						int   uUseTex{ 0 };
-						int   uUseShadow{ 1 };
-						float uShadowBias{ 0.0015f };
-						float _pad0{ 0.0f };
+					if (sampledTextureDescIndex != 0)
+					{
+						ctx.commandList.BindTextureDesc(0, sampledTextureDescIndex);
+					}
+					else if (sampledTexture.id != 0)
+					{
+						ctx.commandList.BindTexture2D(0, sampledTexture);
+					}
+
+					// ---------------- Per-draw constants (256 bytes) ----------------
+					// Must match assets/shaders/GlobalShader_dx12.hlsl (cbuffer PerDraw : b0)
+					struct alignas(16) PerDrawShadowedDirConstants
+					{
+						std::array<float, 16> uMVP{};         // 64
+						std::array<float, 16> uLightMVP{};    // 64
+						std::array<float, 12> uModelRows{};   // 48
+
+						std::array<float, 4>  uCameraAmbient{};    // cam.xyz, ambientStrength
+						std::array<float, 4>  uBaseColor{};        // rgba
+						std::array<float, 4>  uMaterialFlags{};    // shininess, specStrength, shadowBias, flagsPacked
+						std::array<float, 4>  uDir_DirIntensity{}; // dir.xyz (FROM light), intensity
+						std::array<float, 4>  uDir_Color{};        // rgb, unused
 					};
-					PerDrawConstants constants{};
+					static_assert(sizeof(PerDrawShadowedDirConstants) == 256);
+
+					auto WriteRow = [](const glm::mat4& m, int row, std::array<float, 12>& outRows, int rowIndex)
+						{
+							// GLM is column-major: m[col][row]
+							outRows[rowIndex * 4 + 0] = m[0][row];
+							outRows[rowIndex * 4 + 1] = m[1][row];
+							outRows[rowIndex * 4 + 2] = m[2][row];
+							outRows[rowIndex * 4 + 3] = m[3][row];
+						};
+
+					constexpr std::uint32_t kFlagUseTex = 1u << 0;
+					constexpr std::uint32_t kFlagUseShadow = 1u << 1;
+					constexpr std::uint32_t kFlagDirLight = 1u << 2;
 
 					const float aspect = extent.height
 						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
 						: 1.0f;
 
 					// Camera
-					// D3D clip space expects Z in [0..1]. Using glm::perspective() (OpenGL [-1..1])
-					// can clip most geometry and make the mesh effectively invisible.
+					const glm::vec3 camPos = glm::vec3(2.2f, 1.6f, 2.2f);
 					const glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(60.0f), aspect, 0.01f, 200.0f);
-					const glm::mat4 view = glm::lookAt(glm::vec3(2.2f, 1.6f, 2.2f), glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
-					const glm::mat4 model = glm::rotate(glm::mat4(1.0f), 0.8f, glm::vec3(0, 1, 0));
+					const glm::mat4 view = glm::lookAt(camPos, glm::vec3(0, 0, 0), glm::vec3(0, 1, 0));
 
-					// Light (must match ShadowPass)
-					const glm::vec3 lightDir = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f));
-					const glm::vec3 center = glm::vec3(0.0f, 0.0f, 0.0f);
-					const glm::vec3 lightPos = center - lightDir * 6.0f;
-					const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
-					const float orthoHalf = 4.0f;
-					const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 20.0f);
+					auto DrawLitMesh = [&](const MeshRHI& mesh, const glm::mat4& model, const glm::vec4& baseColor, bool useTex)
+						{
+							ctx.commandList.BindInputLayout(mesh.layout);
+							ctx.commandList.BindVertexBuffer(0, mesh.vertexBuffer, mesh.vertexStrideBytes, 0);
 
-					const glm::mat4 mvp = proj * view * model;
-					const glm::mat4 lightMVP = lightProj * lightView * model;
+							const bool hasIndices = (mesh.indexBuffer.id != 0) && (mesh.indexCount != 0);
+							if (hasIndices)
+							{
+								ctx.commandList.BindIndexBuffer(mesh.indexBuffer, mesh.indexType, 0);
+							}
 
-					std::memcpy(constants.uMVP.data(), glm::value_ptr(mvp), sizeof(float) * 16);
-					std::memcpy(constants.uLightMVP.data(), glm::value_ptr(lightMVP), sizeof(float) * 16);
+							PerDrawShadowedDirConstants constants{};
 
-					// Slot 0 = albedo, slot 1 = shadow map
-					if (sampledTextureDescIndex != 0)
-					{
-						ctx.commandList.BindTextureDesc(0, sampledTextureDescIndex);
-						constants.uUseTex = 1;
-					}
-					else if (sampledTexture)
-					{
-						ctx.commandList.BindTexture2D(0, sampledTexture);
-						constants.uUseTex = 1;
-					}
-					else
-					{
-						constants.uUseTex = 0;
-					}
+							const glm::mat4 mvp = proj * view * model;
+							const glm::mat4 lightMVP = lightProj * lightView * model;
 
-					// Shadow texture (created by render graph)
-					{
-						const auto shadowTex = ctx.resources.GetTexture(shadowRG);
-						ctx.commandList.BindTexture2D(1, shadowTex);
-					}
+							std::memcpy(constants.uMVP.data(), glm::value_ptr(mvp), sizeof(float) * 16);
+							std::memcpy(constants.uLightMVP.data(), glm::value_ptr(lightMVP), sizeof(float) * 16);
 
-					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+							WriteRow(model, 0, constants.uModelRows, 0);
+							WriteRow(model, 1, constants.uModelRows, 1);
+							WriteRow(model, 2, constants.uModelRows, 2);
 
-					if (hasIndices)
-					{
-						ctx.commandList.DrawIndexed(mesh_.indexCount, mesh_.indexType, 0, 0);
-					}
-					else
-					{
-						ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
-					}
+							// Camera + ambient
+							constants.uCameraAmbient = { camPos.x, camPos.y, camPos.z, 0.22f };
+
+							// Base color
+							constants.uBaseColor = { baseColor.x, baseColor.y, baseColor.z, baseColor.w };
+
+							// Flags
+							std::uint32_t flags = 0;
+							flags |= kFlagDirLight;
+							flags |= kFlagUseShadow;
+							if (useTex && hasAlbedo)
+							{
+								flags |= kFlagUseTex;
+							}
+
+							// Material
+							const float shininess = useTex ? 64.0f : 32.0f;
+							const float specStrength = useTex ? 0.5f : 0.15f;
+							const float shadowBias = 0.0015f;
+
+							constants.uMaterialFlags = {
+								shininess,
+								specStrength,
+								shadowBias,
+								static_cast<float>(flags)
+							};
+
+							// Directional light
+							constants.uDir_DirIntensity = { lightDir.x, lightDir.y, lightDir.z, 1.2f };
+							constants.uDir_Color = { 1.0f, 1.0f, 1.0f, 0.0f };
+
+							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+
+							if (hasIndices)
+							{
+								ctx.commandList.DrawIndexed(mesh.indexCount, mesh.indexType, 0, 0);
+							}
+							else
+							{
+								ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
+							}
+						};
+
+					// Ground first, then cube
+					DrawLitMesh(groundMesh_, groundModel, glm::vec4(0.8f, 0.8f, 0.8f, 1.0f), false);
+					DrawLitMesh(cubeMesh_, cubeModel, glm::vec4(1.0f, 1.0f, 1.0f, 1.0f), true);
 				});
 
 			graph.Execute(device_, swapChain);
 			swapChain.Present();
 		}
 
+
 		void Shutdown()
 		{
-			DestroyMesh(device_, mesh_);
+			DestroyMesh(device_, cubeMesh_);
+			DestroyMesh(device_, groundMesh_);
 			psoCache_.ClearCache();
 			shaderLibrary_.ClearCache();
 		}
@@ -233,24 +303,44 @@ export namespace rendern
 	private:
 		void CreateResources()
 		{
-			MeshCPU cpu{};
+			// -------- Cube (main mesh) --------
+			MeshCPU cubeCpu{};
 			try
 			{
 				const auto modelAbs = corefs::ResolveAsset(settings_.modelPath);
-				cpu = LoadObj(modelAbs);
+				cubeCpu = LoadObj(modelAbs);
 			}
 			catch (...)
 			{
-				cpu.vertices = {
+				cubeCpu.vertices = {
 					VertexDesc{-0.8f,-0.6f,0, 0,0,1, 0,0},
 					VertexDesc{ 0.8f,-0.6f,0, 0,0,1, 1,0},
 					VertexDesc{ 0.0f, 0.9f,0, 0,0,1, 0.5f,1},
 				};
-				cpu.indices = { 0,1,2 };
+				cubeCpu.indices = { 0,1,2 };
 			}
+			cpuFallbackVertexCount_ = cubeCpu.vertices.size();
+			cubeMesh_ = UploadMesh(device_, cubeCpu, "CubeMesh");
 
-			cpuFallbackVertexCount_ = cpu.vertices.size();
-			mesh_ = UploadMesh(device_, cpu, "MainMesh");
+			// -------- Ground (shadow receiver) --------
+			MeshCPU groundCpu{};
+			try
+			{
+				const auto quadAbs = corefs::ResolveAsset(std::filesystem::path("models") / "quad.obj");
+				groundCpu = LoadObj(quadAbs);
+			}
+			catch (...)
+			{
+				// Fallback quad in XY plane (will be rotated to XZ)
+				groundCpu.vertices = {
+					VertexDesc{-1,-1,0, 0,0,1, 0,0},
+					VertexDesc{ 1,-1,0, 0,0,1, 1,0},
+					VertexDesc{ 1, 1,0, 0,0,1, 1,1},
+					VertexDesc{-1, 1,0, 0,0,1, 0,1},
+				};
+				groundCpu.indices = { 0,1,2, 0,2,3 };
+			}
+			groundMesh_ = UploadMesh(device_, groundCpu, "GroundMesh");
 
 			std::filesystem::path vertexShaderPath;
 			std::filesystem::path pixelShaderPath;
@@ -259,15 +349,15 @@ export namespace rendern
 			switch (device_.GetBackend())
 			{
 			case rhi::Backend::DirectX12:
-				vertexShaderPath = corefs::ResolveAsset("shaders\\Mesh_dx12.hlsl");
+				vertexShaderPath = corefs::ResolveAsset("shaders\\GlobalShader_dx12.hlsl");
 				pixelShaderPath = vertexShaderPath;
 				shadowShaderPath = corefs::ResolveAsset("shaders\\Shadow_dx12.hlsl");
 				break;
 
 			case rhi::Backend::OpenGL:
 			default:
-				vertexShaderPath = corefs::ResolveAsset("shaders\\Mesh.vert");
-				pixelShaderPath = corefs::ResolveAsset("shaders\\Mesh.frag");
+				vertexShaderPath = corefs::ResolveAsset("shaders\\VS.vert");
+				pixelShaderPath = corefs::ResolveAsset("shaders\\FS.frag");
 				break;
 			}
 
@@ -319,7 +409,9 @@ export namespace rendern
 				shadowState_.depth.writeEnable = true;
 				shadowState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
 
-				shadowState_.rasterizer.cullMode = rhi::CullMode::Back;
+				// Disable culling for the demo so the ground plane always writes into the shadow map
+				// (avoids winding/normal issues after rotating the quad).
+				shadowState_.rasterizer.cullMode = rhi::CullMode::None;
 				shadowState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
 
 				shadowState_.blend.enable = false;
@@ -333,7 +425,8 @@ export namespace rendern
 		ShaderLibrary shaderLibrary_;
 		PSOCache psoCache_;
 
-		MeshRHI mesh_{};
+		MeshRHI cubeMesh_{};
+		MeshRHI groundMesh_{};
 
 		// Main pass
 		rhi::PipelineHandle pso_{};
