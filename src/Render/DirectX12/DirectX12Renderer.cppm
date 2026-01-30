@@ -203,23 +203,104 @@ export namespace rendern
 						ctx.commandList.SetState(shadowState_);
 						ctx.commandList.BindPipeline(psoShadow_);
 
+						// --- Instance data (ROWS!) -------------------------------------------------
+						struct alignas(16) InstanceData
+						{
+							glm::vec4 r0{};
+							glm::vec4 r1{};
+							glm::vec4 r2{};
+							glm::vec4 r3{};
+						};
+
+						struct ShadowBatch
+						{
+							const rendern::MeshRHI* mesh{};
+							std::uint32_t instanceOffset = 0; // in instances[]
+							std::uint32_t instanceCount = 0;
+						};
+
+						std::unordered_map<const rendern::MeshRHI*, std::vector<InstanceData>> tmp;
+						tmp.reserve(scene.drawItems.size());
+
 						for (const auto& item : scene.drawItems)
 						{
-							if (!item.mesh || item.mesh->indexCount == 0)
-								continue;
+							if (!item.mesh || item.mesh->indexCount == 0) continue;
 
 							const glm::mat4 model = item.transform.ToMatrix();
-							const glm::mat4 mvp = lightProj * lightView * model;
 
-							ShadowConstants c{};
-							std::memcpy(c.uMVP.data(), glm::value_ptr(mvp), sizeof(float) * 16);
+							// HLSL ожидает ROWS в IN.i0..i3, поэтому берём transpose и берём его columns:
+							const glm::mat4 mt = glm::transpose(model);
 
-							ctx.commandList.BindInputLayout(item.mesh->layout);
-							ctx.commandList.BindVertexBuffer(0, item.mesh->vertexBuffer, item.mesh->vertexStrideBytes, 0);
-							ctx.commandList.BindIndexBuffer(item.mesh->indexBuffer, item.mesh->indexType, 0);
+							InstanceData inst{};
+							inst.r0 = mt[0];
+							inst.r1 = mt[1];
+							inst.r2 = mt[2];
+							inst.r3 = mt[3];
 
-							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
-							ctx.commandList.DrawIndexed(item.mesh->indexCount, item.mesh->indexType, 0, 0);
+							tmp[item.mesh].push_back(inst);
+						}
+
+						std::vector<InstanceData> instances;
+						instances.reserve(scene.drawItems.size());
+
+						std::vector<ShadowBatch> batches;
+						batches.reserve(tmp.size());
+
+						for (auto& [mesh, vec] : tmp)
+						{
+							if (!mesh || vec.empty()) continue;
+
+							ShadowBatch b{};
+							b.mesh = mesh;
+							b.instanceOffset = static_cast<std::uint32_t>(instances.size());
+							b.instanceCount = static_cast<std::uint32_t>(vec.size());
+
+							instances.insert(instances.end(), vec.begin(), vec.end());
+							batches.push_back(b);
+						}
+
+						if (!instances.empty())
+						{
+							const std::size_t bytes = instances.size() * sizeof(InstanceData);
+							if (bytes > shadowInstanceBufferSizeBytes_)
+							{
+								throw std::runtime_error("ShadowPass: shadowInstanceBuffer_ overflow (increase shadowInstanceBufferSizeBytes_)");
+							}
+							device_.UpdateBuffer(shadowInstanceBuffer_, std::as_bytes(std::span{ instances }));
+						}
+
+						// --- Per-pass constants (одни на все draw calls) ---------------------------
+						struct alignas(16) ShadowConstants
+						{
+							std::array<float, 16> uLightViewProj{};
+						};
+
+						const glm::mat4 lightViewProj = lightProj * lightView;
+
+						ShadowConstants c{};
+						std::memcpy(c.uLightViewProj.data(), glm::value_ptr(lightViewProj), sizeof(float) * 16);
+						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+
+						// --- Draw instanced -------------------------------------------------------
+						const std::uint32_t instStride = static_cast<std::uint32_t>(sizeof(InstanceData));
+
+						for (const ShadowBatch& b : batches)
+						{
+							if (!b.mesh || b.instanceCount == 0) continue;
+
+							ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
+
+							ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
+							ctx.commandList.BindVertexBuffer(1, shadowInstanceBuffer_, instStride, b.instanceOffset * instStride);
+
+							ctx.commandList.BindIndexBuffer(b.mesh->indexBuffer, b.mesh->indexType, 0);
+
+							ctx.commandList.DrawIndexed(
+								b.mesh->indexCount,
+								b.mesh->indexType,
+								0, 0,
+								b.instanceCount,
+								0);
 						}
 					});
 			}
@@ -403,6 +484,10 @@ export namespace rendern
 			{
 				device_.DestroyBuffer(instanceBuffer_);
 			}
+			if (shadowInstanceBuffer_)
+			{
+				device_.DestroyBuffer(shadowInstanceBuffer_);
+			}
 			if (lightsBuffer_)
 			{
 				device_.DestroyBuffer(lightsBuffer_);
@@ -570,6 +655,15 @@ export namespace rendern
 					id.debugName = "InstanceVB";
 					instanceBuffer_ = device_.CreateBuffer(id);
 				}
+				// Per-instance model matrices for ShadowPass (slot1)
+				{
+					rhi::BufferDesc id{};
+					id.bindFlag = rhi::BufferBindFlag::VertexBuffer;
+					id.usageFlag = rhi::BufferUsageFlag::Dynamic;
+					id.sizeInBytes = shadowInstanceBufferSizeBytes_;
+					id.debugName = "ShadowInstanceVB";
+					shadowInstanceBuffer_ = device_.CreateBuffer(id);
+				}
 			}
 		}
 
@@ -589,6 +683,9 @@ export namespace rendern
 
 		rhi::BufferHandle instanceBuffer_{};
 		std::uint32_t instanceBufferSizeBytes_{ kDefaultInstanceBufferSizeBytes };
+
+		rhi::BufferHandle shadowInstanceBuffer_{};
+		std::uint32_t shadowInstanceBufferSizeBytes_{ kDefaultInstanceBufferSizeBytes };
 
 		// Shadow pass
 		rhi::PipelineHandle psoShadow_{};
