@@ -19,7 +19,7 @@ export namespace rendern
 
 	bool StartsWithTrimmed(std::string_view line, std::string_view token)
 	{
-		size_t idx = line.find_first_not_of("\t");
+		size_t idx = line.find_first_not_of(" \t");
 		if (idx == std::string_view::npos)
 		{
 			return false;
@@ -111,7 +111,7 @@ export namespace rendern
 				{
 					defineStr[equation] = ' ';
 				}
-				return std::string("define ") + defineStr + "\n";
+				return std::string("#define ") + defineStr + "\n";
 			};
 
 		std::string definesBlock;

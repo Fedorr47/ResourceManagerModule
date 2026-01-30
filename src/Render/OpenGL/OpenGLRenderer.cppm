@@ -57,7 +57,6 @@ export namespace rendern
 						static_cast<int>(extent.height));
 
 					ctx.commandList.SetState(state_);
-					ctx.commandList.BindPipeline(pso_);
 
 					const float aspect = extent.height
 						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
@@ -76,6 +75,12 @@ export namespace rendern
 						if (hasIndices)
 							ctx.commandList.BindIndexBuffer(mesh.indexBuffer, mesh.indexType, 0);
 
+						const bool useTex = (mat.albedoDescIndex != 0);
+
+						// Pipeline permutation (compile-time flags). We still keep uUseTex uniform
+						// as a runtime fallback if the shader uses it.
+						ctx.commandList.BindPipeline(useTex ? psoTex_ : psoNoTex_);
+
 						// Uniforms (name-based path; typical for GL)
 						ctx.commandList.SetUniformInt("uTex", 0);
 						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.r, mat.baseColor.g, mat.baseColor.b, mat.baseColor.a });
@@ -86,7 +91,7 @@ export namespace rendern
 						std::memcpy(mvpArr.data(), glm::value_ptr(mvp), sizeof(float) * 16);
 						ctx.commandList.SetUniformMat4("uMVP", mvpArr);
 
-						if (mat.albedoDescIndex != 0)
+						if (useTex)
 						{
 							ctx.commandList.BindTextureDesc(0, mat.albedoDescIndex);
 							ctx.commandList.SetUniformInt("uUseTex", 1);
@@ -117,8 +122,18 @@ export namespace rendern
 						if (!item.mesh)
 							continue;
 
+						MaterialParams mat{};
+						if (item.material.id != 0)
+						{
+							mat = scene.GetMaterial(item.material).params;
+						}
+						else
+						{
+							mat.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+						}
+
 						const glm::mat4 model = item.transform.ToMatrix();
-						DrawOne(*item.mesh, model, item.material);
+						DrawOne(*item.mesh, model, mat);
 					}
 				});
 
@@ -181,7 +196,23 @@ export namespace rendern
 				.defines = {}
 				});
 
-			pso_ = psoCache_.GetOrCreate("PSO_Mesh", vertexShader, pixelShader);
+			// Permutation: USE_TEX=1
+			const auto vertexShaderTex = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Mesh",
+				.filePath = vertexShaderPath.string(),
+				.defines = { "USE_TEX=1" }
+				});
+			const auto pixelShaderTex = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_Mesh",
+				.filePath = pixelShaderPath.string(),
+				.defines = { "USE_TEX=1" }
+				});
+
+			psoTex_ = psoCache_.GetOrCreate("PSO_Mesh_Tex", vertexShaderTex, pixelShaderTex);
+
+			psoNoTex_ = psoCache_.GetOrCreate("PSO_Mesh_NoTex", vertexShader, pixelShader);
 
 			state_.depth.testEnable = true;
 			state_.depth.writeEnable = true;
@@ -200,7 +231,8 @@ export namespace rendern
 		PSOCache psoCache_;
 
 		MeshRHI mesh_{}; // fallback-only
-		rhi::PipelineHandle pso_{};
+		rhi::PipelineHandle psoNoTex_{};
+		rhi::PipelineHandle psoTex_{};
 		rhi::GraphicsState state_{};
 
 		std::size_t cpuFallbackVertexCount_{ 0 };

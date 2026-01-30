@@ -189,12 +189,15 @@ set(COMMON_MODULES
   Render/GpuMemory.cppm
   Render/RendererSettings.cppm
   Render/Renderer.cppm
-  Render/SceneBridge.cppm
-  Render/ShaderSystem.cppm
+  
   Render/Sync.cppm
-  Render/ShaderFiles.cppm
   Render/FileSystem.cppm
-  Render/Scene.cppm
+
+  Render/Shader/ShaderFiles.cppm
+  Render/Shader/ShaderSystem.cppm
+
+  Render/Scene/SceneBridge.cppm
+  Render/Scene/Scene.cppm
 
   Render/Model/ObjLoader.cppm
   Render/Model/Mesh/Mesh.cppm

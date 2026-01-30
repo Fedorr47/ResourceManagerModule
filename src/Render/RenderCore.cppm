@@ -6,6 +6,7 @@ module;
 #include <optional>
 #include <unordered_map>
 #include <functional>
+#include <cctype>
 
 export module core:render_core;
 
@@ -40,15 +41,25 @@ export namespace rendern
 
 	struct ShaderKeyHash
 	{
+		static void HashCombine(std::size_t& h, std::size_t v) noexcept
+		{
+			h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+		}
+
 		std::size_t operator()(const ShaderKey& key) const noexcept
 		{
-			std::size_t h1 = std::hash<std::string>{}(key.name);
-			std::size_t h2 = 0;
+			std::size_t h = 0;
+
+			HashCombine(h, std::hash<std::uint32_t>{}(static_cast<std::uint32_t>(key.stage)));
+			HashCombine(h, std::hash<std::string>{}(key.name));
+			HashCombine(h, std::hash<std::string>{}(key.filePath));
+
 			for (const auto& def : key.defines)
 			{
-				h2 ^= std::hash<std::string>{}(def) + 0x9e3779b9 + (h2 << 6) + (h2 >> 2);
+				HashCombine(h, std::hash<std::string>{}(def));
 			}
-			return h1 ^ (h2 << 1);
+
+			return h;
 		}
 	};
 
@@ -59,14 +70,61 @@ export namespace rendern
 
 		rhi::ShaderHandle GetOrCreateShader(const ShaderKey& key)
 		{
-			
 			if (auto it = shaderCache_.find(key); it != shaderCache_.end())
 			{
 				return it->second;
 			}
 
-			const auto textSource = FILE_UTILS::LoadTextFile(std::filesystem::path(key.filePath));
-			rhi::ShaderHandle shader = device_.CreateShader(key.stage, key.name, textSource.text);
+			const std::filesystem::path path = std::filesystem::path(key.filePath);
+
+			auto IsGLSL = [](std::filesystem::path p) -> bool
+			{
+				auto ext = p.extension().string();
+				for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+				return ext == ".vert" || ext == ".frag" || ext == ".glsl";
+			};
+
+			auto ApplyDefinesToHLSL = [](std::string_view source, const std::vector<std::string>& defines) -> std::string
+			{
+				if (defines.empty())
+				{
+					return std::string(source);
+				}
+
+				std::string out;
+				out.reserve(source.size() + defines.size() * 24);
+
+				for (std::string def : defines)
+				{
+					auto eq = def.find('=');
+					if (eq != std::string::npos)
+					{
+						def[eq] = ' ';
+					}
+					out += "#define ";
+					out += def;
+					out += "\n";
+				}
+
+				out.append(source);
+				return out;
+			};
+
+			FILE_UTILS::TextFile textSource;
+			std::string finalText;
+
+			if (IsGLSL(path))
+			{
+				textSource = LoadGLSLWithIncludes(path);
+				finalText = AppplyDefinesToGLSL(textSource.text, key.defines);
+			}
+			else
+			{
+				textSource = FILE_UTILS::LoadTextFile(path);
+				finalText = ApplyDefinesToHLSL(textSource.text, key.defines);
+			}
+
+			rhi::ShaderHandle shader = device_.CreateShader(key.stage, key.name, finalText);
 			shaderCache_.emplace(key, shader);
 			return shader;
 		}

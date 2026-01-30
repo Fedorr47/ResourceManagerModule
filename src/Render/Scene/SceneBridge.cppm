@@ -26,11 +26,6 @@ export namespace rendern
 		std::uint32_t id{};
 	};
 
-	struct MaterialHandle
-	{
-		std::uint32_t id{};
-	};
-
 	class RenderWorld
 	{
 	public:

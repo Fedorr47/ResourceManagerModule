@@ -3,6 +3,7 @@ module;
 #include <cstdint>
 #include <vector>
 #include <span>
+#include <stdexcept>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -83,18 +84,65 @@ export namespace rendern
 		rhi::TextureDescIndex albedoDescIndex{ 0 };
 	};
 
+	enum class MaterialPerm : std::uint32_t
+	{
+		None      = 0,
+		UseTex    = 1u << 0,
+		UseShadow = 1u << 1,
+		Skinning  = 1u << 2, // later
+	};
+
+	constexpr MaterialPerm operator|(MaterialPerm a, MaterialPerm b) noexcept
+	{
+		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
+	}
+	constexpr MaterialPerm operator&(MaterialPerm a, MaterialPerm b) noexcept
+	{
+		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
+	}
+	constexpr MaterialPerm& operator|=(MaterialPerm& a, MaterialPerm b) noexcept
+	{
+		a = a | b;
+		return a;
+	}
+	constexpr bool HasFlag(MaterialPerm a, MaterialPerm b) noexcept
+	{
+		return static_cast<std::uint32_t>(a & b) != 0;
+	}
+
+	struct MaterialTag {};
+	using MaterialHandle = rhi::Handle<MaterialTag>;
+	// Material = "how we draw": parameters + textures + permutation flags.
+	// NOTE: UseTex is inferred automatically if albedoDescIndex != 0.
+	struct Material
+	{
+		MaterialParams params{};
+		MaterialPerm permFlags{ MaterialPerm::UseShadow };
+	};
+
+	inline MaterialPerm EffectivePerm(const Material& m) noexcept
+	{
+		MaterialPerm p = m.permFlags;
+		if (m.params.albedoDescIndex != 0)
+		{
+			p |= MaterialPerm::UseTex;
+		}
+		return p;
+	}
+
 	struct DrawItem
 	{
 		// Renderer does NOT own the mesh. Caller is responsible for Upload/Destroy.
 		const MeshRHI* mesh{ nullptr };
 		Transform transform{};
-		MaterialParams material{};
+		MaterialHandle material{};
 	};
 
 	class Scene
 	{
 	public:
-		Camera camera{};
+		rendern::Camera camera{};
+		std::vector<Material> materials; // persistent "assets" owned by Scene
 		std::vector<DrawItem> drawItems;
 		std::vector<Light> lights;
 
@@ -102,6 +150,30 @@ export namespace rendern
 		{
 			drawItems.clear();
 			lights.clear();
+		}
+
+		MaterialHandle CreateMaterial(const Material& m)
+		{
+			materials.push_back(m);
+			return MaterialHandle{ static_cast<std::uint32_t>(materials.size()) }; // id is 1-based
+		}
+
+		const Material& GetMaterial(MaterialHandle h) const
+		{
+			if (h.id == 0 || h.id > materials.size())
+			{
+				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
+			}
+			return materials[h.id - 1];
+		}
+
+		Material& GetMaterial(MaterialHandle h)
+		{
+			if (h.id == 0 || h.id > materials.size())
+			{
+				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
+			}
+			return materials[h.id - 1];
 		}
 
 		DrawItem& AddDraw(const DrawItem& item)
@@ -115,6 +187,9 @@ export namespace rendern
 			lights.push_back(l);
 			return lights.back();
 		}
+
+		std::span<const Material> GetMaterials() const { return materials; }
+		std::span<Material> GetMaterials() { return materials; }
 
 		std::span<const DrawItem> GetDrawItems() const { return drawItems; }
 		std::span<DrawItem> GetDrawItems() { return drawItems; }

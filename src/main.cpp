@@ -299,7 +299,7 @@ int main(int argc, char** argv)
         scene.Clear();
 
         // Camera
-        scene.camera.position = { 2.2f, 1.6f, 10.2f };
+        scene.camera.position = { 2.2f, 10.6f, 10.2f };
         scene.camera.target = { 0.0f, 0.0f, 0.0f };
         scene.camera.up = { 0.0f, 1.0f, 0.0f };
         scene.camera.fovYDeg = 60.0f;
@@ -312,7 +312,7 @@ int main(int argc, char** argv)
             l.type = rendern::LightType::Directional;
             l.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
             l.color = { 1.0f, 1.0f, 1.0f };
-            l.intensity = 1.2f;
+            l.intensity = 0.5f;
             scene.AddLight(l);
         }
         {
@@ -321,7 +321,7 @@ int main(int argc, char** argv)
             l.position = { 2.5f, 2.0f, 1.5f };
             l.color = { 1.0f, 0.95f, 0.8f };
             l.range = 12.0f;
-            l.intensity = 2.0f;
+            l.intensity = 0.0f;
             l.attConstant = 1.0f;
             l.attLinear = 0.12f;
             l.attQuadratic = 0.04f;
@@ -332,7 +332,7 @@ int main(int argc, char** argv)
             l.type = rendern::LightType::Spot;
             l.position = scene.camera.position;
             l.direction = mathUtils::Normalize(mathUtils::Sub(scene.camera.target, scene.camera.position)); // FROM light
-            l.color = { 0.8f, 0.9f, 1.0f };
+            l.color = { 0.2f, 0.1f, 1.0f };
             l.range = 30.0f;
             l.intensity = 3.0f;
             l.innerAngleDeg = 12.0f;
@@ -343,20 +343,37 @@ int main(int argc, char** argv)
         }
 
         // Draw items: ground + cube
+		// Materials (Stage 3)
+		rendern::Material groundMat{};
+		groundMat.params.baseColor = { 0.8f, 0.8f, 0.8f, 1.0f };
+		groundMat.params.albedoDescIndex = 0;
+		groundMat.params.shininess = 16.0f;
+		groundMat.params.specStrength = 0.05f;
+		groundMat.params.shadowBias = 0.0015f;
+		groundMat.permFlags = rendern::MaterialPerm::UseShadow; // no tex
+
+		rendern::Material cubeMat{};
+		cubeMat.params.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+		cubeMat.params.albedoDescIndex = 0; // will be set once descriptor is allocated
+		cubeMat.params.shininess = 64.0f;
+		cubeMat.params.specStrength = 0.5f;
+		cubeMat.params.shadowBias = 0.0015f;
+		cubeMat.permFlags = rendern::MaterialPerm::UseShadow; // tex inferred automatically from descriptor
+
+		rendern::MaterialHandle groundMatH = scene.CreateMaterial(groundMat);
+		rendern::MaterialHandle cubeMatH = scene.CreateMaterial(cubeMat);
+
+
         {
             rendern::DrawItem ground{};
-            ground.mesh = &groundMesh;
-            ground.transform.position = { 0.0f, -0.6f, 0.0f };
-            ground.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
-            ground.transform.scale = { 8.0f, 8.0f, 8.0f };
+			ground.mesh = &groundMesh;
+			ground.transform.position = { 0.0f, -0.6f, 0.0f };
+			ground.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
+			ground.transform.scale = { 8.0f, 8.0f, 8.0f };
 
-            ground.material.baseColor = { 0.8f, 0.8f, 0.8f, 1.0f };
-            ground.material.albedoDescIndex = 0;
-            ground.material.shininess = 16.0f;
-            ground.material.specStrength = 0.05f;
-            ground.material.shadowBias = 0.0015f;
+			ground.material = groundMatH;
 
-            scene.AddDraw(ground);
+			scene.AddDraw(ground);
         }
 
         rhi::TextureDescIndex brickDesc = 0;
@@ -371,22 +388,18 @@ int main(int argc, char** argv)
                 for (int x = 0; x < kDim; ++x)
                 {
                     rendern::DrawItem cube{};
-                    cube.mesh = &cubeMesh;
+					cube.mesh = &cubeMesh;
 
-                    const float fx = (x - (kDim / 2)) * kStep;
-                    const float fz = (z - (kDim / 2)) * kStep;
+					const float fx = (x - (kDim / 2)) * kStep;
+					const float fz = (z - (kDim / 2)) * kStep;
 
-                    cube.transform.position = { fx, 0.6f, fz };
-                    cube.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
-                    cube.transform.scale = { 1.0f, 1.0f, 1.0f };
+					cube.transform.position = { fx, 0.6f, fz };
+					cube.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
+					cube.transform.scale = { 1.0f, 1.0f, 1.0f };
 
-                    cube.material.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
-                    cube.material.albedoDescIndex = 0;
-                    cube.material.shininess = 64.0f;
-                    cube.material.specStrength = 0.5f;
-                    cube.material.shadowBias = 0.0015f;
+					cube.material = cubeMatH;
 
-                    scene.AddDraw(cube);
+					scene.AddDraw(cube);
                 }
             }
         }
@@ -416,14 +429,11 @@ int main(int argc, char** argv)
             if (brick && brickDesc == 0)
                 brickDesc = device->AllocateTextureDesctiptor(brick);
 
-            // Update cube materials once descriptor is ready(ground is[0], cubes are[1..])
-            if (brickDesc != 0 && scene.drawItems.size() >= 2)
-            {
-                for (std::size_t i = 1; i < scene.drawItems.size(); ++i)
-                {
-                    scene.drawItems[i].material.albedoDescIndex = brickDesc;
-                }
-            }
+            // Update cube material once descriptor is ready
+			if (brickDesc != 0)
+			{
+				scene.GetMaterial(cubeMatH).params.albedoDescIndex = brickDesc;
+			}
 
             // Animate cube rotation
             const auto now = clock::now();

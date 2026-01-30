@@ -990,9 +990,41 @@ export namespace rhi
 
             auto EnsurePSO = [&](PipelineHandle pipelineHandle, InputLayoutHandle layout) -> ID3D12PipelineState*
                 {
-                    const std::uint64_t key =
-                        (static_cast<std::uint64_t>(pipelineHandle.id) << 32ull) |
-                        (static_cast<std::uint64_t>(layout.id) & 0xffffffffull);
+                    auto PackState = [&](const GraphicsState& s) -> std::uint32_t
+                        {
+                            std::uint32_t v = 0;
+                            v |= (static_cast<std::uint32_t>(s.rasterizer.cullMode) & 0x3u) << 0;
+                            v |= (static_cast<std::uint32_t>(s.rasterizer.frontFace) & 0x1u) << 2;
+                            v |= (s.depth.testEnable ? 1u : 0u) << 3;
+                            v |= (s.depth.writeEnable ? 1u : 0u) << 4;
+                            v |= (static_cast<std::uint32_t>(s.depth.depthCompareOp) & 0x7u) << 5;
+                            v |= (s.blend.enable ? 1u : 0u) << 8;
+                            return v;
+                        };
+
+                    auto Fnv1a64 = [](std::uint64_t h, std::uint64_t v) -> std::uint64_t
+                        {
+                            constexpr std::uint64_t kPrime = 1099511628211ull;
+                            for (int i = 0; i < 8; ++i)
+                            {
+                                const std::uint8_t byte = static_cast<std::uint8_t>((v >> (i * 8)) & 0xffu);
+                                h ^= byte;
+                                h *= kPrime;
+                            }
+                            return h;
+                        };
+
+                    // PSO cache key MUST include: shaders, state, layout, and render-target formats.
+                    std::uint64_t key = 1469598103934665603ull; // FNV-1a offset basis
+                    key = Fnv1a64(key, static_cast<std::uint64_t>(pipelineHandle.id));
+                    key = Fnv1a64(key, static_cast<std::uint64_t>(layout.id));
+                    key = Fnv1a64(key, static_cast<std::uint64_t>(PackState(curState)));
+                    key = Fnv1a64(key, static_cast<std::uint64_t>(curNumRT));
+                    key = Fnv1a64(key, static_cast<std::uint64_t>(curDSVFormat));
+                    for (std::size_t i = 0; i < curRTVFormats.size(); ++i)
+                    {
+                        key = Fnv1a64(key, static_cast<std::uint64_t>(curRTVFormats[i]));
+                    }
 
                     if (auto it = psoCache_.find(key); it != psoCache_.end())
                     {

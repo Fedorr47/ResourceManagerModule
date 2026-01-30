@@ -58,6 +58,7 @@ export namespace rendern
 		float shininess{};
 		float specStrength{};
 		float shadowBias{};
+		MaterialHandle material{};
 	};
 
 	struct BatchKeyHash
@@ -80,14 +81,7 @@ export namespace rendern
 		std::size_t operator()(const BatchKey& k) const noexcept
 		{
 			std::size_t h = HashPtr(k.mesh);
-			HashCombine(h, HashU32((std::uint32_t)k.albedoDescIndex));
-			HashCombine(h, HashU32(FBits(k.baseColor.x)));
-			HashCombine(h, HashU32(FBits(k.baseColor.y)));
-			HashCombine(h, HashU32(FBits(k.baseColor.z)));
-			HashCombine(h, HashU32(FBits(k.baseColor.w)));
-			HashCombine(h, HashU32(FBits(k.shininess)));
-			HashCombine(h, HashU32(FBits(k.specStrength)));
-			HashCombine(h, HashU32(FBits(k.shadowBias)));
+			HashCombine(h, HashU32(k.material.id));
 			return h;
 		}
 	};
@@ -96,18 +90,14 @@ export namespace rendern
 	{
 		bool operator()(const BatchKey& a, const BatchKey& b) const noexcept
 		{
-			return a.mesh == b.mesh &&
-				a.albedoDescIndex == b.albedoDescIndex &&
-				a.baseColor == b.baseColor &&
-				a.shininess == b.shininess &&
-				a.specStrength == b.specStrength &&
-				a.shadowBias == b.shadowBias;
+			return a.mesh == b.mesh && a.material.id == b.material.id;
 		}
 	};
 
 	struct BatchTemp
 	{
 		MaterialParams material{};
+		MaterialHandle materialHandle{};
 		std::vector<InstanceData> inst;
 	};
 
@@ -115,6 +105,7 @@ export namespace rendern
 	{
 		const rendern::MeshRHI* mesh{};
 		MaterialParams material{};
+		MaterialHandle materialHandle{};
 		std::uint32_t instanceOffset = 0; // in instances[]
 		std::uint32_t instanceCount = 0;
 	};
@@ -321,7 +312,6 @@ export namespace rendern
 						static_cast<int>(extent.height));
 
 					ctx.commandList.SetState(state_);
-					ctx.commandList.BindPipeline(pso_);
 
 					// Bind shadow map at slot 1 (t1)
 					{
@@ -352,13 +342,13 @@ export namespace rendern
 
 						BatchKey key{};
 						key.mesh = item.mesh;
+						key.material = item.material;
 
-						// IMPORTANT: use the material state as of this frame.
-						key.albedoDescIndex = item.material.albedoDescIndex;
-						key.baseColor = item.material.baseColor;
-						key.shininess = item.material.shininess;
-						key.specStrength = item.material.specStrength;
-						key.shadowBias = item.material.shadowBias;
+						MaterialParams params{};
+						if (item.material.id != 0)
+						{
+							params = scene.GetMaterial(item.material).params;
+						}
 
 						// Build instance data
 						const glm::mat4 model = item.transform.ToMatrix();
@@ -371,7 +361,10 @@ export namespace rendern
 
 						auto& bucket = tmp[key];
 						if (bucket.inst.empty())
-							bucket.material = item.material; // store representative material for this batch
+						{
+							bucket.materialHandle = item.material;
+							bucket.material = params; // representative material for this batch
+						}
 						bucket.inst.push_back(inst);
 					}
 
@@ -391,6 +384,7 @@ export namespace rendern
 
 						Batch b{};
 						b.mesh = key.mesh;
+						b.materialHandle = bt.materialHandle;
 						b.material = bt.material;
 						b.instanceOffset = static_cast<std::uint32_t>(instances.size());
 						b.instanceCount = static_cast<std::uint32_t>(bt.inst.size());
@@ -436,15 +430,27 @@ export namespace rendern
 							continue;
 						}
 						
+						MaterialPerm perm = MaterialPerm::UseShadow;
+						if (b.materialHandle.id != 0)
+						{
+							perm = EffectivePerm(scene.GetMaterial(b.materialHandle));
+						}
+						else
+						{
+							// Fallback: infer only from params.
+							if (b.material.albedoDescIndex != 0)
+								perm |= MaterialPerm::UseTex;
+						}
+
+						const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
+						const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+
+						ctx.commandList.BindPipeline(MainPipelineFor(perm));
 						ctx.commandList.BindTextureDesc(0, b.material.albedoDescIndex);
 
-						const bool useTex = (b.material.albedoDescIndex != 0);
 						std::uint32_t flags = 0;
-						if (useTex)
-						{
-							flags |= kFlagUseTex;
-						}
-						flags |= kFlagUseShadow; // shadow map already bound at slot 1
+						if (useTex)    flags |= kFlagUseTex;
+						if (useShadow) flags |= kFlagUseShadow;
 
 						// --- constants ---
 						PerBatchConstants constatntsBatch{};
@@ -497,6 +503,14 @@ export namespace rendern
 		}
 
 	private:
+		rhi::PipelineHandle MainPipelineFor(MaterialPerm perm) const noexcept
+		{
+			const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
+			const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+			const std::uint32_t idx = (useTex ? 1u : 0u) | (useShadow ? 2u : 0u);
+			return psoMain_[idx];
+		}
+
 		static float AsFloatBits(std::uint32_t u) noexcept
 		{
 			float f{};
@@ -576,22 +590,41 @@ export namespace rendern
 				break;
 			}
 
-			// Main pipeline
+			// Main pipeline permutations (UseTex / UseShadow)
 			{
-				const auto vs = shaderLibrary_.GetOrCreateShader(ShaderKey{
-					.stage = rhi::ShaderStage::Vertex,
-					.name = "VS_Mesh",
-					.filePath = shaderPath.string(),
-					.defines = {}
-				});
-				const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
-					.stage = rhi::ShaderStage::Pixel,
-					.name = "PS_Mesh",
-					.filePath = shaderPath.string(),
-					.defines = {}
-				});
+				auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
+				{
+					std::vector<std::string> d;
+					if (useTex)    d.push_back("USE_TEX=1");
+					if (useShadow) d.push_back("USE_SHADOW=1");
+					return d;
+				};
 
-				pso_ = psoCache_.GetOrCreate("PSO_Mesh", vs, ps);
+				for (std::uint32_t idx = 0; idx < 4; ++idx)
+				{
+					const bool useTex = (idx & 1u) != 0;
+					const bool useShadow = (idx & 2u) != 0;
+					const auto defs = MakeDefines(useTex, useShadow);
+
+					const auto vs = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Vertex,
+						.name = "VS_Mesh",
+						.filePath = shaderPath.string(),
+						.defines = defs
+					});
+					const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Pixel,
+						.name = "PS_Mesh",
+						.filePath = shaderPath.string(),
+						.defines = defs
+					});
+
+					std::string psoName = "PSO_Mesh";
+					if (useTex) psoName += "_Tex";
+					if (useShadow) psoName += "_Shadow";
+
+					psoMain_[idx] = psoCache_.GetOrCreate(psoName, vs, ps);
+				}
 
 				state_.depth.testEnable = true;
 				state_.depth.writeEnable = true;
@@ -678,7 +711,7 @@ export namespace rendern
 		PSOCache psoCache_;
 
 		// Main pass
-		rhi::PipelineHandle pso_{};
+		std::array<rhi::PipelineHandle, 4> psoMain_{}; // idx: (UseTex?1:0)|(UseShadow?2:0)
 		rhi::GraphicsState state_{};
 
 		rhi::BufferHandle instanceBuffer_{};
