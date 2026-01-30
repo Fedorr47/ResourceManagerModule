@@ -207,6 +207,8 @@ set(COMMON_MODULES
   Assets/ResourceManager.ixx
   Assets/ResourceManager_core.cppm
   Assets/ResourceManager_texture.cppm
+  Assets/ResourceManager_mesh.cppm
+  Assets/AssetManager.cppm
 )
 
 set(GL_MODULES

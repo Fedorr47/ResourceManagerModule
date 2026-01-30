@@ -263,14 +263,17 @@ int main(int argc, char** argv)
         std::unique_ptr<rhi::IRHISwapChain> swapChain;
         CreateDeviceAndSwapChain(requestedBackend, wnd, W, H, device, swapChain);
 
-        // ResourceManager: STB decoder + backend-specific uploader
+        // Asset/Resource system: CPU decode on job system, GPU upload on render queue.
         StbTextureDecoder decoder{};
-        rendern::JobSystemImmediate jobs{};
+        rendern::JobSystemThreadPool jobs{ 1 };
         rendern::RenderQueueImmediate rq{};
         auto uploader = CreateTextureUploader(device->GetBackend(), *device);
 
-        TextureIO io{ decoder, *uploader, jobs, rq };
-        ResourceManager rm;
+        TextureIO texIO{ decoder, *uploader, jobs, rq };
+        rendern::MeshIO meshIO{ *device, jobs, rq };
+
+        AssetManager assets{ texIO, meshIO };
+        ResourceManager& rm = assets.GetResourceManager();
 
         // Load brick texture
         TextureProperties brickProps{};
@@ -278,21 +281,15 @@ int main(int argc, char** argv)
         brickProps.generateMips = true;
         brickProps.srgb = true;
 
-        (void)rm.LoadAsync<TextureResource>("brick", io, brickProps);
+        (void)assets.LoadTextureAsync("brick", brickProps);
 
         // Renderer (facade) - Stage1 expects Scene
         rendern::RendererSettings rs{};
         rendern::Renderer renderer{ *device, rs };
 
-        // Upload meshes for Scene
-        rendern::MeshRHI cubeMesh{};
-        rendern::MeshRHI groundMesh{};
-        {
-            rendern::MeshCPU cubeCpu = rendern::LoadObj(corefs::ResolveAsset(std::filesystem::path("models") / "cube.obj"));
-            rendern::MeshCPU quadCpu = rendern::LoadObj(corefs::ResolveAsset(std::filesystem::path("models") / "quad.obj"));
-            cubeMesh = UploadMesh(*device, cubeCpu, "CubeMesh");
-            groundMesh = UploadMesh(*device, quadCpu, "GroundMesh");
-        }
+        // Request meshes asynchronously (Scene stores handles; renderer skips pending resources).
+        auto cubeMeshH = assets.LoadMeshAsync((std::filesystem::path("models") / "cube.obj").string());
+        auto groundMeshH = assets.LoadMeshAsync((std::filesystem::path("models") / "quad.obj").string());
 
         // Scene setup
         rendern::Scene scene;
@@ -366,7 +363,7 @@ int main(int argc, char** argv)
 
         {
             rendern::DrawItem ground{};
-			ground.mesh = &groundMesh;
+			ground.mesh = groundMeshH;
 			ground.transform.position = { 0.0f, -0.6f, 0.0f };
 			ground.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
 			ground.transform.scale = { 8.0f, 8.0f, 8.0f };
@@ -388,7 +385,7 @@ int main(int argc, char** argv)
                 for (int x = 0; x < kDim; ++x)
                 {
                     rendern::DrawItem cube{};
-					cube.mesh = &cubeMesh;
+					cube.mesh = cubeMeshH;
 
 					const float fx = (x - (kDim / 2)) * kStep;
 					const float fz = (z - (kDim / 2)) * kStep;
@@ -414,7 +411,7 @@ int main(int argc, char** argv)
             glfwPollEvents();
 
             // Drive uploads/destruction
-            rm.ProcessUploads<TextureResource>(io, 8, 32);
+            assets.ProcessUploads(8, 32, 2, 32);
 
             // Get brick GPU texture from RM
             rhi::TextureHandle brick{};
@@ -469,8 +466,10 @@ int main(int argc, char** argv)
         if (brickDesc != 0)
             device->FreeTextureDescriptor(brickDesc);
 
-        DestroyMesh(*device, cubeMesh);
-        DestroyMesh(*device, groundMesh);
+        // Cleanup resources (destroy queues are driven by ProcessUploads).
+        jobs.WaitIdle();
+        assets.ClearAll();
+        assets.ProcessUploads(64, 256, 64, 256);
 
         glfwDestroyWindow(wnd);
         glfwTerminate();

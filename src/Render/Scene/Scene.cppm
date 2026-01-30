@@ -4,6 +4,7 @@ module;
 #include <vector>
 #include <span>
 #include <stdexcept>
+#include <memory>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -11,7 +12,7 @@ module;
 export module core:scene;
 
 import :rhi;
-import :mesh;
+import :resource_manager_mesh;
 
 export namespace rendern
 {
@@ -112,6 +113,7 @@ export namespace rendern
 
 	struct MaterialTag {};
 	using MaterialHandle = rhi::Handle<MaterialTag>;
+	using MeshHandle = std::shared_ptr<MeshResource>;
 	// Material = "how we draw": parameters + textures + permutation flags.
 	// NOTE: UseTex is inferred automatically if albedoDescIndex != 0.
 	struct Material
@@ -132,8 +134,9 @@ export namespace rendern
 
 	struct DrawItem
 	{
-		// Renderer does NOT own the mesh. Caller is responsible for Upload/Destroy.
-		const MeshRHI* mesh{ nullptr };
+		// Scene owns only a handle. Upload/Destroy are driven by Asset/ResourceManager.
+		// Renderer will skip items whose mesh hasn't finished loading / uploading.
+		MeshHandle mesh{};
 		Transform transform{};
 		MaterialHandle material{};
 	};

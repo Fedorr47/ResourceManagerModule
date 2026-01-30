@@ -21,11 +21,6 @@ export namespace rendern
 		float4x4 viewProj;
 	};
 
-	struct MeshHandle
-	{
-		std::uint32_t id{};
-	};
-
 	class RenderWorld
 	{
 	public:

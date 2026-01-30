@@ -81,7 +81,14 @@ export namespace rendern
 		std::size_t operator()(const BatchKey& k) const noexcept
 		{
 			std::size_t h = HashPtr(k.mesh);
-			HashCombine(h, HashU32(k.material.id));
+			HashCombine(h, HashU32((std::uint32_t)k.albedoDescIndex));
+			HashCombine(h, HashU32(FBits(k.baseColor.x)));
+			HashCombine(h, HashU32(FBits(k.baseColor.y)));
+			HashCombine(h, HashU32(FBits(k.baseColor.z)));
+			HashCombine(h, HashU32(FBits(k.baseColor.w)));
+			HashCombine(h, HashU32(FBits(k.shininess)));
+			HashCombine(h, HashU32(FBits(k.specStrength)));
+			HashCombine(h, HashU32(FBits(k.shadowBias)));
 			return h;
 		}
 	};
@@ -90,7 +97,12 @@ export namespace rendern
 	{
 		bool operator()(const BatchKey& a, const BatchKey& b) const noexcept
 		{
-			return a.mesh == b.mesh && a.material.id == b.material.id;
+			return a.mesh == b.mesh &&
+				a.albedoDescIndex == b.albedoDescIndex &&
+				a.baseColor == b.baseColor &&
+				a.shininess == b.shininess &&
+				a.specStrength == b.specStrength &&
+				a.shadowBias == b.shadowBias;
 		}
 	};
 
@@ -215,7 +227,8 @@ export namespace rendern
 
 						for (const auto& item : scene.drawItems)
 						{
-							if (!item.mesh || item.mesh->indexCount == 0) continue;
+							const rendern::MeshRHI* mesh = item.mesh ? &item.mesh->GetResource() : nullptr;
+							if (!mesh || mesh->indexCount == 0) continue;
 
 							const glm::mat4 model = item.transform.ToMatrix();
 
@@ -228,7 +241,7 @@ export namespace rendern
 							inst.r2 = mt[2];
 							inst.r3 = mt[3];
 
-							tmp[item.mesh].push_back(inst);
+							tmp[mesh].push_back(inst);
 						}
 
 						std::vector<InstanceData> instances;
@@ -338,10 +351,11 @@ export namespace rendern
 
 					for (const auto& item : scene.drawItems)
 					{
-						if (!item.mesh || item.mesh->indexCount == 0) continue;
+						const rendern::MeshRHI* mesh = item.mesh ? &item.mesh->GetResource() : nullptr;
+						if (!mesh || mesh->indexCount == 0) continue;
 
 						BatchKey key{};
-						key.mesh = item.mesh;
+						key.mesh = mesh;
 						key.material = item.material;
 
 						MaterialParams params{};
@@ -349,6 +363,14 @@ export namespace rendern
 						{
 							params = scene.GetMaterial(item.material).params;
 						}
+
+						// IMPORTANT: BatchKey must include material parameters,
+						// otherwise different materials get incorrectly merged.
+						key.albedoDescIndex = params.albedoDescIndex;
+						key.baseColor = params.baseColor;
+						key.shininess = params.shininess;
+						key.specStrength = params.specStrength;
+						key.shadowBias = params.shadowBias;
 
 						// Build instance data
 						const glm::mat4 model = item.transform.ToMatrix();

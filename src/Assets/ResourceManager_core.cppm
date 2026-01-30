@@ -16,6 +16,8 @@ module;
 
 export module core:resource_manager_core;
 
+export constexpr int SyncLoadNumberPerCall = 64;
+
 export enum class TextureFormat : uint8_t
 {
 	RGB,

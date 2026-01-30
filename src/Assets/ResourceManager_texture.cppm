@@ -16,8 +16,6 @@ export module core:resource_manager_texture;
 
 import :resource_manager_core;
 
-constexpr int SyncLoadNumberPerCall = 64;
-
 export using TextureResource = Texture<GPUTexture>;
 
 export struct TextureEntry

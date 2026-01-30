@@ -20,7 +20,6 @@ import :render_core;
 import :render_graph;
 import :file_system;
 import :mesh;
-import :obj_loader;
 
 export namespace rendern
 {
@@ -107,19 +106,16 @@ export namespace rendern
 							ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
 					};
 
-					// If no scene items were provided, draw the fallback mesh.
-					if (scene.drawItems.empty())
-					{
-						const glm::mat4 model = glm::rotate(glm::mat4(1.0f), TimeSeconds() * 0.8f, glm::vec3(0, 1, 0));
-						MaterialParams mat{};
-						mat.baseColor = { 0.2f, 0.3f, 0.7f, 1.0f };
-						DrawOne(mesh_, model, mat);
-						return;
-					}
+					bool drewAny = false;
 
 					for (const auto& item : scene.drawItems)
 					{
 						if (!item.mesh)
+							continue;
+
+						const MeshRHI& mesh = item.mesh->GetResource();
+						// Pending / not uploaded yet.
+						if (mesh.vertexBuffer.id == 0 || mesh.indexCount == 0)
 							continue;
 
 						MaterialParams mat{};
@@ -133,7 +129,17 @@ export namespace rendern
 						}
 
 						const glm::mat4 model = item.transform.ToMatrix();
-						DrawOne(*item.mesh, model, mat);
+						DrawOne(mesh, model, mat);
+						drewAny = true;
+					}
+
+					// If the scene has no draw items or everything is still pending, draw fallback.
+					if (!drewAny)
+					{
+						const glm::mat4 model = glm::rotate(glm::mat4(1.0f), TimeSeconds() * 0.8f, glm::vec3(0, 1, 0));
+						MaterialParams mat{};
+						mat.baseColor = { 0.2f, 0.3f, 0.7f, 1.0f };
+						DrawOne(mesh_, model, mat);
 					}
 				});
 
@@ -160,20 +166,13 @@ export namespace rendern
 		void CreateFallbackResources()
 		{
 			MeshCPU cpu{};
-			try
-			{
-				const auto modelAbs = corefs::ResolveAsset(settings_.modelPath);
-				cpu = LoadObj(modelAbs);
-			}
-			catch (...)
-			{
-				cpu.vertices = {
-					VertexDesc{-0.8f,-0.6f,0, 0,0,1, 0,0},
-					VertexDesc{ 0.8f,-0.6f,0, 0,0,1, 1,0},
-					VertexDesc{ 0.0f, 0.9f,0, 0,0,1, 0.5f,1},
-				};
-				cpu.indices = { 0,1,2 };
-			}
+			// Renderer must not perform file IO. Keep fallback procedural.
+			cpu.vertices = {
+				VertexDesc{-0.8f,-0.6f,0, 0,0,1, 0,0},
+				VertexDesc{ 0.8f,-0.6f,0, 0,0,1, 1,0},
+				VertexDesc{ 0.0f, 0.9f,0, 0,0,1, 0.5f,1},
+			};
+			cpu.indices = { 0,1,2 };
 
 			cpuFallbackVertexCount_ = cpu.vertices.size();
 			mesh_ = UploadMesh(device_, cpu, "FallbackMesh_GL");

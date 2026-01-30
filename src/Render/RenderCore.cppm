@@ -7,6 +7,12 @@ module;
 #include <unordered_map>
 #include <functional>
 #include <cctype>
+#include <thread>
+#include <stop_token>
+#include <mutex>
+#include <condition_variable>
+#include <deque>
+#include <atomic>
 
 export module core:render_core;
 
@@ -103,7 +109,7 @@ export namespace rendern
 					}
 					out += "#define ";
 					out += def;
-					out += "\n";
+					out += "";
 				}
 
 				out.append(source);
@@ -188,15 +194,99 @@ export namespace rendern
 	class JobSystemImmediate final : public IJobSystem
 	{
 	public:
-		void Enqueue(std::function<void()> job)
+		void Enqueue(std::function<void()> job) override
 		{
 			job();
 		}
 
-		void WaitIdle()
+		void WaitIdle() override
 		{
 			// No-op for immediate execution
 		}
+	};
+
+	// Minimal thread-pool implementation for async CPU work (decoding, etc.).
+	// GPU work must still be scheduled via IRenderQueue.
+	class JobSystemThreadPool final : public IJobSystem
+	{
+	public:
+		explicit JobSystemThreadPool(std::uint32_t workerCount = 1)
+		{
+			if (workerCount == 0)
+				workerCount = 1;
+
+			workers_.reserve(workerCount);
+			for (std::uint32_t i = 0; i < workerCount; ++i)
+			{
+				workers_.emplace_back([this](std::stop_token st) { Worker(st); });
+			}
+		}
+
+		~JobSystemThreadPool() override
+		{
+			// Request stop & wake.
+			{
+				std::scoped_lock lock(mutex_);
+				stopping_ = true;
+			}
+			cv_.notify_all();
+			// jthread joins automatically.
+		}
+
+		void Enqueue(std::function<void()> job) override
+		{
+			{
+				std::scoped_lock lock(mutex_);
+				queue_.push_back(std::move(job));
+			}
+			cv_.notify_one();
+		}
+
+		void WaitIdle() override
+		{
+			std::unique_lock lock(mutex_);
+			idleCv_.wait(lock, [this] { return queue_.empty() && active_ == 0; });
+		}
+
+	private:
+		void Worker(std::stop_token st)
+		{
+			while (!st.stop_requested())
+			{
+				std::function<void()> job;
+				{
+					std::unique_lock lock(mutex_);
+					cv_.wait(lock, [this, &st] { return st.stop_requested() || stopping_ || !queue_.empty(); });
+					if (st.stop_requested())
+						break;
+					if ((stopping_ || st.stop_requested()) && queue_.empty())
+						break;
+					if (queue_.empty())
+						continue;
+					job = std::move(queue_.front());
+					queue_.pop_front();
+					++active_;
+				}
+
+				try { job(); }
+				catch (...) { /* swallow */ }
+
+				{
+					std::scoped_lock lock(mutex_);
+					--active_;
+					if (queue_.empty() && active_ == 0)
+						idleCv_.notify_all();
+				}
+			}
+		}
+
+		std::mutex mutex_;
+		std::condition_variable cv_;
+		std::condition_variable idleCv_;
+		std::deque<std::function<void()>> queue_;
+		std::vector<std::jthread> workers_;
+		std::size_t active_ = 0;
+		bool stopping_ = false;
 	};
 
 	class NullTextureUploader final : public ITextureUploader
