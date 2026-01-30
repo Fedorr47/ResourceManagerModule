@@ -174,7 +174,9 @@ target_include_directories(CoreEngineModuleLib
 set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
 
 set(COMMON_MODULES
-  Core.ixx
+  Core/Core.ixx
+
+  Core/Math/MathUtils.cppm
 
   Timer/GameTimer.ixx
   Timer/GameTimer.cppm
@@ -192,6 +194,7 @@ set(COMMON_MODULES
   Render/Sync.cppm
   Render/ShaderFiles.cppm
   Render/FileSystem.cppm
+  Render/Scene.cppm
 
   Render/Model/ObjLoader.cppm
   Render/Model/Mesh/Mesh.cppm
@@ -207,7 +210,7 @@ set(GL_MODULES
   Render/OpenGL/RenderGL.ixx
   Render/OpenGL/OpenGLCore.cppm
   Render/OpenGL/OpenGLRHI.cppm
-  Render/OpenGL/OpenGLMeshRenderer.cppm
+  Render/OpenGL/OpenGLRenderer.cppm
   Render/OpenGL/OpenGLRenderer.cppm
 )
 

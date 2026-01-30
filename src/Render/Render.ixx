@@ -6,6 +6,7 @@ export import :render_graph;
 export import :render_bindless;
 export import :render_gpu_memory;
 export import :render_renderer;
+export import :scene;
 export import :scene_bridge;
 export import :shader_system;
 export import :sync;

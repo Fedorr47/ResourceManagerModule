@@ -1,4 +1,4 @@
-﻿import core;
+import core;
 import std;
 
 #if defined(_WIN32)
@@ -12,13 +12,13 @@ import std;
 #include <GLFW/glfw3.h>
 
 #if defined(CORE_USE_GL)
-  #include <GL/glew.h>
+#include <GL/glew.h>
 #endif
 
 #if defined(_WIN32)
-  #define GLFW_EXPOSE_NATIVE_WIN32
-  #include <GLFW/glfw3native.h>
-  #include <windows.h>
+#define GLFW_EXPOSE_NATIVE_WIN32
+#include <GLFW/glfw3native.h>
+#include <windows.h>
 #endif
 
 static void GLFWErrorCallback(int error, const char* desc)
@@ -44,11 +44,11 @@ static const char* BackendName(rhi::Backend b)
 static rhi::Backend DefaultBackend()
 {
 #if defined(CORE_USE_DX12) && defined(CORE_USE_GL)
-  #if defined(_WIN32)
+#if defined(_WIN32)
     return rhi::Backend::DirectX12;
-  #else
+#else
     return rhi::Backend::OpenGL;
-  #endif
+#endif
 #elif defined(CORE_USE_DX12)
     return rhi::Backend::DirectX12;
 #elif defined(CORE_USE_GL)
@@ -171,15 +171,15 @@ static void CreateDeviceAndSwapChain(
 
         sc.hooks.present = [wnd]() { glfwSwapBuffers(wnd); };
         sc.hooks.getDrawableExtent = [wnd]()
-        {
-            int w = 0;
-            int h = 0;
-            glfwGetFramebufferSize(wnd, &w, &h);
-            return rhi::Extent2D{
-                (std::uint32_t)std::max(0, w),
-                (std::uint32_t)std::max(0, h)
+            {
+                int w = 0;
+                int h = 0;
+                glfwGetFramebufferSize(wnd, &w, &h);
+                return rhi::Extent2D{
+                    (std::uint32_t)std::max(0, w),
+                    (std::uint32_t)std::max(0, h)
+                };
             };
-        };
         sc.hooks.setVsync = [](bool on) { glfwSwapInterval(on ? 1 : 0); };
 
         outSwapChain = rhi::CreateGLSwapChain(*outDevice, sc);
@@ -280,19 +280,117 @@ int main(int argc, char** argv)
 
         (void)rm.LoadAsync<TextureResource>("brick", io, brickProps);
 
-        // Renderer (facade)
+        // Renderer (facade) - Stage1 expects Scene
         rendern::RendererSettings rs{};
-        rs.modelPath = std::filesystem::path("models") / "cube.obj";
         rendern::Renderer renderer{ *device, rs };
 
+        // Upload meshes for Scene
+        rendern::MeshRHI cubeMesh{};
+        rendern::MeshRHI groundMesh{};
+        {
+            rendern::MeshCPU cubeCpu = rendern::LoadObj(corefs::ResolveAsset(std::filesystem::path("models") / "cube.obj"));
+            rendern::MeshCPU quadCpu = rendern::LoadObj(corefs::ResolveAsset(std::filesystem::path("models") / "quad.obj"));
+            cubeMesh = UploadMesh(*device, cubeCpu, "CubeMesh");
+            groundMesh = UploadMesh(*device, quadCpu, "GroundMesh");
+        }
+
+        // Scene setup
+        rendern::Scene scene;
+        scene.Clear();
+
+        // Camera
+        scene.camera.position = { 2.2f, 1.6f, 2.2f };
+        scene.camera.target = { 0.0f, 0.0f, 0.0f };
+        scene.camera.up = { 0.0f, 1.0f, 0.0f };
+        scene.camera.fovYDeg = 60.0f;
+        scene.camera.nearZ = 0.01f;
+        scene.camera.farZ = 200.0f;
+
+        // Lights: Dir + Point + Spot
+        {
+            rendern::Light l{};
+            l.type = rendern::LightType::Directional;
+            l.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
+            l.color = { 1.0f, 1.0f, 1.0f };
+            l.intensity = 0.0f;
+            scene.AddLight(l);
+        }
+        {
+            rendern::Light l{};
+            l.type = rendern::LightType::Point;
+            l.position = { 2.5f, 2.0f, 1.5f };
+            l.color = { 1.0f, 0.95f, 0.8f };
+            l.range = 12.0f;
+            l.intensity = 2.0f;
+            l.attConstant = 1.0f;
+            l.attLinear = 0.12f;
+            l.attQuadratic = 0.04f;
+            scene.AddLight(l);
+        }
+        {
+            rendern::Light l{};
+            l.type = rendern::LightType::Spot;
+            l.position = scene.camera.position;
+            l.direction = mathUtils::Normalize(mathUtils::Sub(scene.camera.target, scene.camera.position)); // FROM light
+            l.color = { 0.8f, 0.9f, 1.0f };
+            l.range = 30.0f;
+            l.intensity = 3.0f;
+            l.innerAngleDeg = 12.0f;
+            l.outerAngleDeg = 20.0f;
+            l.attLinear = 0.09f;
+            l.attQuadratic = 0.032f;
+            scene.AddLight(l);
+        }
+
+        // Draw items: ground + cube
+        {
+            rendern::DrawItem ground{};
+            ground.mesh = &groundMesh;
+            ground.transform.position = { 0.0f, -0.6f, 0.0f };
+            ground.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
+            ground.transform.scale = { 8.0f, 8.0f, 8.0f };
+
+            ground.material.baseColor = { 0.8f, 0.8f, 0.8f, 1.0f };
+            ground.material.albedoDescIndex = 0;
+            ground.material.shininess = 16.0f;
+            ground.material.specStrength = 0.05f;
+            ground.material.shadowBias = 0.0015f;
+
+            scene.AddDraw(ground);
+        }
+
         rhi::TextureDescIndex brickDesc = 0;
+
+        // Add cube (we'll update albedoDescIndex later once texture is uploaded + descriptor allocated)
+        {
+            rendern::DrawItem cube{};
+            cube.mesh = &cubeMesh;
+            cube.transform.position = { 0.0f, 0.6f, 0.0f };
+            cube.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
+            cube.transform.scale = { 1.0f, 1.0f, 1.0f };
+
+            cube.material.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+            cube.material.albedoDescIndex = 0; // set when ready
+            cube.material.shininess = 64.0f;
+            cube.material.specStrength = 0.5f;
+            cube.material.shadowBias = 0.0015f;
+
+            scene.AddDraw(cube);
+        }
+
+        // Animation timer
+        using clock = std::chrono::steady_clock;
+        auto last = clock::now();
+        float t = 0.0f;
 
         while (!glfwWindowShouldClose(wnd))
         {
             glfwPollEvents();
 
+            // Drive uploads/destruction
             rm.ProcessUploads<TextureResource>(io, 8, 32);
 
+            // Get brick GPU texture from RM
             rhi::TextureHandle brick{};
             if (auto tex = rm.Get<TextureResource>("brick"))
             {
@@ -301,10 +399,34 @@ int main(int argc, char** argv)
                     brick = rhi::TextureHandle{ (std::uint32_t)gpu.id };
             }
 
+            // Allocate descriptor once
             if (brick && brickDesc == 0)
                 brickDesc = device->AllocateTextureDesctiptor(brick);
 
-            renderer.RenderFrame(*swapChain, brick, brickDesc);
+            // Update cube material once descriptor is ready
+            if (brickDesc != 0 && scene.drawItems.size() >= 2)
+                scene.drawItems[1].material.albedoDescIndex = brickDesc;
+
+            // Animate cube rotation
+            const auto now = clock::now();
+            std::chrono::duration<float> dt = now - last;
+            last = now;
+
+            const float delta = std::min(dt.count(), 0.05f);
+            t += delta;
+
+            if (scene.drawItems.size() >= 2)
+                scene.drawItems[1].transform.rotationDegrees.y = t * 45.0f;
+
+            // Keep spot light attached to camera (lights[2])
+            if (scene.lights.size() >= 3 && scene.lights[2].type == rendern::LightType::Spot)
+            {
+                scene.lights[2].position = scene.camera.position;
+                scene.lights[2].direction = mathUtils::Normalize(mathUtils::Sub(scene.camera.target, scene.camera.position));
+            }
+
+            // Stage1 render
+            renderer.RenderFrame(*swapChain, scene);
 
             TinySleep();
         }
@@ -313,6 +435,9 @@ int main(int argc, char** argv)
 
         if (brickDesc != 0)
             device->FreeTextureDescriptor(brickDesc);
+
+        DestroyMesh(*device, cubeMesh);
+        DestroyMesh(*device, groundMesh);
 
         glfwDestroyWindow(wnd);
         glfwTerminate();

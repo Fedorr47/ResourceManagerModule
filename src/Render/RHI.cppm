@@ -16,368 +16,460 @@ export module core:rhi;
 
 export namespace rhi
 {
-    enum class Backend
-    {
-        Null,
-        OpenGL,
-        DirectX12
-    };
+	enum class Backend
+	{
+		Null,
+		OpenGL,
+		DirectX12
+	};
 
-    template <typename Tag>
-    struct Handle
-    {
-        std::uint32_t id{ 0 };
-        explicit operator bool() const noexcept { return id != 0; }
-    };
+	template <typename Tag>
+	struct Handle
+	{
+		std::uint32_t id{ 0 };
+		explicit operator bool() const noexcept { return id != 0; }
+	};
 
-    struct BufferTag {};
-    struct TextureTag {};
-    struct ShaderTag {};
-    struct PipelineTag {};
-    struct FrameBufferTag {};
-    struct FenceTag {};
-    struct InputLayoutTag {};
+	struct BufferTag {};
+	struct TextureTag {};
+	struct ShaderTag {};
+	struct PipelineTag {};
+	struct FrameBufferTag {};
+	struct FenceTag {};
+	struct InputLayoutTag {};
 
-    using BufferHandle = Handle<BufferTag>;
-    using TextureHandle = Handle<TextureTag>;
-    using ShaderHandle = Handle<ShaderTag>;
-    using PipelineHandle = Handle<PipelineTag>;
-    using FrameBufferHandle = Handle<FrameBufferTag>;
-    using FenceHandle = Handle<FenceTag>;
-    using InputLayoutHandle = Handle<InputLayoutTag>;
+	using BufferHandle = Handle<BufferTag>;
+	using TextureHandle = Handle<TextureTag>;
+	using ShaderHandle = Handle<ShaderTag>;
+	using PipelineHandle = Handle<PipelineTag>;
+	using FrameBufferHandle = Handle<FrameBufferTag>;
+	using FenceHandle = Handle<FenceTag>;
+	using InputLayoutHandle = Handle<InputLayoutTag>;
 
-    enum class Format : std::uint8_t
-    {
-        Unknown,
-        RGBA8_UNORM,
-        BGRA8_UNORM,
-        D32_FLOAT,
-        D24_UNORM_S8_UINT
-    };
+	enum class Format : std::uint8_t
+	{
+		Unknown,
+		RGBA8_UNORM,
+		BGRA8_UNORM,
+		D32_FLOAT,
+		D24_UNORM_S8_UINT
+	};
 
-    enum class IndexType : std::uint8_t
-    {
-        UINT16,
-        UINT32
-    };
+	enum class IndexType : std::uint8_t
+	{
+		UINT16,
+		UINT32
+	};
 
-    enum class BufferBindFlag : std::uint8_t
-    {
-        VertexBuffer,
-        IndexBuffer,
-        ConstantBuffer,
-        UniformBuffer,
-        StructuredBuffer
-    };
+	enum class BufferBindFlag : std::uint8_t
+	{
+		VertexBuffer,
+		IndexBuffer,
+		ConstantBuffer,
+		UniformBuffer,
+		StructuredBuffer
+	};
 
-    enum class BufferUsageFlag : std::uint8_t
-    {
-        Default,
-        Static,
-        Dynamic,
-        Stream
-    };
+	enum class BufferUsageFlag : std::uint8_t
+	{
+		Default,
+		Static,
+		Dynamic,
+		Stream
+	};
 
-    enum class CompareOp : std::uint8_t
-    {
-        Never,
-        Less,
-        Equal,
-        LessEqual,
-        Greater,
-        NotEqual,
-        GreaterEqual,
-        Always
-    };
+	enum class CompareOp : std::uint8_t
+	{
+		Never,
+		Less,
+		Equal,
+		LessEqual,
+		Greater,
+		NotEqual,
+		GreaterEqual,
+		Always
+	};
 
-    enum class VertexFormat : std::uint8_t
-    {
-        R32G32B32_FLOAT,
-        R32G32_FLOAT,
-        R32G32B32A32_FLOAT,
-        R8G8B8A8_UNORM
-    };
+	enum class VertexFormat : std::uint8_t
+	{
+		R32G32B32_FLOAT,
+		R32G32_FLOAT,
+		R32G32B32A32_FLOAT,
+		R8G8B8A8_UNORM
+	};
 
-    enum class VertexSemantic : std::uint8_t
-    {
-        Position,
-        Normal,
-        TexCoord,
-        Color,
-        Tangent
-    };
+	enum class VertexSemantic : std::uint8_t
+	{
+		Position,
+		Normal,
+		TexCoord,
+		Color,
+		Tangent
+	};
 
-    enum class CullMode : std::uint8_t
-    {
-        None,
-        Back,
-        Front
-    };
+	enum class CullMode : std::uint8_t
+	{
+		None,
+		Back,
+		Front
+	};
 
-    enum class FrontFace : std::uint8_t
-    {
-        CounterClockwise,
-        Clockwise
-    };
+	enum class FrontFace : std::uint8_t
+	{
+		CounterClockwise,
+		Clockwise
+	};
 
-    enum class ShaderStage : std::uint8_t
-    {
-        Vertex,
-        Pixel,
-        Geometry,
-        Compute
-    };
+	enum class ShaderStage : std::uint8_t
+	{
+		Vertex,
+		Pixel, // Fragment
+		Geometry,
+		Compute
+	};
 
-    using TextureDescIndex = std::uint32_t;
+	// Vulkan/DX12 backends can map these indices into global descriptor tables.
+	// The OpenGL backend emulates them by keeping a small mapping.
+	using TextureDescIndex = std::uint32_t;
 
-    struct Extent2D
-    {
-        std::uint32_t width{};
-        std::uint32_t height{};
-    };
+	struct Extent2D
+	{
+		std::uint32_t width{};
+		std::uint32_t height{};
+	};
 
-    struct SwapChainDesc
-    {
-        Extent2D extent{};
-        Format backbufferFormat{ Format::BGRA8_UNORM };
-        bool vsync{ true };
-    };
+	struct SwapChainDesc
+	{
+		Extent2D extent{};
+		Format backbufferFormat{ Format::BGRA8_UNORM };
+		bool vsync{ true };
+	};
 
-    struct BufferDesc
-    {
-        BufferBindFlag bindFlag{ BufferBindFlag::VertexBuffer };
-        BufferUsageFlag usageFlag{ BufferUsageFlag::Default };
-        std::size_t sizeInBytes{ 0 };
+	struct BufferDesc
+	{
+		BufferBindFlag bindFlag{ BufferBindFlag::VertexBuffer };
+		BufferUsageFlag usageFlag{ BufferUsageFlag::Default };
+		std::size_t sizeInBytes{ 0 };
+		std::uint32_t structuredStrideBytes{ 0 }; // For StructuredBuffer SRV (bytes per element)
+		std::string debugName{};
+	};
 
-        // For StructuredBuffer: bytes per element (DX12 uses it to create SRV).
-        std::uint32_t structuredStrideBytes{ 0 };
+	struct VertexAttributeDesc
+	{
+		VertexSemantic semantic{};
+		std::uint8_t semanticIndex{ 0 };
+		VertexFormat format{};
+		std::uint32_t offsetBytes{ 0 };
+		std::uint32_t inputSlot{ 0 };
+		bool normalized{ false };
+	};
 
-        std::string debugName{};
-    };
+	struct DepthState
+	{
+		bool testEnable{ true };
+		bool writeEnable{ true };
+		CompareOp depthCompareOp{ CompareOp::LessEqual };
+	};
 
-    struct VertexAttributeDesc
-    {
-        VertexSemantic semantic{};
-        std::uint8_t semanticIndex{ 0 };
-        VertexFormat format{};
-        std::uint32_t offsetBytes{ 0 };
-        std::uint32_t inputSlot{ 0 };
-        bool normalized{ false };
-    };
+	struct RasterizerState
+	{
+		CullMode cullMode{ CullMode::Back };
+		FrontFace frontFace{ FrontFace::CounterClockwise };
+	};
 
-    struct DepthState
-    {
-        bool testEnable{ true };
-        bool writeEnable{ true };
-        CompareOp depthCompareOp{ CompareOp::LessEqual };
-    };
+	struct BlendState
+	{
+		bool enable{ false };
+	};
 
-    struct RasterizerState
-    {
-        CullMode cullMode{ CullMode::Back };
-        FrontFace frontFace{ FrontFace::CounterClockwise };
-    };
+	struct GraphicsState
+	{
+		DepthState depth{};
+		RasterizerState rasterizer{};
+		BlendState blend{};
+	};
 
-    struct BlendState
-    {
-        bool enable{ false };
-    };
+	struct ClearDesc
+	{
+		bool clearColor{ true };
+		bool clearDepth{ false };
+		std::array<float, 4> color{ 0.0f, 0.0f, 0.0f, 1.0f };
+		float depth{ 1.0f };
+	};
 
-    struct GraphicsState
-    {
-        DepthState depth{};
-        RasterizerState rasterizer{};
-        BlendState blend{};
-    };
+	struct BeginPassDesc {
+		FrameBufferHandle frameBuffer{};
+		Extent2D extent{};
+		ClearDesc clearDesc{};
+	};
 
-    struct ClearDesc
-    {
-        bool clearColor{ true };
-        bool clearDepth{ false };
-        std::array<float, 4> color{ 0.0f, 0.0f, 0.0f, 1.0f };
-        float depth{ 1.0f };
-    };
+	struct InputLayoutDesc
+	{
+		std::vector<VertexAttributeDesc> attributes;
+		std::uint32_t strideBytes{ 0 };
+		std::string debugName{};
+	};
 
-    struct BeginPassDesc {
-        FrameBufferHandle frameBuffer{};
-        Extent2D extent{};
-        ClearDesc clearDesc{};
-    };
+	//------------------------ Command Stream ------------------------/
 
-    struct InputLayoutDesc
-    {
-        std::vector<VertexAttributeDesc> attributes;
-        std::uint32_t strideBytes{ 0 };
-        std::string debugName{};
-    };
+	struct CommandBeginPass
+	{
+		BeginPassDesc desc{};
+	};
+	struct CommandEndPass
+	{
+	};
+	struct CommandSetViewport
+	{
+		int x{ 0 };
+		int y{ 0 };
+		int width{ 0 };
+		int height{ 0 };
+	};
+	struct CommandSetState
+	{
+		GraphicsState state{};
+	};
+	struct CommandBindPipeline
+	{
+		PipelineHandle pso{};
+	};
+	struct CommandBindInputLayout
+	{
+		InputLayoutHandle layout{};
+	};
+	struct CommandBindVertexBuffer
+	{
+		std::uint32_t slot{ 0 };
+		BufferHandle buffer{};
+		std::uint32_t strideBytes{ 0 };
+		std::uint32_t offsetBytes{ 0 };
+	};
+	struct CommandBindIndexBuffer
+	{
+		BufferHandle buffer{};
+		IndexType indexType{ IndexType::UINT16 };
+		std::uint32_t offsetBytes{ 0 };
+	};
+	struct CommnadBindTextue2D
+	{
+		std::uint32_t slot{ 0 };
+		TextureHandle texture{};
+	};
+	struct CommandTextureDesc
+	{
+		std::uint32_t slot{ 0 };
+		TextureDescIndex texture{};
+	};
+	struct CommandBindStructuredBufferSRV
+	{
+		std::uint32_t slot{ 0 };
+		BufferHandle buffer{};
+	};
 
-    //------------------------ Command Stream ------------------------/
+	struct CommandSetUniformInt
+	{
+		std::string name{};
+		int value{ 0 };
+	};
+	struct CommandUniformFloat4
+	{
+		std::string name{};
+		std::array<float, 4> value{};
+	};
+	struct CommandUniformMat4
+	{
+		std::string name{};
+		std::array<float, 16> value{};
+	};
 
-    struct CommandBeginPass { BeginPassDesc desc{}; };
-    struct CommandEndPass {};
+	// Backend-agnostic small constant block ("push constants" style).
+	// DX12 uses it to feed a per-draw constant buffer without interpreting names.
+	// OpenGL can ignore it or emulate it later via UBOs.
+	struct CommandSetConstants
+	{
+		std::uint32_t slot{ 0 };   // backend-defined slot (DX12 root parameter index)
+		std::uint32_t size{ 0 };   // bytes used in `data`
+		std::array<std::byte, 256> data{};
+	};
+	struct CommandDrawIndexed
+	{
+		std::uint32_t indexCount{ 0 };
+		IndexType indexType{ IndexType::UINT16 };
+		std::uint32_t firstIndex{ 0 };
+		int baseVertex{ 0 };
+	};
+	struct CommandDraw
+	{
+		std::uint32_t vertexCount{ 0 };
+		std::uint32_t firstVertex{ 0 };
+	};
 
-    struct CommandSetViewport { int x{ 0 }; int y{ 0 }; int width{ 0 }; int height{ 0 }; };
-    struct CommandSetState { GraphicsState state{}; };
-    struct CommandBindPipeline { PipelineHandle pso{}; };
-    struct CommandBindInputLayout { InputLayoutHandle layout{}; };
+	using Command = std::variant<
+		CommandBeginPass,
+		CommandEndPass,
+		CommandSetViewport,
+		CommandSetState,
+		CommandBindPipeline,
+		CommandBindInputLayout,
+		CommandBindVertexBuffer,
+		CommandBindIndexBuffer,
+		CommnadBindTextue2D,
+		CommandTextureDesc,
+		CommandBindStructuredBufferSRV,
+		CommandSetUniformInt,
+		CommandUniformFloat4,
+		CommandUniformMat4,
+		CommandSetConstants,
+		CommandDrawIndexed,
+		CommandDraw>;
 
-    struct CommandBindVertexBuffer { std::uint32_t slot{ 0 }; BufferHandle buffer{}; std::uint32_t strideBytes{ 0 }; std::uint32_t offsetBytes{ 0 }; };
-    struct CommandBindIndexBuffer { BufferHandle buffer{}; IndexType indexType{ IndexType::UINT16 }; std::uint32_t offsetBytes{ 0 }; };
+	struct CommandList
+	{
+		std::vector<Command> commands;
 
-    struct CommnadBindTextue2D { std::uint32_t slot{ 0 }; TextureHandle texture{}; };
-    struct CommandTextureDesc { std::uint32_t slot{ 0 }; TextureDescIndex texture{}; };
+		void BeginPass(const BeginPassDesc& desc)
+		{
+			commands.emplace_back(CommandBeginPass{ desc });
+		}
+		void EndPass()
+		{
+			commands.emplace_back(CommandEndPass{});
+		}
+		void SetViewport(int x, int y, int width, int height)
+		{
+			commands.emplace_back(CommandSetViewport{ x, y, width, height });
+		}
+		void SetState(const GraphicsState& state)
+		{
+			commands.emplace_back(CommandSetState{ state });
+		}
+		void BindPipeline(PipelineHandle pso)
+		{
+			commands.emplace_back(CommandBindPipeline{ pso });
+		}
+		void BindInputLayout(InputLayoutHandle layout)
+		{
+			commands.emplace_back(CommandBindInputLayout{ layout });
+		}
+		void BindVertexBuffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t strideBytes = 0, std::uint32_t offsetBytes = 0)
+		{
+			commands.emplace_back(CommandBindVertexBuffer{ slot, buffer, strideBytes, offsetBytes });
+		}
+		void BindIndexBuffer(BufferHandle buffer, IndexType indexType, std::uint32_t offsetBytes = 0)
+		{
+			commands.emplace_back(CommandBindIndexBuffer{ buffer, indexType, offsetBytes });
+		}
+		void BindTexture2D(std::uint32_t slot, TextureHandle texture)
+		{
+			commands.emplace_back(CommnadBindTextue2D{ slot, texture });
+		}
+		void BindTextureDesc(std::uint32_t slot, TextureDescIndex textureIndex)
+		{
+			commands.emplace_back(CommandTextureDesc{ slot, textureIndex });
+		}
+		void SetUniformInt(std::string name, int value)
+		{
+			commands.emplace_back(CommandSetUniformInt{ std::move(name), value });
+		}
+		void SetUniformFloat4(std::string name, std::array<float, 4> value)
+		{
+			commands.emplace_back(CommandUniformFloat4{ std::string(name), value });
+		}
+		void SetUniformMat4(std::string_view name, const std::array<float, 16>& v)
+		{
+			commands.emplace_back(CommandUniformMat4{ std::string(name), v });
+		}
+		void SetConstants(std::uint32_t slot, std::span<const std::byte> bytes)
+		{
+			if (bytes.size() > 256)
+			{
+				throw std::runtime_error("CommandList::SetConstants: payload too large (max 256 bytes)");
+			}
 
-    // NEW: StructuredBuffer SRV bind (DX12 uses SRV heap handle)
-    struct CommandBindStructuredBufferSRV { std::uint32_t slot{ 0 }; BufferHandle buffer{}; };
+			CommandSetConstants cmd{};
+			cmd.slot = slot;
+			cmd.size = static_cast<std::uint32_t>(bytes.size());
+			if (!bytes.empty())
+				std::memcpy(cmd.data.data(), bytes.data(), bytes.size());
+			commands.emplace_back(std::move(cmd));
+		}
+		void DrawIndexed(std::uint32_t indexCount, IndexType indexType, std::uint32_t firstIndex = 0, int baseVertex = 0)
+		{
+			commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex });
+		}
+		void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0)
+		{
+			commands.emplace_back(CommandDraw{ vertexCount, firstVertex });
+		}
+		void BindStructuredBufferSRV(std::uint32_t slot, BufferHandle buffer)
+		{
+			commands.emplace_back(CommandBindStructuredBufferSRV{ slot, buffer });
+		}
+	};
 
-    struct CommandSetUniformInt { std::string name{}; int value{ 0 }; };
-    struct CommandUniformFloat4 { std::string name{}; std::array<float, 4> value{}; };
-    struct CommandUniformMat4 { std::string name{}; std::array<float, 16> value{}; };
+	// ------------------------ RHI interfaces ------------------------ //
 
-    struct CommandSetConstants
-    {
-        std::uint32_t slot{ 0 };
-        std::uint32_t size{ 0 };
-        std::array<std::byte, 256> data{};
-    };
+	class IRHISwapChain
+	{
+	public:
+		virtual ~IRHISwapChain() = default;
+		virtual SwapChainDesc GetDesc() const = 0;
+		virtual FrameBufferHandle GetCurrentBackBuffer() const = 0;
+		virtual void Present() = 0;
+	};
 
-    struct CommandDrawIndexed { std::uint32_t indexCount{ 0 }; IndexType indexType{ IndexType::UINT16 }; std::uint32_t firstIndex{ 0 }; int baseVertex{ 0 }; };
-    struct CommandDraw { std::uint32_t vertexCount{ 0 }; std::uint32_t firstVertex{ 0 }; };
+	class IRHIDevice
+	{
+	public:
+		virtual ~IRHIDevice() = default;
 
-    using Command = std::variant<
-        CommandBeginPass,
-        CommandEndPass,
-        CommandSetViewport,
-        CommandSetState,
-        CommandBindPipeline,
-        CommandBindInputLayout,
-        CommandBindVertexBuffer,
-        CommandBindIndexBuffer,
-        CommnadBindTextue2D,
-        CommandTextureDesc,
-        CommandBindStructuredBufferSRV,
-        CommandSetUniformInt,
-        CommandUniformFloat4,
-        CommandUniformMat4,
-        CommandSetConstants,
-        CommandDrawIndexed,
-        CommandDraw>;
+		virtual Backend GetBackend() const noexcept = 0;
 
-    struct CommandList
-    {
-        std::vector<Command> commands;
+		virtual std::string_view GetName() const = 0;
 
-        void BeginPass(const BeginPassDesc& desc) { commands.emplace_back(CommandBeginPass{ desc }); }
-        void EndPass() { commands.emplace_back(CommandEndPass{}); }
-        void SetViewport(int x, int y, int width, int height) { commands.emplace_back(CommandSetViewport{ x, y, width, height }); }
-        void SetState(const GraphicsState& state) { commands.emplace_back(CommandSetState{ state }); }
-        void BindPipeline(PipelineHandle pso) { commands.emplace_back(CommandBindPipeline{ pso }); }
-        void BindInputLayout(InputLayoutHandle layout) { commands.emplace_back(CommandBindInputLayout{ layout }); }
+		// Textures
+		virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;
+		virtual void DestroyTexture(TextureHandle texture) noexcept = 0;
 
-        void BindVertexBuffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t strideBytes = 0, std::uint32_t offsetBytes = 0)
-        {
-            commands.emplace_back(CommandBindVertexBuffer{ slot, buffer, strideBytes, offsetBytes });
-        }
+		// Framebuffers
+		virtual FrameBufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
+		virtual void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept = 0;
 
-        void BindIndexBuffer(BufferHandle buffer, IndexType indexType, std::uint32_t offsetBytes = 0)
-        {
-            commands.emplace_back(CommandBindIndexBuffer{ buffer, indexType, offsetBytes });
-        }
+		// Buffers
+		virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
+		virtual void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) = 0;
+		virtual void DestroyBuffer(BufferHandle buffer) noexcept = 0;
 
-        void BindTexture2D(std::uint32_t slot, TextureHandle texture)
-        {
-            commands.emplace_back(CommnadBindTextue2D{ slot, texture });
-        }
+		// Input layouts (API-neutral)
+		virtual InputLayoutHandle CreateInputLayout(const InputLayoutDesc& desc) = 0;
+		virtual void DestroyInputLayout(InputLayoutHandle layout) noexcept = 0;
 
-        void BindTextureDesc(std::uint32_t slot, TextureDescIndex textureIndex)
-        {
-            commands.emplace_back(CommandTextureDesc{ slot, textureIndex });
-        }
+		// Shaders and Pipelines
+		virtual ShaderHandle CreateShader(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode) = 0;
+		virtual void DestroyShader(ShaderHandle shader) noexcept = 0;
 
-        // NEW
-        void BindStructuredBufferSRV(std::uint32_t slot, BufferHandle buffer)
-        {
-            commands.emplace_back(CommandBindStructuredBufferSRV{ slot, buffer });
-        }
+		virtual PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle pixelShader) = 0;
+		virtual void DestroyPipeline(PipelineHandle pso) noexcept = 0;
 
-        void SetUniformInt(std::string name, int value) { commands.emplace_back(CommandSetUniformInt{ std::move(name), value }); }
-        void SetUniformFloat4(std::string name, std::array<float, 4> value) { commands.emplace_back(CommandUniformFloat4{ std::string(name), value }); }
-        void SetUniformMat4(std::string_view name, const std::array<float, 16>& v) { commands.emplace_back(CommandUniformMat4{ std::string(name), v }); }
+		// Submission
+		virtual void SubmitCommandList(CommandList&& commandList) = 0;
 
-        void SetConstants(std::uint32_t slot, std::span<const std::byte> bytes)
-        {
-            if (bytes.size() > 256) throw std::runtime_error("CommandList::SetConstants: payload too large (max 256 bytes)");
-            CommandSetConstants cmd{};
-            cmd.slot = slot;
-            cmd.size = static_cast<std::uint32_t>(bytes.size());
-            if (!bytes.empty()) std::memcpy(cmd.data.data(), bytes.data(), bytes.size());
-            commands.emplace_back(std::move(cmd));
-        }
+		// Bindless-style descriptor indices
+		virtual TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) = 0;
+		virtual void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) = 0;
+		virtual void FreeTextureDescriptor(TextureDescIndex index) noexcept = 0;
 
-        void DrawIndexed(std::uint32_t indexCount, IndexType indexType, std::uint32_t firstIndex = 0, int baseVertex = 0)
-        {
-            commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex });
-        }
+		// Synchronization
+		virtual FenceHandle CreateFence(bool signaled = false) = 0;
+		virtual void DestroyFence(FenceHandle fence) noexcept = 0;
+		virtual void SignalFence(FenceHandle fence) = 0;
+		virtual void WaitFence(FenceHandle fence) = 0;
+		virtual bool IsFenceSignaled(FenceHandle fence) = 0;
+	};
 
-        void Draw(std::uint32_t vertexCount, std::uint32_t firstVertex = 0)
-        {
-            commands.emplace_back(CommandDraw{ vertexCount, firstVertex });
-        }
-    };
-
-    // ------------------------ RHI interfaces ------------------------ //
-
-    class IRHISwapChain
-    {
-    public:
-        virtual ~IRHISwapChain() = default;
-        virtual SwapChainDesc GetDesc() const = 0;
-        virtual FrameBufferHandle GetCurrentBackBuffer() const = 0;
-        virtual void Present() = 0;
-    };
-
-    class IRHIDevice
-    {
-    public:
-        virtual ~IRHIDevice() = default;
-
-        virtual Backend GetBackend() const noexcept = 0;
-        virtual std::string_view GetName() const = 0;
-
-        virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;
-        virtual void DestroyTexture(TextureHandle texture) noexcept = 0;
-
-        virtual FrameBufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
-        virtual void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept = 0;
-
-        virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
-        virtual void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) = 0;
-        virtual void DestroyBuffer(BufferHandle buffer) noexcept = 0;
-
-        virtual InputLayoutHandle CreateInputLayout(const InputLayoutDesc& desc) = 0;
-        virtual void DestroyInputLayout(InputLayoutHandle layout) noexcept = 0;
-
-        virtual ShaderHandle CreateShader(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode) = 0;
-        virtual void DestroyShader(ShaderHandle shader) noexcept = 0;
-
-        virtual PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle pixelShader) = 0;
-        virtual void DestroyPipeline(PipelineHandle pso) noexcept = 0;
-
-        virtual void SubmitCommandList(CommandList&& commandList) = 0;
-
-        virtual TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) = 0;
-        virtual void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) = 0;
-        virtual void FreeTextureDescriptor(TextureDescIndex index) noexcept = 0;
-
-        virtual FenceHandle CreateFence(bool signaled = false) = 0;
-        virtual void DestroyFence(FenceHandle fence) noexcept = 0;
-        virtual void SignalFence(FenceHandle fence) = 0;
-        virtual void WaitFence(FenceHandle fence) = 0;
-        virtual bool IsFenceSignaled(FenceHandle fence) = 0;
-    };
-
-    std::unique_ptr<IRHIDevice> CreateNullDevice();
-    std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc);
+	std::unique_ptr<IRHIDevice> CreateNullDevice();
+	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc);
 }
 
 namespace rhi

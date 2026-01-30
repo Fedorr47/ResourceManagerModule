@@ -1,215 +1,208 @@
 module;
 
-#include <GL/glew.h>
-#include <string>
-#include <stdexcept>
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
-export module core:renderer_gl;
+#include <array>
+#include <chrono>
+#include <cstring>
+#include <filesystem>
+#include <string>
+#include <utility>
+
+export module core:renderer_mesh_gl;
 
 import :rhi;
-import :rhi_gl;
-import :scene_bridge;
-import :resource_manager_core;
-import :shader_files;
+import :scene;
+import :renderer_settings;
+import :render_core;
+import :render_graph;
 import :file_system;
-
-export namespace RHI_GL_UTILS
-{
-	GLuint CompileProgram(std::string_view vsSource, std::string_view fsSource)
-	{
-		const auto Compile = [](GLenum type, std::string_view src, std::string_view name) -> GLuint
-			{
-				GLuint Shader = glCreateShader(type);
-				if (Shader == 0)
-				{
-					throw std::runtime_error("OpenGL: glCreateShader failed");
-				}
-				const char* sourceCStr = src.data();
-				GLint length = static_cast<GLint>(src.size());
-				glShaderSource(Shader, 1, &sourceCStr, &length);
-				glCompileShader(Shader);
-				RHI_GL_UTILS::ThrowIfShaderCompilationFailed(Shader, name);
-				return Shader;
-			};
-
-		const GLuint vertexShader = Compile(GL_VERTEX_SHADER, vsSource, "VS");
-		const GLuint pixelShader = Compile(GL_FRAGMENT_SHADER, fsSource, "FS");
-
-		GLuint program = glCreateProgram();
-		if (program == 0)
-		{
-			glDeleteShader(vertexShader);
-			glDeleteShader(pixelShader);
-			throw std::runtime_error("OpenGL: glCreateProgram failed");
-		}
-
-		glAttachShader(program, vertexShader);
-		glAttachShader(program, pixelShader);
-		glLinkProgram(program);
-
-		RHI_GL_UTILS::ThrowIfProgramLinkFailed(program, "stub_name");
-
-		glDetachShader(program, vertexShader);
-		glDetachShader(program, pixelShader);
-		glDeleteShader(vertexShader);
-		glDeleteShader(pixelShader);
-
-		return program;
-	}
-}
+import :mesh;
+import :obj_loader;
 
 export namespace rendern
 {
-	class GLSimpleRenderer
+	class GLMeshRenderer
 	{
 	public:
-		GLSimpleRenderer() = default;
-		~GLSimpleRenderer()
+		GLMeshRenderer(rhi::IRHIDevice& device, RendererSettings settings = {})
+			: device_(device)
+			, settings_(std::move(settings))
+			, shaderLibrary_(device)
+			, psoCache_(device)
 		{
-			Shutdown();
+			CreateFallbackResources();
 		}
 
-		GLSimpleRenderer(const GLSimpleRenderer&) = delete;
-		GLSimpleRenderer& operator=(const GLSimpleRenderer&) = delete;
-
-		void Initialize()
+		void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene)
 		{
-			if (initialized_)
-			{
-				return;
-			}
+			renderGraph::RenderGraph graph;
 
-			const float verts[] = {
-				-1.0f, -1.0f,  0.0f, 0.0f,
-				 3.0f, -1.0f,  2.0f, 0.0f,
-				-1.0f,  3.0f,  0.0f, 2.0f
-			};
+			rhi::ClearDesc clearDesc{};
+			clearDesc.clearColor = true;
+			clearDesc.clearDepth = true;
+			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
-			auto pathToVertexShader = corefs::ResolveAsset(std::filesystem::path("shaders\\FullScreen.vert"));
-			auto pathToPixelShader = corefs::ResolveAsset(std::filesystem::path("shaders\\FullScreen.frag"));
-
-			const auto vsFile = rendern::LoadGLSLWithIncludes(pathToVertexShader);
-			const auto fsFile = rendern::LoadGLSLWithIncludes(pathToPixelShader);
-
-			const std::string vsSrc = vsFile.text;
-			const std::string fsSrc = fsFile.text;
-
-			program_ = RHI_GL_UTILS::CompileProgram(vsSrc, fsSrc);
-
-			glGenVertexArrays(1, &vao_);
-			glGenBuffers(1, &vbo_);
-
-			glBindVertexArray(vao_);
-			glBindBuffer(GL_ARRAY_BUFFER, vbo_);
-			glBufferData(GL_ARRAY_BUFFER, sizeof(verts), verts, GL_STATIC_DRAW);
-
-			glEnableVertexAttribArray(0);
-			glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-
-			glEnableVertexAttribArray(1);
-			glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-
-			glBindBuffer(GL_ARRAY_BUFFER, 0);
-			glBindVertexArray(0);
-
-			uTex_ = glGetUniformLocation(program_, "uTex");
-			uFallbackColor_ = glGetUniformLocation(program_, "uFallbackColor");
-			uHasTex_ = glGetUniformLocation(program_, "uHasTex");
-
-			initialized_ = true;
-		}
-
-		void Shutdown() noexcept
-		{
-			if (program_ != 0)
-			{
-				glDeleteProgram(program_);
-				program_ = 0;
-			}
-			if (vbo_ != 0)
-			{
-				glDeleteBuffers(1, &vbo_);
-				vbo_ = 0;
-			}
-			if (vao_ != 0)
-			{
-				glDeleteVertexArrays(1, &vao_);
-				vao_ = 0;
-			}
-			initialized_ = false;
-		}
-
-		void SetFallbackColor(float r, float g, float b, float a)
-		{
-			fallback_[0] = r; 
-			fallback_[1] = g; 
-			fallback_[2] = b; 
-			fallback_[3] = a;
-		}
-
-		void SetTexture(GPUTexture texture)
-		{
-			texture_ = texture;
-		}
-
-		void Render(rhi::IRHISwapChain& swapChain)
-		{
-			Initialize();
-
-			const auto desc = swapChain.GetDesc();
-			glViewport(0, 0, static_cast<GLsizei>(desc.extent.width), static_cast<GLsizei>(desc.extent.height));
-			glDisable(GL_DEPTH_TEST);
-
-			glClearColor(0.06f, 0.06f, 0.08f, 1.0f);
-			glClear(GL_COLOR_BUFFER_BIT);
-
-			glUseProgram(program_);
-			glBindVertexArray(vao_);
-
-			const bool hasTex = (texture_.id != 0);
-			if (uHasTex_ != -1)
-			{
-				glUniform1i(uHasTex_, hasTex ? 1 : 0);
-			}
-			if (uFallbackColor_ != -1)
-			{
-				glUniform4f(uFallbackColor_, fallback_[0], fallback_[1], fallback_[2], fallback_[3]);
-			}
-
-			if (hasTex)
-			{
-				glActiveTexture(GL_TEXTURE0);
-				glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture_.id));
-				if (uTex_ != -1)
+			graph.AddSwapChainPass(
+				"MainPass",
+				clearDesc,
+				[this, &scene](renderGraph::PassContext& ctx)
 				{
-					glUniform1i(uTex_, 0);
-				}
-			}
+					const auto extent = ctx.passExtent;
 
-			glDrawArrays(GL_TRIANGLES, 0, 3);
+					ctx.commandList.SetViewport(0, 0,
+						static_cast<int>(extent.width),
+						static_cast<int>(extent.height));
 
-			if (hasTex)
-			{
-				glBindTexture(GL_TEXTURE_2D, 0);
-			}
-			glBindVertexArray(0);
-			glUseProgram(0);
+					ctx.commandList.SetState(state_);
+					ctx.commandList.BindPipeline(pso_);
 
+					const float aspect = extent.height
+						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
+						: 1.0f;
+
+					// OpenGL clip space: Z in [-1..1]
+					const glm::mat4 proj = glm::perspective(glm::radians(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+					const glm::mat4 view = glm::lookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+
+					auto DrawOne = [&](const MeshRHI& mesh, const glm::mat4& model, const MaterialParams& mat)
+					{
+						ctx.commandList.BindInputLayout(mesh.layout);
+						ctx.commandList.BindVertexBuffer(0, mesh.vertexBuffer, mesh.vertexStrideBytes, 0);
+
+						const bool hasIndices = (mesh.indexBuffer.id != 0) && (mesh.indexCount != 0);
+						if (hasIndices)
+							ctx.commandList.BindIndexBuffer(mesh.indexBuffer, mesh.indexType, 0);
+
+						// Uniforms (name-based path; typical for GL)
+						ctx.commandList.SetUniformInt("uTex", 0);
+						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.r, mat.baseColor.g, mat.baseColor.b, mat.baseColor.a });
+
+						const glm::mat4 mvp = proj * view * model;
+
+						std::array<float, 16> mvpArr{};
+						std::memcpy(mvpArr.data(), glm::value_ptr(mvp), sizeof(float) * 16);
+						ctx.commandList.SetUniformMat4("uMVP", mvpArr);
+
+						if (mat.albedoDescIndex != 0)
+						{
+							ctx.commandList.BindTextureDesc(0, mat.albedoDescIndex);
+							ctx.commandList.SetUniformInt("uUseTex", 1);
+						}
+						else
+						{
+							ctx.commandList.SetUniformInt("uUseTex", 0);
+						}
+
+						if (hasIndices)
+							ctx.commandList.DrawIndexed(mesh.indexCount, mesh.indexType, 0, 0);
+						else
+							ctx.commandList.Draw(static_cast<std::uint32_t>(cpuFallbackVertexCount_), 0);
+					};
+
+					// If no scene items were provided, draw the fallback mesh.
+					if (scene.drawItems.empty())
+					{
+						const glm::mat4 model = glm::rotate(glm::mat4(1.0f), TimeSeconds() * 0.8f, glm::vec3(0, 1, 0));
+						MaterialParams mat{};
+						mat.baseColor = { 0.2f, 0.3f, 0.7f, 1.0f };
+						DrawOne(mesh_, model, mat);
+						return;
+					}
+
+					for (const auto& item : scene.drawItems)
+					{
+						if (!item.mesh)
+							continue;
+
+						const glm::mat4 model = item.transform.ToMatrix();
+						DrawOne(*item.mesh, model, item.material);
+					}
+				});
+
+			graph.Execute(device_, swapChain);
 			swapChain.Present();
 		}
 
+		void Shutdown()
+		{
+			DestroyMesh(device_, mesh_);
+			psoCache_.ClearCache();
+			shaderLibrary_.ClearCache();
+		}
+
 	private:
-		bool initialized_{ false };
+		static float TimeSeconds()
+		{
+			using clock = std::chrono::steady_clock;
+			static const auto start = clock::now();
+			const auto now = clock::now();
+			return std::chrono::duration<float>(now - start).count();
+		}
 
-		GLuint program_{ 0 };
-		GLuint vao_{ 0 };
-		GLuint vbo_{ 0 };
+		void CreateFallbackResources()
+		{
+			MeshCPU cpu{};
+			try
+			{
+				const auto modelAbs = corefs::ResolveAsset(settings_.modelPath);
+				cpu = LoadObj(modelAbs);
+			}
+			catch (...)
+			{
+				cpu.vertices = {
+					VertexDesc{-0.8f,-0.6f,0, 0,0,1, 0,0},
+					VertexDesc{ 0.8f,-0.6f,0, 0,0,1, 1,0},
+					VertexDesc{ 0.0f, 0.9f,0, 0,0,1, 0.5f,1},
+				};
+				cpu.indices = { 0,1,2 };
+			}
 
-		GLint uTex_{ -1 };
-		GLint uFallbackColor_{ -1 };
-		GLint uHasTex_{ -1 };
+			cpuFallbackVertexCount_ = cpu.vertices.size();
+			mesh_ = UploadMesh(device_, cpu, "FallbackMesh_GL");
 
-		float fallback_[4]{ 1.0f, 1.0f, 1.0f, 1.0f };
-		GPUTexture texture_{};
+			// Use existing shader names in assets/shaders/
+			std::filesystem::path vertexShaderPath = corefs::ResolveAsset("shaders\\VS.vert");
+			std::filesystem::path pixelShaderPath = corefs::ResolveAsset("shaders\\FS.frag");
+
+			const auto vertexShader = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Mesh",
+				.filePath = vertexShaderPath.string(),
+				.defines = {}
+				});
+
+			const auto pixelShader = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_Mesh",
+				.filePath = pixelShaderPath.string(),
+				.defines = {}
+				});
+
+			pso_ = psoCache_.GetOrCreate("PSO_Mesh", vertexShader, pixelShader);
+
+			state_.depth.testEnable = true;
+			state_.depth.writeEnable = true;
+			state_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+
+			state_.rasterizer.cullMode = rhi::CullMode::None;
+			state_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+
+			state_.blend.enable = false;
+		}
+
+		rhi::IRHIDevice& device_;
+		RendererSettings settings_{};
+
+		ShaderLibrary shaderLibrary_;
+		PSOCache psoCache_;
+
+		MeshRHI mesh_{}; // fallback-only
+		rhi::PipelineHandle pso_{};
+		rhi::GraphicsState state_{};
+
+		std::size_t cpuFallbackVertexCount_{ 0 };
 	};
-}
+} // namespace rendern

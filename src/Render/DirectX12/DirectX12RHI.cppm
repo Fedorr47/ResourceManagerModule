@@ -879,11 +879,15 @@ export namespace rhi
 
             auto ResolveTextureHandleFromDesc = [&](TextureDescIndex idx) -> TextureHandle
                 {
+                    if (idx == 0) // 0 = null SRV (как в рендерере)
+                    {
+                        return {};
+                    }
+
                     auto it = descToTex_.find(idx);
                     if (it == descToTex_.end())
                     {
                         throw std::runtime_error("DX12: TextureDescIndex not mapped");
-                        //return {};
                     }
                     return it->second;
                 };

@@ -1215,7 +1215,12 @@ namespace rhi
 			glBindTexture(GL_TEXTURE_2D, static_cast<GLuint>(texture.id));
 		}
 
-		void ExecuteOnce(const CommandSetUniformInt& cmd)
+		 		void ExecuteOnce(const CommandBindStructuredBufferSRV& /*cmd*/)
+		{
+			// Stage-1: OpenGL backend ignores structured-buffer SRVs.
+		}
+
+void ExecuteOnce(const CommandSetUniformInt& cmd)
 		{
 			SetUniformIntImpl(cmd.name, cmd.value);
 		}

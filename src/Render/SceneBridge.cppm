@@ -7,6 +7,7 @@ module;
 export module core:scene_bridge;
 
 import :rhi;
+import :scene;
 
 export namespace rendern
 {
@@ -28,13 +29,6 @@ export namespace rendern
 	struct MaterialHandle
 	{
 		std::uint32_t id{};
-	};
-
-	struct DrawItem
-	{
-		MeshHandle mesh{};
-		MaterialHandle material{};
-		float4x4 world{};
 	};
 
 	class RenderWorld

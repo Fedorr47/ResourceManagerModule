@@ -10,6 +10,7 @@ export module core:render_renderer;
 export import :renderer_settings;
 
 import :rhi;
+import :scene;
 
 #if defined(CORE_USE_GL)
 import :renderer_mesh_gl;
@@ -29,14 +30,14 @@ namespace rendern
         struct IRendererImpl
         {
             virtual ~IRendererImpl() = default;
-            virtual void RenderFrame(rhi::IRHISwapChain& swapChain, rhi::TextureHandle sampledTexture, rhi::TextureDescIndex sampledTextureDescIndex) = 0;
+            virtual void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) = 0;
             virtual void Shutdown() = 0;
         };
 
         class NullRendererImpl final : public IRendererImpl
         {
         public:
-            void RenderFrame(rhi::IRHISwapChain& swapChain, rhi::TextureHandle, rhi::TextureDescIndex) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene&) override
             {
                 swapChain.Present();
             }
@@ -51,9 +52,9 @@ namespace rendern
                 : impl_(device, std::move(settings))
             {}
 
-            void RenderFrame(rhi::IRHISwapChain& swapChain, rhi::TextureHandle sampledTexture, rhi::TextureDescIndex sampledTextureDescIndex) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) override
             {
-                impl_.RenderFrame(swapChain, sampledTexture, sampledTextureDescIndex);
+                impl_.RenderFrame(swapChain, scene);
             }
             void Shutdown() override
             {
@@ -61,7 +62,7 @@ namespace rendern
             }
 
         private:
-            GLRenderer impl_;
+            GLMeshRenderer impl_;
         };
         #endif
 
@@ -73,9 +74,9 @@ namespace rendern
                 : impl_(device, std::move(settings))
             {}
 
-            void RenderFrame(rhi::IRHISwapChain& swapChain, rhi::TextureHandle sampledTexture, rhi::TextureDescIndex sampledTextureDescIndex) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) override
             {
-                impl_.RenderFrame(swapChain, sampledTexture, sampledTextureDescIndex);
+                impl_.RenderFrame(swapChain, scene);
             }
             void Shutdown() override
             {
@@ -124,9 +125,9 @@ namespace rendern
             }
         }
 
-        void RenderFrame(rhi::IRHISwapChain& swapChain, rhi::TextureHandle sampledTexture = {}, rhi::TextureDescIndex sampledTextureDescIndex = 0)
+        void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene)
         {
-            impl_->RenderFrame(swapChain, sampledTexture, sampledTextureDescIndex);
+            impl_->RenderFrame(swapChain, scene);
         }
 
         void Shutdown()
