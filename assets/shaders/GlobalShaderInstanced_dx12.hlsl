@@ -69,6 +69,11 @@ float4x4 MakeMatRows(float4 r0, float4 r1, float4 r2, float4 r3)
     return float4x4(r0, r1, r2, r3);
 }
 
+float4 MulRows(float4 v, float4 r0, float4 r1, float4 r2, float4 r3)
+{
+    return float4(dot(v, r0), dot(v, r1), dot(v, r2), dot(v, r3));
+}
+
 float SmoothStep01(float t)
 {
 	t = saturate(t);
@@ -181,9 +186,9 @@ float SpotShadowFactor(uint si, ShadowDataSB sd, float3 worldPos, float biasTexe
     float4 r1 = sd.spotVPRows[si * 4 + 1];
     float4 r2 = sd.spotVPRows[si * 4 + 2];
     float4 r3 = sd.spotVPRows[si * 4 + 3];
-    float4x4 vp = MakeMatRows(r0, r1, r2, r3);
-
-    float4 sp = mul(float4(worldPos, 1.0f), vp);
+    // Build clip-space position without relying on matrix constructor row/col conventions.
+    float4 sp = MulRows(float4(worldPos, 1.0f), r0, r1, r2, r3);
+    
     if (si == 0)
         return Shadow2D(gSpotShadow0, sp, biasTexels);
     if (si == 1)

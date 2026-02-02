@@ -296,7 +296,7 @@ int main(int argc, char** argv)
         scene.Clear();
 
         // Camera
-        scene.camera.position = { 2.2f, 10.0f, 10.0f };
+        scene.camera.position = { 5.0f, 5.0f, 3.0f };
         scene.camera.target = { 0.0f, 0.0f, 0.0f };
         scene.camera.up = { 0.0f, 1.0f, 0.0f };
         scene.camera.fovYDeg = 60.0f;
@@ -315,14 +315,14 @@ int main(int argc, char** argv)
         {
             rendern::Light l{};
             l.type = rendern::LightType::Point;
-            l.position = { 0.0f, 3.0f, 5.0f };
+            l.position = { 0.0f, 4.0f, 3.0f };
             l.color = { 1.0f, 0.0f, 0.0f };
             l.range = 12.0f;
             l.intensity = 1.0f;
             l.attConstant = 1.0f;
             l.attLinear = 0.12f;
             l.attQuadratic = 0.04f;
-            //scene.AddLight(l);
+            scene.AddLight(l);
         }
         {
             rendern::Light l{};
@@ -336,7 +336,7 @@ int main(int argc, char** argv)
             l.outerHalfAngleDeg = 20.0f;
             l.attLinear = 0.09f;
             l.attQuadratic = 0.032f;
-            scene.AddLight(l);
+            //scene.AddLight(l);
         }
 
         // Draw items: ground + cube
