@@ -208,14 +208,48 @@ float ShadowPoint(TextureCube<float> distCube,
 
     float nd = saturate(d / max(range, 1e-3f));
 
-    // distance cube expects clamp sampler (no wrap)
-    float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
-
     uint w, h, levels;
     distCube.GetDimensions(0, w, h, levels);
-    float biasNorm = biasTexels / float(max(w, h));
 
-    return (nd - biasNorm <= stored) ? 1.0f : 0.0f;
+    // Bias is expressed in "shadow texels" by the CPU. Convert to normalized [0..1] distance.
+    const float invRes = 1.0f / float(max(w, h));
+    const float biasNorm = biasTexels * invRes;
+
+    const float compare = nd - biasNorm;
+
+    // Manual PCF for distance-cubemap shadows.
+    // We can't use a comparison sampler here because the map is R32_FLOAT (distance), not a depth texture.
+    // We approximate a 2D kernel on the cubemap face by perturbing the lookup direction in a tangent basis.
+    float3 up = (abs(dir.y) < 0.99f) ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 T = normalize(cross(up, dir));
+    float3 B = cross(dir, T);
+
+    // ~1-2 texels in "face space". Tune if you want softer/harder point-light shadow edges.
+    const float radius = 1.5f * invRes;
+
+    // Poisson-ish disk (8 taps) + center.
+    const float2 taps[8] = {
+        float2(-0.326f, -0.406f), float2(-0.840f, -0.074f),
+        float2(-0.696f,  0.457f), float2(-0.203f,  0.621f),
+        float2( 0.962f, -0.195f), float2( 0.473f, -0.480f),
+        float2( 0.519f,  0.767f), float2( 0.185f, -0.893f)
+    };
+
+    float lit = 0.0f;
+    {
+        float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
+        lit += (compare <= stored) ? 1.0f : 0.0f;
+    }
+
+    [unroll]
+    for (int i = 0; i < 8; ++i)
+    {
+        float3 ddir = normalize(dir + (T * taps[i].x + B * taps[i].y) * radius);
+        float stored = distCube.SampleLevel(gPointClamp, ddir, 0).r;
+        lit += (compare <= stored) ? 1.0f : 0.0f;
+    }
+
+    return lit / 9.0f;
 }
 
 float SpotShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTexels)

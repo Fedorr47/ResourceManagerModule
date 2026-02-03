@@ -252,30 +252,30 @@ int main(int argc, char** argv)
             rendern::Light l{};
             l.type = rendern::LightType::Directional;
             l.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
-            l.color = { 1.0f, 0.2f, 1.0f };
+            l.color = { 1.0f, 0.2f, 0.2f };
             l.intensity = 0.2f;
             scene.AddLight(l);
         }
         {
             rendern::Light l{};
             l.type = rendern::LightType::Point;
-            l.position = { -1.35f, 5.0f, -1.35f };
-            l.color = { 1.0f, 1.0f, 1.0f };
+            l.position = { -1.35f, 10.0f, -1.35f };
+            l.color = { 0.2f, 1.0f, 0.2f };
             l.range = 120.0f;
-            l.intensity = 1.0f;
+            l.intensity = 0.1f;
             l.attConstant = 1.0f;
             l.attLinear = 0.02f;
             l.attQuadratic = 0.004f;
-            //scene.AddLight(l);
+            scene.AddLight(l);
         }
         {
             rendern::Light l{};
             l.type = rendern::LightType::Spot;
             l.position = { 2.0f, 4.0f, 2.0f };
             l.direction = mathUtils::Normalize(mathUtils::Vec3(-2.0f, -5.0f, 0.0f)); // FROM light
-            l.color = { 1.0f, 0.2f, 0.2f };
+            l.color = { 0.2f, 0.2f, 1.0f };
             l.range = 100.0f;
-            l.intensity = 5.0f;
+            l.intensity = 10.0f;
             l.innerHalfAngleDeg = 22.0f;
             l.outerHalfAngleDeg = 35.0f;
             l.attLinear = 0.09f;

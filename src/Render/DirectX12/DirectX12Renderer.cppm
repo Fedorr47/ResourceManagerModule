@@ -609,8 +609,11 @@ export namespace rendern
 							{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
 						};
 
+						// NOTE: DX viewport + texture space is top-left origin. For cubemaps, the built-in
+						// HLSL TextureCube direction->(face,uv) mapping expects a particular "up" orientation.
+						// These up vectors avoid per-face vertical flips / seams when sampling with TextureCube.
 						static const mathUtils::Vec3 ups[6] = {
-							{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
+							{ 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 }
 						};
 						return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 					};
