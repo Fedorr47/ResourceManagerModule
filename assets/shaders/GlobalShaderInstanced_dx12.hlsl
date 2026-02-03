@@ -1,14 +1,18 @@
-// Resource slots must match DirectX12RHI root signature (t0..t11, s0..s1).
+// GlobalShaderInstanced_dx12.hlsl
+// NOTE: Save as UTF-8 without BOM to keep FXC happy.
 
+// Samplers (must match root signature)
 SamplerState gLinear : register(s0);
 SamplerComparisonState gShadowCmp : register(s1);
+SamplerState gPointClamp : register(s2);
 
+// Textures / SRVs (must match root signature tables per register)
 Texture2D gAlbedo : register(t0);
 
-// Directional shadow map (depth)
+// Directional shadow map (depth SRV)
 Texture2D<float> gDirShadow : register(t1);
 
-// Lights buffer (StructuredBuffer<GPULight>)
+// Lights buffer
 struct GPULight
 {
     float4 p0; // pos.xyz, type
@@ -18,26 +22,26 @@ struct GPULight
 };
 StructuredBuffer<GPULight> gLights : register(t2);
 
-// Spot shadow maps (depth)
+// Spot shadow maps (depth) - NO ARRAYS (root sig uses 1-descriptor tables per tN)
 Texture2D<float> gSpotShadow0 : register(t3);
 Texture2D<float> gSpotShadow1 : register(t4);
 Texture2D<float> gSpotShadow2 : register(t5);
 Texture2D<float> gSpotShadow3 : register(t6);
 
-// Point shadow distance cubemaps (R32_FLOAT)
+// Point distance cubemaps (normalized distance)
 TextureCube<float> gPointShadow0 : register(t7);
 TextureCube<float> gPointShadow1 : register(t8);
 TextureCube<float> gPointShadow2 : register(t9);
 TextureCube<float> gPointShadow3 : register(t10);
 
-// Shadow metadata buffer (one element).
+// Shadow metadata buffer (one element)
 struct ShadowDataSB
 {
-    float4 spotVPRows[16]; // 4 matrices * 4 rows
-    float4 spotInfo[4]; // { lightIndexBits, bias, 0, 0 }
+    float4 spotVPRows[16]; // 4 matrices * 4 rows (row-major rows)
+    float4 spotInfo[4]; // { lightIndexBits, 0, extraBiasTexels, 0 }
 
     float4 pointPosRange[4]; // { pos.xyz, range }
-    float4 pointInfo[4]; // { lightIndexBits, bias, 0, 0 }
+    float4 pointInfo[4]; // { lightIndexBits, 0, extraBiasTexels, 0 }
 };
 StructuredBuffer<ShadowDataSB> gShadowData : register(t11);
 
@@ -47,7 +51,7 @@ cbuffer PerBatchCB : register(b0)
     float4x4 uLightViewProj; // directional shadow VP (rows)
 
     float4 uCameraAmbient; // xyz + ambientStrength
-    float4 uBaseColor;     // fallback baseColor
+    float4 uBaseColor; // fallback baseColor
 
     // x=shininess, y=specStrength, z=materialShadowBiasTexels, w=flags (bitpacked as float)
     float4 uMaterialFlags;
@@ -59,32 +63,29 @@ cbuffer PerBatchCB : register(b0)
     float4 uShadowBias;
 };
 
-
-// Flags (must match C++).
+// Flags (must match C++)
 static const uint FLAG_USE_TEX = 1u << 0;
 static const uint FLAG_USE_SHADOW = 1u << 1;
 
+static const uint kMaxSpotShadows = 4;
+static const uint kMaxPointShadows = 4;
+
+// Helpers
 float4x4 MakeMatRows(float4 r0, float4 r1, float4 r2, float4 r3)
 {
     return float4x4(r0, r1, r2, r3);
 }
 
-float4 MulRows(float4 v, float4 r0, float4 r1, float4 r2, float4 r3)
-{
-    return float4(dot(v, r0), dot(v, r1), dot(v, r2), dot(v, r3));
-}
-
 float SmoothStep01(float t)
 {
-	t = saturate(t);
-	return t * t * (3.0f - 2.0f * t); // classic smoothstep
+    t = saturate(t);
+    return t * t * (3.0f - 2.0f * t);
 }
 
 float SlopeScaleTerm(float NdotL)
 {
-    // slope-scale bias term ~ tan(theta), theta = acos(NdotL)
-	NdotL = max(NdotL, 1e-4f);
-	return sqrt(max(1.0f - NdotL * NdotL, 0.0f)) / NdotL;
+    NdotL = max(NdotL, 1e-4f);
+    return sqrt(max(1.0f - NdotL * NdotL, 0.0f)) / NdotL;
 }
 
 float ComputeBiasTexels(float NdotL,
@@ -93,12 +94,41 @@ float ComputeBiasTexels(float NdotL,
                         float materialBiasTexels,
                         float extraBiasTexels)
 {
-	return baseBiasTexels
+    return baseBiasTexels
          + SlopeScaleTerm(NdotL) * slopeScaleTexels
          + materialBiasTexels
          + extraBiasTexels;
 }
 
+int FindSpotShadowSlot(uint lightIndex, uint spotShadowCount)
+{
+    [unroll]
+    for (uint s = 0; s < kMaxSpotShadows; ++s)
+    {
+        if (s >= spotShadowCount)
+            break;
+        uint stored = asuint(gShadowData[0].spotInfo[s].x);
+        if (stored == lightIndex)
+            return (int) s;
+    }
+    return -1;
+}
+
+int FindPointShadowSlot(uint lightIndex, uint pointShadowCount)
+{
+    [unroll]
+    for (uint s = 0; s < kMaxPointShadows; ++s)
+    {
+        if (s >= pointShadowCount)
+            break;
+        uint stored = asuint(gShadowData[0].pointInfo[s].x);
+        if (stored == lightIndex)
+            return (int) s;
+    }
+    return -1;
+}
+
+// Vertex IO
 struct VSIn
 {
     float3 pos : POSITION;
@@ -118,7 +148,7 @@ struct VSOut
     float3 worldPos : TEXCOORD0;
     float3 nrmW : TEXCOORD1;
     float2 uv : TEXCOORD2;
-    float4 shadowPos : TEXCOORD3; // directional shadow
+    float4 shadowPos : TEXCOORD3; // directional shadow clip
 };
 
 VSOut VSMain(VSIn IN)
@@ -140,13 +170,16 @@ VSOut VSMain(VSIn IN)
     return OUT;
 }
 
-float Shadow2D(Texture2D<float> shadowMap, float4 shadowPos, float biasTexels)
+// Shadow sampling
+float Shadow2D(Texture2D<float> shadowMap, float4 shadowClip, float biasTexels)
 {
-    float3 p = shadowPos.xyz / max(shadowPos.w, 1e-6f);
+    float3 p = shadowClip.xyz / max(shadowClip.w, 1e-6f);
 
+    // clip -> ndc bounds check
     if (p.x < -1.0f || p.x > 1.0f || p.y < -1.0f || p.y > 1.0f || p.z < 0.0f || p.z > 1.0f)
         return 1.0f;
 
+    // ndc -> uv (note: flip Y)
     float2 uv = float2(p.x, -p.y) * 0.5f + 0.5f;
 
     uint w, h;
@@ -154,9 +187,10 @@ float Shadow2D(Texture2D<float> shadowMap, float4 shadowPos, float biasTexels)
     float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
 
     float biasDepth = biasTexels * max(texel.x, texel.y);
-
     float z = p.z - biasDepth;
-float s = 0.0f;
+
+    // 2x2 PCF
+    float s = 0.0f;
     s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(-0.5f, -0.5f), z);
     s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(0.5f, -0.5f), z);
     s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(-0.5f, 0.5f), z);
@@ -164,53 +198,66 @@ float s = 0.0f;
     return s * 0.25f;
 }
 
-float ShadowPoint(TextureCube<float> distCube, float3 lightPos, float range, float3 worldPos, float biasTexels)
+float ShadowPoint(TextureCube<float> distCube,
+                  float3 lightPos, float range,
+                  float3 worldPos, float biasTexels)
 {
     float3 v = worldPos - lightPos;
     float d = length(v);
+    float3 dir = v / max(d, 1e-6f);
+
     float nd = saturate(d / max(range, 1e-3f));
 
-    float3 dir = (d > 1e-5f) ? (v / d) : float3(0, 0, 1);
-    float stored = distCube.SampleLevel(gLinear, dir, 0).r;
+    // distance cube expects clamp sampler (no wrap)
+    float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
 
-	uint w, h, levels;
-	distCube.GetDimensions(0, w, h, levels); // mip 0
-	float biasNorm = biasTexels / float(max(w, h));
+    uint w, h, levels;
+    distCube.GetDimensions(0, w, h, levels);
+    float biasNorm = biasTexels / float(max(w, h));
 
     return (nd - biasNorm <= stored) ? 1.0f : 0.0f;
 }
 
-float SpotShadowFactor(uint si, ShadowDataSB sd, float3 worldPos, float biasTexels)
+float SpotShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTexels)
 {
-    float4 r0 = sd.spotVPRows[si * 4 + 0];
-    float4 r1 = sd.spotVPRows[si * 4 + 1];
-    float4 r2 = sd.spotVPRows[si * 4 + 2];
-    float4 r3 = sd.spotVPRows[si * 4 + 3];
-    // Build clip-space position without relying on matrix constructor row/col conventions.
-    float4 sp = MulRows(float4(worldPos, 1.0f), r0, r1, r2, r3);
-    
-    if (si == 0)
-        return Shadow2D(gSpotShadow0, sp, biasTexels);
-    if (si == 1)
-        return Shadow2D(gSpotShadow1, sp, biasTexels);
-    if (si == 2)
-        return Shadow2D(gSpotShadow2, sp, biasTexels);
-    return Shadow2D(gSpotShadow3, sp, biasTexels);
+    if (slot >= 4)
+        return 1.0f;
+
+    float4 r0 = sd.spotVPRows[slot * 4 + 0];
+    float4 r1 = sd.spotVPRows[slot * 4 + 1];
+    float4 r2 = sd.spotVPRows[slot * 4 + 2];
+    float4 r3 = sd.spotVPRows[slot * 4 + 3];
+    float4x4 VP = float4x4(r0, r1, r2, r3);
+
+    float4 clip = mul(float4(worldPos, 1.0f), VP);
+
+    if (slot == 0)
+        return Shadow2D(gSpotShadow0, clip, biasTexels);
+    if (slot == 1)
+        return Shadow2D(gSpotShadow1, clip, biasTexels);
+    if (slot == 2)
+        return Shadow2D(gSpotShadow2, clip, biasTexels);
+    return Shadow2D(gSpotShadow3, clip, biasTexels);
 }
 
-float PointShadowFactor(uint pi, ShadowDataSB sd, float3 worldPos, float biasTexels)
+float PointShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTexels)
 {
-    float3 lp = sd.pointPosRange[pi].xyz;
-    float range = sd.pointPosRange[pi].w;
-    if (pi == 0)
+    if (slot >= 4)
+        return 1.0f;
+
+    float3 lp = sd.pointPosRange[slot].xyz;
+    float range = sd.pointPosRange[slot].w;
+
+    if (slot == 0)
         return ShadowPoint(gPointShadow0, lp, range, worldPos, biasTexels);
-    if (pi == 1)
+    if (slot == 1)
         return ShadowPoint(gPointShadow1, lp, range, worldPos, biasTexels);
-    if (pi == 2)
+    if (slot == 2)
         return ShadowPoint(gPointShadow2, lp, range, worldPos, biasTexels);
     return ShadowPoint(gPointShadow3, lp, range, worldPos, biasTexels);
 }
 
+// Pixel Shader
 float4 PSMain(VSOut IN) : SV_Target0
 {
     const uint flags = asuint(uMaterialFlags.w);
@@ -219,9 +266,7 @@ float4 PSMain(VSOut IN) : SV_Target0
 
     float3 base = uBaseColor.rgb;
     if (useTex)
-    {
         base *= gAlbedo.Sample(gLinear, IN.uv).rgb;
-    }
 
     float3 N = normalize(IN.nrmW);
     float3 V = normalize(uCameraAmbient.xyz - IN.worldPos);
@@ -232,35 +277,35 @@ float4 PSMain(VSOut IN) : SV_Target0
 
     float3 color = base * uCameraAmbient.w;
 
-    const uint lightCount = (uint)uCounts.x;
-    const uint spotShadowCount = (uint)uCounts.y;
-    const uint pointShadowCount = (uint)uCounts.z;
+    const uint lightCount = (uint) uCounts.x;
+    const uint spotShadowCount = (uint) uCounts.y;
+    const uint pointShadowCount = (uint) uCounts.z;
 
     ShadowDataSB sd = gShadowData[0];
 
-    // Bias controls are in "texel units": larger maps => smaller depth bias.
-    const float dirBaseBiasTexels   = uShadowBias.x;
-    const float spotBaseBiasTexels  = uShadowBias.y;
+    const float dirBaseBiasTexels = uShadowBias.x;
+    const float spotBaseBiasTexels = uShadowBias.y;
     const float pointBaseBiasTexels = uShadowBias.z;
-    const float slopeScaleTexels    = uShadowBias.w;
+    const float slopeScaleTexels = uShadowBias.w;
 
+    [loop]
     for (uint i = 0; i < lightCount; ++i)
     {
         GPULight Ld = gLights[i];
-        const uint type = (uint)Ld.p0.w;
+        const uint type = (uint) Ld.p0.w;
 
         float3 Lpos = Ld.p0.xyz;
-        float3 LdirFromLight = normalize(Ld.p1.xyz); // Directional/Spot: FROM light towards scene
+        float3 LdirFromLight = normalize(Ld.p1.xyz); // FROM light towards scene
         float intensity = Ld.p1.w;
         float3 Lcolor = Ld.p2.rgb;
         float range = Ld.p2.w;
 
-        float3 L = float3(0, 0, 1); // to light
+        float3 L = float3(0, 0, 1);
         float att = 1.0f;
 
         if (type == 0)
         {
-            // Directional: LdirFromLight is FROM light to scene, so -dir is FROM point to light.
+            // Directional: -dir is from point to light
             L = normalize(-LdirFromLight);
         }
         else
@@ -272,17 +317,16 @@ float4 PSMain(VSOut IN) : SV_Target0
 
             L = toL / max(dist, 1e-6f);
 
-            const float attLin  = Ld.p3.z;
+            const float attLin = Ld.p3.z;
             const float attQuad = Ld.p3.w;
 
-            // Range fade (artist-friendly) + physical-ish attenuation.
             float rangeFade = saturate(1.0f - dist / max(range, 1e-3f));
             float denom = 1.0f + attLin * dist + attQuad * dist * dist;
             att = rangeFade / max(denom, 1e-3f);
 
             if (type == 2)
             {
-                // Spot cone attenuation (cos angles are precomputed on CPU).
+                // Spot cone
                 const float cosInner = Ld.p3.x;
                 const float cosOuter = Ld.p3.y;
 
@@ -293,7 +337,6 @@ float4 PSMain(VSOut IN) : SV_Target0
                 float cone = SmoothStep01(t);
 
                 att *= cone;
-
                 if (att <= 0.0f)
                     continue;
             }
@@ -309,36 +352,27 @@ float4 PSMain(VSOut IN) : SV_Target0
         {
             if (type == 0) // Directional
             {
-				float biasTexels = ComputeBiasTexels(NdotL, dirBaseBiasTexels, slopeScaleTexels, materialBiasTexels, 0.0f);
+                float biasTexels = ComputeBiasTexels(NdotL, dirBaseBiasTexels, slopeScaleTexels, materialBiasTexels, 0.0f);
                 shadow = Shadow2D(gDirShadow, IN.shadowPos, biasTexels);
             }
             else if (type == 2) // Spot
             {
-                // Match this spot light to its shadow map by light index.
-                for (uint si = 0; si < spotShadowCount; ++si)
+                int slot = FindSpotShadowSlot(i, spotShadowCount);
+                if (slot >= 0)
                 {
-                    uint idx = asuint(sd.spotInfo[si].x);
-                    if (idx == i)
-                    {
-                        float extraBiasTexels = sd.spotInfo[si].y; // optional per-light add
-                        float biasTexels = ComputeBiasTexels(NdotL, spotBaseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
-                        shadow = SpotShadowFactor(si, sd, IN.worldPos, biasTexels);
-                        break;
-                    }
+                    float extraBiasTexels = sd.spotInfo[slot].z;
+                    float biasTexels = ComputeBiasTexels(NdotL, spotBaseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
+                    shadow = SpotShadowFactor((uint) slot, sd, IN.worldPos, biasTexels);
                 }
             }
             else if (type == 1) // Point
             {
-                for (uint pi = 0; pi < pointShadowCount; ++pi)
+                int slot = FindPointShadowSlot(i, pointShadowCount);
+                if (slot >= 0)
                 {
-                    uint idx = asuint(sd.pointInfo[pi].x);
-                    if (idx == i)
-                    {
-                        float extraBiasTexels = sd.pointInfo[pi].y; // optional per-light add
-                        float biasTexels = ComputeBiasTexels(NdotL, pointBaseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
-                        shadow = PointShadowFactor(pi, sd, IN.worldPos, biasTexels);
-                        break;
-                    }
+                    float extraBiasTexels = sd.pointInfo[slot].z;
+                    float biasTexels = ComputeBiasTexels(NdotL, pointBaseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
+                    shadow = PointShadowFactor((uint) slot, sd, IN.worldPos, biasTexels);
                 }
             }
         }

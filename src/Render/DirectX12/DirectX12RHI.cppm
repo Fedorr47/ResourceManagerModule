@@ -346,8 +346,8 @@ export namespace rhi
                 srvInc_ = NativeDevice()->GetDescriptorHandleIncrementSize(D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
                 // null SRVs:
-//  slot 0: null Texture2D SRV (for t0/t1 texture slots)
-//  slot 1: null StructuredBuffer SRV (for t2 lights SB)
+                //  slot 0: null Texture2D SRV (for t0/t1 texture slots)
+                //  slot 1: null StructuredBuffer SRV (for t2 lights SB)
                 {
                     D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
 
@@ -2150,7 +2150,7 @@ struct FramebufferEntry
             rootParams[0].Descriptor.RegisterSpace = 0;
             rootParams[0].ShaderVisibility = D3D12_SHADER_VISIBILITY_ALL;
 
-            // t0..t10
+            // t0..t11
             for (UINT i = 0; i < kMaxSRVSlots; ++i)
             {
                 rootParams[1 + i].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
@@ -2159,7 +2159,7 @@ struct FramebufferEntry
                 rootParams[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
             }
 
-            D3D12_STATIC_SAMPLER_DESC samplers[2]{};
+            D3D12_STATIC_SAMPLER_DESC samplers[3]{};
 
             auto MakeStaticSampler =
                 [](UINT reg,
@@ -2206,10 +2206,20 @@ struct FramebufferEntry
                 D3D12_COMPARISON_FUNC_LESS_EQUAL,
                 D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
 
+            // s2: point clamp
+            samplers[2] = MakeStaticSampler(
+                2,
+                D3D12_FILTER_MIN_MAG_MIP_POINT,
+                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                D3D12_COMPARISON_FUNC_ALWAYS,
+                D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK);
+
             D3D12_ROOT_SIGNATURE_DESC rootSigDesc{};
             rootSigDesc.NumParameters = static_cast<UINT>(rootParams.size());
             rootSigDesc.pParameters = rootParams.data();
-            rootSigDesc.NumStaticSamplers = 2;
+            rootSigDesc.NumStaticSamplers = 3;
             rootSigDesc.pStaticSamplers = samplers;
             rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 

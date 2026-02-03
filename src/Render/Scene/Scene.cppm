@@ -6,13 +6,13 @@ module;
 #include <stdexcept>
 #include <memory>
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
+
 
 export module core:scene;
 
 import :rhi;
 import :resource_manager_mesh;
+import :math_utils;
 
 export namespace rendern
 {
@@ -20,27 +20,27 @@ export namespace rendern
 	// Convention: rotationDegrees is applied as Z * Y * X after translation.
 	struct Transform
 	{
-		glm::vec3 position{ 0.0f, 0.0f, 0.0f };
-		glm::vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
-		glm::vec3 scale{ 1.0f, 1.0f, 1.0f };
+		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 scale{ 1.0f, 1.0f, 1.0f };
 
-		glm::mat4 ToMatrix() const
+		mathUtils::Mat4 ToMatrix() const
 		{
-			glm::mat4 m{ 1.0f };
-			m = glm::translate(m, position);
-			m = glm::rotate(m, glm::radians(rotationDegrees.z), glm::vec3(0, 0, 1));
-			m = glm::rotate(m, glm::radians(rotationDegrees.y), glm::vec3(0, 1, 0));
-			m = glm::rotate(m, glm::radians(rotationDegrees.x), glm::vec3(1, 0, 0));
-			m = glm::scale(m, scale);
+			mathUtils::Mat4 m{ 1.0f };
+			m = mathUtils::Translate(m, position);
+			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.z), mathUtils::Vec3(0, 0, 1));
+			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.y), mathUtils::Vec3(0, 1, 0));
+			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.x), mathUtils::Vec3(1, 0, 0));
+			m = mathUtils::Scale(m, scale);
 			return m;
 		}
 	};
 
 	struct Camera
 	{
-		glm::vec3 position{ 2.2f, 1.6f, 2.2f };
-		glm::vec3 target{ 0.0f, 0.0f, 0.0f };
-		glm::vec3 up{ 0.0f, 1.0f, 0.0f };
+		mathUtils::Vec3 position{ 2.2f, 1.6f, 2.2f };
+		mathUtils::Vec3 target{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 up{ 0.0f, 1.0f, 0.0f };
 
 		float fovYDeg{ 60.0f };
 		float nearZ{ 0.01f };
@@ -59,10 +59,10 @@ export namespace rendern
 	{
 		LightType type{ LightType::Directional };
 
-		glm::vec3 position{ 0.0f, 0.0f, 0.0f };
-		glm::vec3 direction{ 0.0f, -1.0f, 0.0f };
+		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 direction{ 0.0f, -1.0f, 0.0f };
 
-		glm::vec3 color{ 1.0f, 1.0f, 1.0f };
+		mathUtils::Vec3 color{ 1.0f, 1.0f, 1.0f };
 		float intensity{ 1.0f };
 
 		float range{ 10.0f };
@@ -76,7 +76,7 @@ export namespace rendern
 
 	struct MaterialParams
 	{
-		glm::vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+		mathUtils::Vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
 		float shininess{ 64.0f };
 		float specStrength{ 0.5f };
 		float shadowBias{ 0.0f }; // reserved for later shadow mapping

@@ -9,12 +9,7 @@ module;
 #endif
 
 
-#include <glm/glm.hpp>
-#include <glm/gtc/matrix_transform.hpp>
-#include <glm/gtc/type_ptr.hpp>
 // D3D-style clip-space helpers (Z in [0..1]).
-#include <glm/ext/matrix_clip_space.hpp>
-#include <glm/gtc/matrix_access.hpp>
 
 #include <array>
 #include <iostream>
@@ -33,6 +28,7 @@ export module core:renderer_dx12;
 
 import :rhi;
 import :scene;
+import :math_utils;
 import :renderer_settings;
 import :render_core;
 import :render_graph;
@@ -55,14 +51,12 @@ export namespace rendern
 		std::array<float, 4> p3{}; // cosInner, cosOuter, attLin, attQuad
 	};
 
-	struct alignas(16) InstanceData
+	struct InstanceData
 	{
-		// ROW-major 4x4 model matrix rows (for HLSL MakeMatRows()).
-		// We store rows by transposing glm::mat4 (glm is column-major).
-		glm::vec4 r0{};
-		glm::vec4 r1{};
-		glm::vec4 r2{};
-		glm::vec4 r3{};
+		mathUtils::Vec4 i0; // column 0 of model
+		mathUtils::Vec4 i1; // column 1
+		mathUtils::Vec4 i2; // column 2
+		mathUtils::Vec4 i3; // column 3
 	};
 	static_assert(sizeof(InstanceData) == 64);
 
@@ -71,7 +65,7 @@ export namespace rendern
 		const rendern::MeshRHI* mesh{};
 		// Material key (must be immutable during RenderFrame)
 		rhi::TextureDescIndex albedoDescIndex{};
-		glm::vec4 baseColor{};
+		mathUtils::Vec4 baseColor{};
 		float shininess{};
 		float specStrength{};
 		float shadowBias{};
@@ -163,21 +157,44 @@ export namespace rendern
 	struct alignas(16) ShadowDataSB
 	{
 		// Spot view-projection matrices as ROWS (4 matrices * 4 rows = 16 float4).
-		std::array<glm::vec4, kMaxSpotShadows * 4> spotVPRows{};
+		std::array<mathUtils::Vec4, kMaxSpotShadows * 4> spotVPRows{};
 		// spotInfo[i] = { lightIndexBits, bias, 0, 0 }
-		std::array<glm::vec4, kMaxSpotShadows>     spotInfo{};
+		std::array<mathUtils::Vec4, kMaxSpotShadows>     spotInfo{};
 
 		// pointPosRange[i] = { pos.x, pos.y, pos.z, range }
-		std::array<glm::vec4, kMaxPointShadows>    pointPosRange{};
+		std::array<mathUtils::Vec4, kMaxPointShadows>    pointPosRange{};
 		// pointInfo[i] = { lightIndexBits, bias, 0, 0 }
-		std::array<glm::vec4, kMaxPointShadows>    pointInfo{};
+		std::array<mathUtils::Vec4, kMaxPointShadows>    pointInfo{};
 	};
 	static_assert((sizeof(ShadowDataSB) % 16) == 0);
 
+	// ---------------- Spot/Point shadow maps (arrays) ----------------
+	struct SpotShadowRec
+	{
+		renderGraph::RGTextureHandle tex{};
+		mathUtils::Mat4 viewProj{};
+		std::uint32_t lightIndex = 0;
+	};
+
+	struct PointShadowRec
+	{
+		renderGraph::RGTextureHandle cube{};
+		renderGraph::RGTextureHandle depthTmp{};
+		mathUtils::Vec3 pos{};
+		float range = 10.0f;
+		std::uint32_t lightIndex = 0;
+	};
 
 	struct alignas(16) ShadowConstants
 	{
 		std::array<float, 16> uMVP{}; // lightProj * lightView * model
+	};
+
+	struct ShadowBatch
+	{
+		const rendern::MeshRHI* mesh{};
+		std::uint32_t instanceOffset = 0; // in combinedInstances[]
+		std::uint32_t instanceCount = 0;
 	};
 
 	class DX12Renderer
@@ -203,7 +220,7 @@ export namespace rendern
 			// -------------------------------------------------------------------------
 
 			// --- camera (used for fallback lights too) ---
-			const glm::vec3 camPos = scene.camera.position;
+			const mathUtils::Vec3 camPos = scene.camera.position;
 
 			// Upload lights once per frame (t2 StructuredBuffer SRV)
 			const std::uint32_t lightCount = UploadLights(scene, camPos);
@@ -218,48 +235,30 @@ export namespace rendern
 			});
 
 			// Choose first directional light (or a default).
-			glm::vec3 lightDir = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f)); // FROM light towards scene
+			mathUtils::Vec3 lightDir = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light towards scene
 			for (const auto& l : scene.lights)
 			{
 				if (l.type == LightType::Directional)
 				{
-					lightDir = glm::normalize(l.direction);
+					lightDir = mathUtils::Normalize(l.direction);
 					break;
 				}
 			}
 
-			const glm::vec3 center = scene.camera.target; // stage-1 heuristic
+			const mathUtils::Vec3 center = scene.camera.target;
 			const float lightDist = 10.0f;
-			const glm::vec3 lightPos = center - lightDir * lightDist;
-			const glm::mat4 lightView = glm::lookAt(lightPos, center, glm::vec3(0, 1, 0));
+			const mathUtils::Vec3 lightPos = center - lightDir * lightDist;
+			const mathUtils::Mat4 lightView = mathUtils::LookAt(lightPos, center, mathUtils::Vec3(0, 1, 0));
 
-			// Stage-1: fixed ortho volume around the origin/target.
 			const float orthoHalf = 8.0f;
-			const glm::mat4 lightProj = glm::orthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 40.0f);
-			const glm::mat4 dirLightViewProj = lightProj * lightView;
-
-			// ---------------- Spot/Point shadow maps (arrays) ----------------
-			struct SpotShadowRec
-			{
-				renderGraph::RGTextureHandle tex{};
-				glm::mat4 viewProj{};
-				std::uint32_t lightIndex = 0;
-			};
-
-			struct PointShadowRec
-			{
-				renderGraph::RGTextureHandle cube{};
-				renderGraph::RGTextureHandle depthTmp{};
-				glm::vec3 pos{};
-				float range = 10.0f;
-				std::uint32_t lightIndex = 0;
-			};
+			const mathUtils::Mat4 lightProj = mathUtils::OrthoRH_ZO(-orthoHalf, orthoHalf, -orthoHalf, orthoHalf, 0.1f, 40.0f);
+			const mathUtils::Mat4 dirLightViewProj = lightProj * lightView;
 
 			std::vector<SpotShadowRec> spotShadows;
-			spotShadows.reserve(kMaxSpotShadows);
-
 			std::vector<PointShadowRec> pointShadows;
+			spotShadows.reserve(kMaxSpotShadows);
 			pointShadows.reserve(kMaxPointShadows);
+
 
 			// ---------------- Build instance draw lists (ONE upload) ----------------
 			// We build two packings:
@@ -267,13 +266,6 @@ export namespace rendern
 			//   2) Main packing: per-(mesh+material params) batching (used by MainPass)
 			//
 			// Then we concatenate them into a single instanceBuffer_ update.
-			struct ShadowBatch
-			{
-				const rendern::MeshRHI* mesh{};
-				std::uint32_t instanceOffset = 0; // in combinedInstances[]
-				std::uint32_t instanceCount = 0;
-			};
-
 			// ---- Shadow packing (per mesh) ----
 			std::unordered_map<const rendern::MeshRHI*, std::vector<InstanceData>> shadowTmp;
 			shadowTmp.reserve(scene.drawItems.size());
@@ -281,29 +273,34 @@ export namespace rendern
 			for (const auto& item : scene.drawItems)
 			{
 				const rendern::MeshRHI* mesh = item.mesh ? &item.mesh->GetResource() : nullptr;
-				if (!mesh || mesh->indexCount == 0) continue;
+				if (!mesh || mesh->indexCount == 0)
+				{
+					continue;
+				}
 
-				const glm::mat4 model = item.transform.ToMatrix();
+				const mathUtils::Mat4 model = item.transform.ToMatrix();
 
 				InstanceData inst{};
-				inst.r0 = model[0];
-				inst.r1 = model[1];
-				inst.r2 = model[2];
-				inst.r3 = model[3];
+				inst.i0 = model[0];
+				inst.i1 = model[1];
+				inst.i2 = model[2];
+				inst.i3 = model[3];
 
 				shadowTmp[mesh].push_back(inst);
 			}
 
 			std::vector<InstanceData> shadowInstances;
-			shadowInstances.reserve(scene.drawItems.size());
-
 			std::vector<ShadowBatch> shadowBatches;
+			shadowInstances.reserve(scene.drawItems.size());
 			shadowBatches.reserve(shadowTmp.size());
 
 			{
 				std::vector<const rendern::MeshRHI*> meshes;
 				meshes.reserve(shadowTmp.size());
-				for (auto& [m, _] : shadowTmp) meshes.push_back(m);
+				for (auto& [shadowMesh, _] : shadowTmp)
+				{
+					meshes.push_back(shadowMesh);
+				}
 				std::sort(meshes.begin(), meshes.end());
 
 				for (const rendern::MeshRHI* mesh : meshes)
@@ -311,13 +308,13 @@ export namespace rendern
 					auto& vec = shadowTmp[mesh];
 					if (!mesh || vec.empty()) continue;
 
-					ShadowBatch b{};
-					b.mesh = mesh;
-					b.instanceOffset = static_cast<std::uint32_t>(shadowInstances.size());
-					b.instanceCount = static_cast<std::uint32_t>(vec.size());
+					ShadowBatch shadowBatch{};
+					shadowBatch.mesh = mesh;
+					shadowBatch.instanceOffset = static_cast<std::uint32_t>(shadowInstances.size());
+					shadowBatch.instanceCount = static_cast<std::uint32_t>(vec.size());
 
 					shadowInstances.insert(shadowInstances.end(), vec.begin(), vec.end());
-					shadowBatches.push_back(b);
+					shadowBatches.push_back(shadowBatch);
 				}
 			}
 
@@ -328,7 +325,10 @@ export namespace rendern
 			for (const auto& item : scene.drawItems)
 			{
 				const rendern::MeshRHI* mesh = item.mesh ? &item.mesh->GetResource() : nullptr;
-				if (!mesh || mesh->indexCount == 0) continue;
+				if (!mesh || mesh->indexCount == 0)
+				{
+					continue;
+				}
 
 				BatchKey key{};
 				key.mesh = mesh;
@@ -349,13 +349,13 @@ export namespace rendern
 				key.shadowBias = params.shadowBias; // texels
 
 				// Instance (ROWS)
-				const glm::mat4 model = item.transform.ToMatrix();
+				const mathUtils::Mat4 model = item.transform.ToMatrix();
 
 				InstanceData inst{};
-				inst.r0 = model[0];
-				inst.r1 = model[1];
-				inst.r2 = model[2];
-				inst.r3 = model[3];
+				inst.i0 = model[0];
+				inst.i1 = model[1];
+				inst.i2 = model[2];
+				inst.i3 = model[3];
 
 				auto& bucket = mainTmp[key];
 				if (bucket.inst.empty())
@@ -391,8 +391,14 @@ export namespace rendern
 			const std::uint32_t shadowBase = 0;
 			const std::uint32_t mainBase = static_cast<std::uint32_t>(shadowInstances.size());
 
-			for (auto& b : shadowBatches) b.instanceOffset += shadowBase;
-			for (auto& b : mainBatches)   b.instanceOffset += mainBase;
+			for (auto& sbatch : shadowBatches)
+			{
+				sbatch.instanceOffset += shadowBase;
+			}
+			for (auto& mbatch : mainBatches)
+			{
+				mbatch.instanceOffset += mainBase;
+			}
 
 			std::vector<InstanceData> combinedInstances;
 			combinedInstances.reserve(shadowInstances.size() + mainInstances.size());
@@ -443,8 +449,8 @@ export namespace rendern
 				};
 
 				ShadowPassConstants c{};
-				const glm::mat4 dirVP_T = glm::transpose(dirLightViewProj);
-				std::memcpy(c.uLightViewProj.data(), glm::value_ptr(dirVP_T), sizeof(float) * 16);
+				const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
+				std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 				graph.AddPass("ShadowPass", std::move(att),
 					[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
@@ -495,16 +501,18 @@ export namespace rendern
 						.debugName = "SpotShadowMap"
 					});
 
-					glm::vec3 dir = glm::normalize(l.direction);
-					glm::vec3 up = (std::abs(glm::dot(dir, glm::vec3(0, 1, 0))) > 0.99f)
-						? glm::vec3(0, 0, 1)
-						: glm::vec3(0, 1, 0);
+					mathUtils::Vec3 dir = mathUtils::Normalize(l.direction);
+					mathUtils::Vec3 up = (std::abs(mathUtils::Dot(dir, mathUtils::Vec3(0, 1, 0))) > 0.99f)
+						? mathUtils::Vec3(0, 0, 1)
+						: mathUtils::Vec3(0, 1, 0);
 
-					glm::mat4 v = glm::lookAt(l.position, l.position + dir, up);
+					mathUtils::Mat4 v = mathUtils::LookAt(l.position, l.position + dir, up);
 
 					const float outerHalf = std::max(1.0f, l.outerHalfAngleDeg);
-					const glm::mat4 p = glm::perspectiveRH_ZO(glm::radians(outerHalf * 2.0f), 1.0f, 0.1f, std::max(1.0f, l.range));
-					const glm::mat4 vp = p * v;
+					const float farZ = std::max(1.0f, l.range);
+					const float nearZ = std::max(0.5f, farZ * 0.02f);
+					const mathUtils::Mat4 p = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(outerHalf * 2.0f), 1.0f, nearZ, farZ);
+					const mathUtils::Mat4 vp = p * v;
 
 					SpotShadowRec rec{};
 					rec.tex = rg;
@@ -531,8 +539,8 @@ export namespace rendern
 						std::array<float, 16> uLightViewProj{};
 					};
 					SpotPassConstants c{};
-					const glm::mat4 vpT = glm::transpose(vp);
-					std::memcpy(c.uLightViewProj.data(), glm::value_ptr(vpT), sizeof(float) * 16);
+					const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
+					std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
 
 					graph.AddPass(passName, std::move(att),
 						[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
@@ -560,7 +568,8 @@ export namespace rendern
 								ctx.commandList.DrawIndexed(
 									b.mesh->indexCount,
 									b.mesh->indexType,
-									0, 0,
+									0, 
+									0,
 									b.instanceCount,
 									0);
 							}
@@ -569,7 +578,7 @@ export namespace rendern
 				else if (l.type == LightType::Point && pointShadows.size() < kMaxPointShadows)
 				{
 					// Point shadows use a cubemap R32_FLOAT distance map (color) + a temporary D32 depth buffer.
-					const rhi::Extent2D cubeExtent{ 512, 512 };
+					const rhi::Extent2D cubeExtent{ 2048, 2048 };
 					const auto cube = graph.CreateTexture(renderGraph::RGTextureDesc{
 						.extent = cubeExtent,
 						.format = rhi::Format::R32_FLOAT,
@@ -593,28 +602,33 @@ export namespace rendern
 					rec.lightIndex = li;
 					pointShadows.push_back(rec);
 
-					auto FaceView = [](const glm::vec3& p, int face) -> glm::mat4
+					auto FaceView = [](const mathUtils::Vec3& pos, int face) -> mathUtils::Mat4
 					{
 						// +X, -X, +Y, -Y, +Z, -Z
-						static const glm::vec3 dirs[6] = {
-							{ 1, 0, 0 },{-1, 0, 0 },{ 0, 1, 0 },{ 0,-1, 0 },{ 0, 0, 1 },{ 0, 0,-1 }
+						static const mathUtils::Vec3 dirs[6] = {
+							{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
 						};
-						static const glm::vec3 ups[6] = {
-							{ 0,-1, 0 },{ 0,-1, 0 },{ 0, 0, 1 },{ 0, 0,-1 },{ 0,-1, 0 },{ 0,-1, 0 }
+
+						static const mathUtils::Vec3 ups[6] = {
+							{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
 						};
-						return glm::lookAt(p, p + dirs[face], ups[face]);
+						return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 					};
 
-					const glm::mat4 proj90 = glm::perspectiveRH_ZO(glm::radians(90.0f), 1.0f, 0.1f, rec.range);
+					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(90.0f), 1.0f, 0.1f, rec.range);
 
 					for (int face = 0; face < 6; ++face)
 					{
-						const glm::mat4 vp = proj90 * FaceView(rec.pos, face);
+						const mathUtils::Mat4 vp = proj90 * FaceView(rec.pos, face);
 
 						rhi::ClearDesc clear{};
 						clear.clearColor = true;
 						clear.clearDepth = true;
+
 						clear.color = { 1.0f, 1.0f, 1.0f, 1.0f }; // far
+						//float id = (float)face / 5.0f;           // 0..1
+						//clear.color = { id, 0.0f, 0.0f, 1.0f };
+
 						clear.depth = 1.0f;
 
 						renderGraph::PassAttachments att{};
@@ -636,10 +650,11 @@ export namespace rendern
 						};
 
 						PointShadowConstants c{};
-						const glm::mat4 vpT = glm::transpose(vp);
-						std::memcpy(c.uFaceViewProj.data(), glm::value_ptr(vpT), sizeof(float) * 16);
+						const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
+						std::memcpy(c.uFaceViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
 						c.uLightPosRange = { rec.pos.x, rec.pos.y, rec.pos.z, rec.range };
 						c.uMisc = { 0, 0, 0, 0 };
+
 
 						graph.AddPass(passName, std::move(att),
 							[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
@@ -653,22 +668,23 @@ export namespace rendern
 
 								ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
 
-								for (const ShadowBatch& b : shadowBatches)
+								for (const ShadowBatch& shadowBatch : shadowBatches)
 								{
-									if (!b.mesh || b.instanceCount == 0) continue;
+									if (!shadowBatch.mesh || shadowBatch.instanceCount == 0) continue;
 
-									ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
+									ctx.commandList.BindInputLayout(shadowBatch.mesh->layoutInstanced);
 
-									ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
-									ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, b.instanceOffset * instStride);
+									ctx.commandList.BindVertexBuffer(0, shadowBatch.mesh->vertexBuffer, shadowBatch.mesh->vertexStrideBytes, 0);
+									ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, shadowBatch.instanceOffset * instStride);
 
-									ctx.commandList.BindIndexBuffer(b.mesh->indexBuffer, b.mesh->indexType, 0);
+									ctx.commandList.BindIndexBuffer(shadowBatch.mesh->indexBuffer, shadowBatch.mesh->indexType, 0);
 
 									ctx.commandList.DrawIndexed(
-										b.mesh->indexCount,
-										b.mesh->indexType,
-										0, 0,
-										b.instanceCount,
+										shadowBatch.mesh->indexCount,
+										shadowBatch.mesh->indexType,
+										0, 
+										0,
+										shadowBatch.instanceCount,
 										0);
 								}
 							});
@@ -684,19 +700,21 @@ export namespace rendern
 				{
 					const auto& s = spotShadows[i];
 
-					sd.spotVPRows[i * 4 + 0] = s.viewProj[0];
-					sd.spotVPRows[i * 4 + 1] = s.viewProj[1];
-					sd.spotVPRows[i * 4 + 2] = s.viewProj[2];
-					sd.spotVPRows[i * 4 + 3] = s.viewProj[3];
+					const mathUtils::Mat4 vp = s.viewProj;
 
-					sd.spotInfo[i] = glm::vec4(AsFloatBits(s.lightIndex), 0, 0, 0);
+					sd.spotVPRows[i * 4 + 0] = vp[0];
+					sd.spotVPRows[i * 4 + 1] = vp[1];
+					sd.spotVPRows[i * 4 + 2] = vp[2];
+					sd.spotVPRows[i * 4 + 3] = vp[3];
+
+					sd.spotInfo[i] = mathUtils::Vec4(AsFloatBits(s.lightIndex), 0, settings_.spotShadowBaseBiasTexels, 0);
 				}
 
 				for (std::size_t i = 0; i < pointShadows.size(); ++i)
 				{
 					const auto& p = pointShadows[i];
-					sd.pointPosRange[i] = glm::vec4(p.pos, p.range);
-					sd.pointInfo[i] = glm::vec4(AsFloatBits(p.lightIndex), 0, 0, 0);
+					sd.pointPosRange[i] = mathUtils::Vec4(p.pos, p.range);
+					sd.pointInfo[i] = mathUtils::Vec4(AsFloatBits(p.lightIndex), 0, settings_.pointShadowBaseBiasTexels, 0);
 				}
 
 				device_.UpdateBuffer(shadowDataBuffer_, std::as_bytes(std::span{ &sd, 1 }));
@@ -744,11 +762,11 @@ export namespace rendern
 						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
 						: 1.0f;
 
-					const glm::mat4 proj = glm::perspectiveRH_ZO(glm::radians(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-					const glm::mat4 view = glm::lookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-					const glm::vec3 camPosLocal = scene.camera.position;
+					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+					const mathUtils::Vec3 camPosLocal = scene.camera.position;
 
-					const glm::mat4 viewProj = proj * view;
+					const mathUtils::Mat4 viewProj = proj * view;
 
 					// Bind lights (t2 StructuredBuffer SRV)
 					ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
@@ -759,7 +777,9 @@ export namespace rendern
 					for (const Batch& b : mainBatches)
 					{
 						if (!b.mesh || b.instanceCount == 0)
+						{
 							continue;
+						}
 
 						MaterialPerm perm = MaterialPerm::UseShadow;
 						if (b.materialHandle.id != 0)
@@ -770,7 +790,9 @@ export namespace rendern
 						{
 							// Fallback: infer only from params.
 							if (b.material.albedoDescIndex != 0)
+							{
 								perm = perm | MaterialPerm::UseTex;
+							}
 						}
 
 						const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
@@ -780,15 +802,21 @@ export namespace rendern
 						ctx.commandList.BindTextureDesc(0, b.material.albedoDescIndex);
 
 						std::uint32_t flags = 0;
-						if (useTex)    flags |= kFlagUseTex;
-						if (useShadow) flags |= kFlagUseShadow;
+						if (useTex)
+						{
+							flags |= kFlagUseTex;
+						}
+						if (useShadow)
+						{
+							flags |= kFlagUseShadow;
+						}
 
 						PerBatchConstants constants{};
-						const glm::mat4 viewProjT = glm::transpose(viewProj);
-						const glm::mat4 dirVP_T = glm::transpose(dirLightViewProj);
+						const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
+						const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
 
-						std::memcpy(constants.uViewProj.data(), glm::value_ptr(viewProjT), sizeof(float) * 16);
-						std::memcpy(constants.uLightViewProj.data(), glm::value_ptr(dirVP_T), sizeof(float) * 16);
+						std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+						std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 						constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.22f };
 						constants.uBaseColor = { b.material.baseColor.x, b.material.baseColor.y, b.material.baseColor.z, b.material.baseColor.w };
@@ -860,7 +888,7 @@ export namespace rendern
 			return f;
 		}
 
-		std::uint32_t UploadLights(const Scene& scene, const glm::vec3& camPos)
+		std::uint32_t UploadLights(const Scene& scene, const mathUtils::Vec3& camPos)
 		{
 			std::vector<GPULight> gpu;
 			gpu.reserve(std::min<std::size_t>(scene.lights.size(), kMaxLights));
@@ -876,8 +904,8 @@ export namespace rendern
 				out.p1 = { l.direction.x, l.direction.y, l.direction.z, l.intensity };
 				out.p2 = { l.color.x, l.color.y, l.color.z, l.range };
 
-				const float cosOuter = std::cos(glm::radians(l.outerHalfAngleDeg));
-				const float cosInner = std::cos(glm::radians(l.innerHalfAngleDeg));
+				const float cosOuter = std::cos(mathUtils::ToRadians(l.outerHalfAngleDeg));
+				const float cosInner = std::cos(mathUtils::ToRadians(l.innerHalfAngleDeg));
 
 				out.p3 = { cosInner, cosOuter, l.attLinear, l.attQuadratic };
 				gpu.push_back(out);
@@ -887,7 +915,7 @@ export namespace rendern
 			if (gpu.empty())
 			{
 				GPULight dir{};
-				const glm::vec3 dirFromLight = glm::normalize(glm::vec3(-0.4f, -1.0f, -0.3f));
+				const mathUtils::Vec3 dirFromLight = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f));
 				dir.p0 = { 0,0,0, static_cast<float>(static_cast<std::uint32_t>(LightType::Directional)) };
 				dir.p1 = { dirFromLight.x, dirFromLight.y, dirFromLight.z, 1.2f };
 				dir.p2 = { 1.0f, 1.0f, 1.0f, 0.0f };
@@ -902,12 +930,12 @@ export namespace rendern
 				gpu.push_back(point);
 
 				GPULight spot{};
-				const glm::vec3 spotPos = camPos;
-				const glm::vec3 spotDir = glm::normalize(glm::vec3(0, 0, 0) - camPos);
+				const mathUtils::Vec3 spotPos = camPos;
+				const mathUtils::Vec3 spotDir = mathUtils::Normalize(mathUtils::Vec3(0, 0, 0) - camPos);
 				spot.p0 = { spotPos.x, spotPos.y, spotPos.z, static_cast<float>(static_cast<std::uint32_t>(LightType::Spot)) };
 				spot.p1 = { spotDir.x, spotDir.y, spotDir.z, 3.0f };
 				spot.p2 = { 0.8f, 0.9f, 1.0f, 30.0f };
-				spot.p3 = { std::cos(glm::radians(12.0f)), std::cos(glm::radians(20.0f)), 0.09f, 0.032f };
+				spot.p3 = { std::cos(mathUtils::ToRadians(12.0f)), std::cos(mathUtils::ToRadians(20.0f)), 0.09f, 0.032f };
 				gpu.push_back(spot);
 			}
 
@@ -939,8 +967,14 @@ export namespace rendern
 				auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
 				{
 					std::vector<std::string> d;
-					if (useTex)    d.push_back("USE_TEX=1");
-					if (useShadow) d.push_back("USE_SHADOW=1");
+					if (useTex)
+					{
+						d.push_back("USE_TEX=1");
+					}
+					if (useShadow)
+					{
+						d.push_back("USE_SHADOW=1");
+					}
 					return d;
 				};
 
@@ -1008,7 +1042,6 @@ export namespace rendern
 
 				shadowState_.blend.enable = false;
 			}
-
 
 			// Point shadow pipeline (R32_FLOAT distance cubemap)
 			if (device_.GetBackend() == rhi::Backend::DirectX12)
