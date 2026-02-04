@@ -30,17 +30,19 @@ namespace rendern
         struct IRendererImpl
         {
             virtual ~IRendererImpl() = default;
-            virtual void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) = 0;
+            virtual void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData) = 0;
+            virtual void SetSettings(const RendererSettings& settings) = 0;
             virtual void Shutdown() = 0;
         };
 
         class NullRendererImpl final : public IRendererImpl
         {
         public:
-            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene&) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene&, const void*) override
             {
                 swapChain.Present();
             }
+            void SetSettings(const RendererSettings&) override {}
             void Shutdown() override {}
         };
 
@@ -52,10 +54,15 @@ namespace rendern
                 : impl_(device, std::move(settings))
             {}
 
-            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData) override
             {
                 impl_.RenderFrame(swapChain, scene);
             }
+            void SetSettings(const RendererSettings& settings) override
+            {
+                impl_.SetSettings(settings);
+            }
+
             void Shutdown() override
             {
                 impl_.Shutdown();
@@ -74,10 +81,16 @@ namespace rendern
                 : impl_(device, std::move(settings))
             {}
 
-            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene) override
+            void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData) override
             {
-                impl_.RenderFrame(swapChain, scene);
+                impl_.RenderFrame(swapChain, scene, imguiDrawData);
             }
+
+            void SetSettings(const RendererSettings& settings) override
+            {
+                impl_.SetSettings(settings);
+            }
+
             void Shutdown() override
             {
                 impl_.Shutdown();
@@ -125,9 +138,14 @@ namespace rendern
             }
         }
 
-        void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene)
+        void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData = nullptr)
         {
-            impl_->RenderFrame(swapChain, scene);
+            impl_->RenderFrame(swapChain, scene, imguiDrawData);
+        }
+
+        void SetSettings(const RendererSettings& settings)
+        {
+            impl_->SetSettings(settings);
         }
 
         void Shutdown()

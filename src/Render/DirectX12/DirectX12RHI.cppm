@@ -13,6 +13,10 @@ module;
 #include <wrl/client.h>
 
 #include "d3dx12.h"
+
+// Dear ImGui (DX12 backend)
+#include <imgui.h>
+#include <imgui_impl_dx12.h>
 #endif
 
 #include <cstddef>
@@ -371,7 +375,7 @@ export namespace rhi
                     NativeDevice()->CreateShaderResourceView(nullptr, &nullBuf, cpu);
                 }
 
-                nextSrvIndex_ = 2;
+                nextSrvIndex_ = 3; // 0=null tex, 1=null buffer, 2=ImGui font SRV
                 freeSrv_.clear();
             }
 
@@ -464,6 +468,52 @@ export namespace rhi
         std::string_view GetName() const override
         {
             return "DirectX12 RHI";
+        }
+
+        // ---- Dear ImGui hooks ----
+        void InitImGui(void* hwnd, int framesInFlight, rhi::Format rtvFormat) override
+        {
+            if (imguiInitialized_)
+            {
+                return;
+            }
+            if (!hwnd)
+            {
+                throw std::runtime_error("DX12: InitImGui: hwnd is null");
+            }
+
+            const DXGI_FORMAT fmt = ToDXGIFormat(rtvFormat);
+
+            D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+            cpu.ptr += static_cast<SIZE_T>(kImGuiFontSrvIndex) * static_cast<SIZE_T>(srvInc_);
+
+            D3D12_GPU_DESCRIPTOR_HANDLE gpu = srvHeap_->GetGPUDescriptorHandleForHeapStart();
+            gpu.ptr += static_cast<UINT64>(kImGuiFontSrvIndex) * static_cast<UINT64>(srvInc_);
+
+            // The ImGui Win32 backend is initialized in the app; here we only setup the DX12 backend.
+            if (!ImGui_ImplDX12_Init(NativeDevice(), framesInFlight, fmt, srvHeap_.Get(), cpu, gpu))
+            {
+                throw std::runtime_error("DX12: ImGui_ImplDX12_Init failed");
+            }
+
+            imguiInitialized_ = true;
+        }
+
+        void ImGuiNewFrame() override
+        {
+            if (imguiInitialized_)
+            {
+                ImGui_ImplDX12_NewFrame();
+            }
+        }
+
+        void ShutdownImGui() override
+        {
+            if (imguiInitialized_)
+            {
+                ImGui_ImplDX12_Shutdown();
+                imguiInitialized_ = false;
+            }
         }
         Backend GetBackend() const noexcept override
         {
@@ -1667,6 +1717,19 @@ else if constexpr (std::is_same_v<T, CommandTextureDesc>)
 
                             cmdList_->DrawInstanced(cmd.vertexCount, cmd.instanceCount, cmd.firstVertex, cmd.firstInstance);
                         }
+                        else if constexpr (std::is_same_v<T, CommandDX12ImGuiRender>)
+                        {
+                            if (!imguiInitialized_ || !cmd.drawData)
+                            {
+                                return;
+                            }
+
+                            // Ensure ImGui sees the same shader-visible heap.
+                            ID3D12DescriptorHeap* heaps[] = { srvHeap_.Get() };
+                            cmdList_->SetDescriptorHeaps(1, heaps);
+
+                            ImGui_ImplDX12_RenderDrawData(reinterpret_cast<ImDrawData*>(const_cast<void*>(cmd.drawData)), cmdList_.Get());
+                        }
                         else
                         {
                             // other commands ignored
@@ -2511,6 +2574,10 @@ struct FramebufferEntry
         // SRV heap (shader visible)
         ComPtr<ID3D12DescriptorHeap> srvHeap_;
         UINT srvInc_{ 0 };
+
+        static constexpr UINT kImGuiFontSrvIndex = 2; // reserved SRV slot for ImGui font texture
+        bool imguiInitialized_{ false };
+
         UINT nextSrvIndex_{ 1 };
         std::vector<UINT> freeSrv_;
 

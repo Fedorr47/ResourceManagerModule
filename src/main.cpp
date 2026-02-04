@@ -9,6 +9,14 @@ import std;
 #include <windows.h>
 #endif
 
+#if defined(CORE_USE_DX12)
+  #include <imgui.h>
+  #include <backends/imgui_impl_win32.h>
+  // NOTE: Recent Dear ImGui versions intentionally do NOT expose the WndProc handler prototype
+  // in the header (see comments inside imgui_impl_win32.h). Declare it explicitly.
+  extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+#endif
+
 // ------------------------------------------------------------
 // Win32 window (no GLFW)
 // ------------------------------------------------------------
@@ -24,8 +32,20 @@ struct Win32Window
 
 Win32Window* g_window = nullptr;
 
+#if defined(CORE_USE_DX12)
+bool g_ShowUI = true;
+bool g_ImGuiInitialized = false;
+#endif
+
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
+#if defined(CORE_USE_DX12)
+    if (g_ImGuiInitialized)
+    {
+        if (ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+            return 1;
+    }
+#endif
     switch (msg)
     {
     case WM_CLOSE:
@@ -41,6 +61,14 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             DestroyWindow(hwnd);
             return 0;
         }
+#if defined(CORE_USE_DX12)
+        if (wParam == VK_F1)
+        {
+            const bool wasDown = (lParam & (1 << 30)) != 0;
+            if (!wasDown) g_ShowUI = !g_ShowUI;
+            return 0;
+        }
+#endif
         break;
     default:
         break;
@@ -231,6 +259,18 @@ int main(int argc, char** argv)
         rendern::RendererSettings rs{};
         rendern::Renderer renderer{ *device, rs };
 
+        // ------------------------------------------------------------
+        // Dear ImGui (Win32 + DX12)
+        // ------------------------------------------------------------
+#if defined(CORE_USE_DX12)
+        IMGUI_CHECKVERSION();
+        ImGui::CreateContext();
+        ImGui::StyleColorsDark();
+        ImGui_ImplWin32_Init(wnd.hwnd);
+        device->InitImGui(wnd.hwnd, 2, swapChain->GetDesc().backbufferFormat);
+        g_ImGuiInitialized = true;
+#endif
+
         // Request meshes asynchronously (Scene stores handles; renderer skips pending resources).
         auto cubeMeshH = assets.LoadMeshAsync((std::filesystem::path("models") / "cube.obj").string());
         auto groundMeshH = assets.LoadMeshAsync((std::filesystem::path("models") / "quad.obj").string());
@@ -252,21 +292,21 @@ int main(int argc, char** argv)
             rendern::Light l{};
             l.type = rendern::LightType::Directional;
             l.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
-            l.color = { 1.0f, 0.2f, 0.2f };
+            l.color = { 1.0f, 0.2f, 1.0f };
             l.intensity = 0.2f;
-            scene.AddLight(l);
+            //scene.AddLight(l);
         }
         {
             rendern::Light l{};
             l.type = rendern::LightType::Point;
-            l.position = { -1.35f, 10.0f, -1.35f };
+            l.position = { -1.35f, 7.0f, -1.35f };
             l.color = { 0.2f, 1.0f, 0.2f };
             l.range = 120.0f;
             l.intensity = 0.1f;
             l.attConstant = 1.0f;
             l.attLinear = 0.02f;
             l.attQuadratic = 0.004f;
-            scene.AddLight(l);
+            //scene.AddLight(l);
         }
         {
             rendern::Light l{};
@@ -275,7 +315,7 @@ int main(int argc, char** argv)
             l.direction = mathUtils::Normalize(mathUtils::Vec3(-2.0f, -5.0f, 0.0f)); // FROM light
             l.color = { 0.2f, 0.2f, 1.0f };
             l.range = 100.0f;
-            l.intensity = 10.0f;
+            l.intensity = 8.0f;
             l.innerHalfAngleDeg = 22.0f;
             l.outerHalfAngleDeg = 35.0f;
             l.attLinear = 0.09f;
@@ -394,12 +434,63 @@ int main(int argc, char** argv)
             {
                 scene.lights[2].position = scene.camera.position;
                 scene.lights[2].direction = mathUtils::Normalize(mathUtils::Sub(scene.camera.target, scene.camera.position));
-            }
+            }            // ------------------------------------------------------------
+            // ImGui frame (optional)
+            // ------------------------------------------------------------
+#if defined(CORE_USE_DX12)
+            if (g_ImGuiInitialized)
+            {
+                device->ImGuiNewFrame();
+                ImGui_ImplWin32_NewFrame();
+                ImGui::NewFrame();
 
-            renderer.RenderFrame(*swapChain, scene);
+                if (g_ShowUI)
+                {
+                    ImGui::Begin("Renderer / Shadows");
+
+                    ImGui::Checkbox("Depth prepass", &rs.enableDepthPrepass);
+                    ImGui::Checkbox("Debug print draw calls", &rs.debugPrintDrawCalls);
+
+                    ImGui::Separator();
+                    ImGui::Text("Shadow bias (texels)");
+                    ImGui::SliderFloat("Dir base", &rs.dirShadowBaseBiasTexels, 0.0f, 5.0f, "%.3f");
+                    ImGui::SliderFloat("Spot base", &rs.spotShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
+                    ImGui::SliderFloat("Point base", &rs.pointShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
+                    ImGui::SliderFloat("Slope scale", &rs.shadowSlopeScaleTexels, 0.0f, 10.0f, "%.3f");
+
+                    ImGui::Separator();
+                    ImGui::Text("F1: toggle UI");
+                    ImGui::End();
+                }
+
+                ImGui::Render();
+            }
+#endif
+
+
+            // Push updated settings (cheap; renderer uses settings each frame).
+            renderer.SetSettings(rs);
+
+#if defined(CORE_USE_DX12)
+            const void* imguiDrawData = (g_ImGuiInitialized && g_ShowUI) ? static_cast<const void*>(ImGui::GetDrawData()) : nullptr;
+#else
+            const void* imguiDrawData = nullptr;
+#endif
+            renderer.RenderFrame(*swapChain, scene, imguiDrawData);
 
             TinySleep();
         }
+
+#if defined(CORE_USE_DX12)
+        // Shutdown ImGui
+        if (g_ImGuiInitialized)
+        {
+            device->ShutdownImGui();
+            ImGui_ImplWin32_Shutdown();
+            ImGui::DestroyContext();
+            g_ImGuiInitialized = false;
+        }
+#endif
 
         renderer.Shutdown();
 

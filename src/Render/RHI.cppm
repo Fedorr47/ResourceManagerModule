@@ -298,6 +298,13 @@ export namespace rhi
 		std::uint32_t size{ 0 };   // bytes used in `data`
 		std::array<std::byte, 256> data{};
 	};
+
+	// DX12-only: render Dear ImGui draw data into the current render target.
+	// Other backends may ignore this command.
+	struct CommandDX12ImGuiRender
+	{
+		const void* drawData{ nullptr }; // ImDrawData*
+	};
 	struct CommandDrawIndexed
 	{
 		std::uint32_t indexCount{ 0 };
@@ -332,6 +339,7 @@ export namespace rhi
 		CommandUniformFloat4,
 		CommandUniformMat4,
 		CommandSetConstants,
+		CommandDX12ImGuiRender,
 		CommandDrawIndexed,
 		CommandDraw>;
 
@@ -431,6 +439,10 @@ export namespace rhi
 		{
 			commands.emplace_back(CommandBindStructuredBufferSRV{ slot, buffer });
 		}
+		void DX12ImGuiRender(const void* drawData)
+		{
+			commands.emplace_back(CommandDX12ImGuiRender{ drawData });
+		}
 	};
 
 	// ------------------------ RHI interfaces ------------------------ //
@@ -452,6 +464,11 @@ export namespace rhi
 		virtual Backend GetBackend() const noexcept = 0;
 
 		virtual std::string_view GetName() const = 0;
+
+		// Optional UI hooks (Dear ImGui). Default is no-op.
+		virtual void InitImGui(void* hwnd, int framesInFlight, Format rtvFormat) { (void)hwnd; (void)framesInFlight; (void)rtvFormat; }
+		virtual void ImGuiNewFrame() {}
+		virtual void ShutdownImGui() {}
 
 		// Textures
 		virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;

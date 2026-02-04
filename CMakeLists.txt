@@ -1,4 +1,4 @@
-﻿cmake_minimum_required(VERSION 3.30 FATAL_ERROR)
+cmake_minimum_required(VERSION 3.30 FATAL_ERROR)
 
 # ------------------------------------------------------------
 # Experimental: import std;
@@ -42,6 +42,7 @@ if (CORE_RENDER_BACKEND STREQUAL "DX12" AND NOT WIN32)
   message(FATAL_ERROR "DX12 backend is Windows-only")
 endif()
 
+if (CORE_RENDER_BACKEND STREQUAL "GL")
 # ------------------------------------------------------------
 # GLFW
 # ------------------------------------------------------------
@@ -63,6 +64,10 @@ if (TARGET glfw AND NOT TARGET GLFW::glfw)
   add_library(GLFW::glfw ALIAS glfw)
 endif()
 
+
+endif()
+
+if (CORE_RENDER_BACKEND STREQUAL "GL")
 # ------------------------------------------------------------
 # GLM (header-only)
 # ------------------------------------------------------------
@@ -87,6 +92,9 @@ if (NOT TARGET glm::glm)
   endif()
 endif()
 
+
+endif()
+
 # ------------------------------------------------------------
 # OpenGL (only needed for GL backend)
 # ------------------------------------------------------------
@@ -102,6 +110,7 @@ if (CORE_RENDER_BACKEND STREQUAL "GL")
   endif()
 endif()
 
+if (CORE_RENDER_BACKEND STREQUAL "GL")
 # ------------------------------------------------------------
 # GLEW (build/find ALWAYS, link only for GL)
 # ------------------------------------------------------------
@@ -141,6 +150,9 @@ if (CORE_RENDER_BACKEND STREQUAL "GL" AND NOT TARGET GLEW::GLEW)
   message(FATAL_ERROR "GLEW target not available for GL backend.")
 endif()
 
+
+endif()
+
 # ------------------------------------------------------------
 # STB
 # ------------------------------------------------------------
@@ -152,6 +164,56 @@ FetchContent_MakeAvailable(stb)
 
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers INTERFACE "${stb_SOURCE_DIR}")
+
+
+# ------------------------------------------------------------
+# ImGui (DX12 + Win32 only)
+# ------------------------------------------------------------
+if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
+  set(IMGUI_DIR "")
+
+  if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/imgui.cpp")
+    set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui")
+  else()
+    FetchContent_Declare(imgui
+      GIT_REPOSITORY https://github.com/ocornut/imgui.git
+      GIT_TAG        v1.91.0
+    )
+    FetchContent_MakeAvailable(imgui)
+    set(IMGUI_DIR "${imgui_SOURCE_DIR}")
+  endif()
+
+  add_library(imgui STATIC
+    "${IMGUI_DIR}/imgui.cpp"
+    "${IMGUI_DIR}/imgui_draw.cpp"
+    "${IMGUI_DIR}/imgui_tables.cpp"
+    "${IMGUI_DIR}/imgui_widgets.cpp"
+    "${IMGUI_DIR}/imgui_demo.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
+    "${IMGUI_DIR}/backends/imgui_impl_dx12.cpp"
+  )
+
+  target_include_directories(imgui PUBLIC
+    "${IMGUI_DIR}"
+    "${IMGUI_DIR}/backends"
+  )
+
+  # Also allow imgui.cpp to see a project-level imconfig.h (if you have one in the repo root),
+  # so that both the library and the app compile with the same config and struct layouts.
+  target_include_directories(imgui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+
+  # Make sure the application picks the same ImGui headers that the imgui target was built with.
+  # Otherwise IMGUI_CHECKVERSION() can assert on mismatched struct layout.
+  set(IMGUI_INCLUDE_DIRS "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+
+  # IMPORTANT: Do NOT set IMGUI_DISABLE_OBSOLETE_FUNCTIONS only for the imgui target.
+  # That macro can change public struct layouts (ImGuiIO, etc.) and will trip IMGUI_CHECKVERSION()
+  # if the application includes imgui.h without the same macro.
+  # Keep defaults. If you ever need it, set it PUBLIC so it propagates to app.
+
+  # Backend needs D3D12/DXGI. (dxguid for IID definitions)
+  target_link_libraries(imgui PUBLIC d3d12 dxgi dxguid)
+endif()
 
 # ------------------------------------------------------------
 # CoreEngineModuleLib
@@ -255,8 +317,6 @@ target_sources(CoreEngineModuleLib
 # Common deps
 target_link_libraries(CoreEngineModuleLib
   PUBLIC
-    GLFW::glfw
-    glm::glm
     stb_headers
 )
 
@@ -266,7 +326,7 @@ if (CORE_RENDER_BACKEND STREQUAL "GL")
     target_include_directories(CoreEngineModuleLib PUBLIC "${GLEW_HEADERS_DIR}")
   endif()
 
-  target_link_libraries(CoreEngineModuleLib PUBLIC GLEW::GLEW ${OPENGL_TARGET})
+  target_link_libraries(CoreEngineModuleLib PUBLIC GLFW::glfw glm::glm GLEW::GLEW ${OPENGL_TARGET})
 
   target_compile_definitions(CoreEngineModuleLib
     PUBLIC
@@ -279,6 +339,9 @@ endif()
 if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
   target_include_directories(CoreEngineModuleLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/extern")
   target_link_libraries(CoreEngineModuleLib PUBLIC d3d12 dxgi dxguid)
+  if (TARGET imgui)
+    target_link_libraries(CoreEngineModuleLib PUBLIC imgui)
+  endif()
 endif()
 
 # ------------------------------------------------------------
@@ -294,6 +357,11 @@ add_custom_command(TARGET app POST_BUILD
 
 target_compile_features(app PRIVATE cxx_std_23)
 target_link_libraries(app PRIVATE CoreEngineModuleLib)
+
+if (CORE_RENDER_BACKEND STREQUAL "DX12")
+  # Put ImGui include dirs BEFORE project/extern include dirs to avoid picking up a stray imgui.h from elsewhere.
+  target_include_directories(app SYSTEM BEFORE PRIVATE ${IMGUI_INCLUDE_DIRS})
+endif()
 
 if (WIN32)
   find_library(D3DCOMPILER_LIB NAMES d3dcompiler_47 d3dcompiler REQUIRED)

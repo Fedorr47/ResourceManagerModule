@@ -209,8 +209,12 @@ export namespace rendern
 			CreateResources();
 		}
 
-		
-		void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene)
+		void SetSettings(const RendererSettings& settings)
+		{
+			settings_ = settings;
+		}
+
+		void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData)
 		{
 			renderGraph::RenderGraph graph;
 
@@ -609,11 +613,8 @@ export namespace rendern
 							{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
 						};
 
-						// NOTE: DX viewport + texture space is top-left origin. For cubemaps, the built-in
-						// HLSL TextureCube direction->(face,uv) mapping expects a particular "up" orientation.
-						// These up vectors avoid per-face vertical flips / seams when sampling with TextureCube.
 						static const mathUtils::Vec3 ups[6] = {
-							{ 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 }
+							{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
 						};
 						return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 					};
@@ -730,7 +731,7 @@ export namespace rendern
 			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
 			graph.AddSwapChainPass("MainPass", clearDesc,
-				[this, &scene, shadowRG, dirLightViewProj, lightCount, spotShadows, pointShadows, mainBatches, instStride](renderGraph::PassContext& ctx)
+				[this, &scene, shadowRG, dirLightViewProj, lightCount, spotShadows, pointShadows, mainBatches, instStride, imguiDrawData](renderGraph::PassContext& ctx)
 				{
 					const auto extent = ctx.passExtent;
 
@@ -849,6 +850,12 @@ export namespace rendern
 
 						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
 						ctx.commandList.DrawIndexed(b.mesh->indexCount, b.mesh->indexType, 0, 0, b.instanceCount, 0);
+					}
+
+					// ImGui overlay (optional)
+					if (imguiDrawData)
+					{
+						ctx.commandList.DX12ImGuiRender(imguiDrawData);
 					}
 				});
 

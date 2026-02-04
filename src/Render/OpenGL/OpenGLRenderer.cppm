@@ -35,6 +35,11 @@ export namespace rendern
 			CreateFallbackResources();
 		}
 
+		void SetSettings(const RendererSettings& settings)
+		{
+			settings_ = settings;
+		}
+
 		void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene)
 		{
 			renderGraph::RenderGraph graph;
