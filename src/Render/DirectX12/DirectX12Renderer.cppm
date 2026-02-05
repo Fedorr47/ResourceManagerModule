@@ -18,6 +18,8 @@ module;
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <optional>
+#include <stdexcept>
 #include <span>
 #include <string>
 #include <utility>
@@ -133,7 +135,7 @@ export namespace rendern
 		std::uint32_t instanceCount = 0;
 	};
 
-		struct alignas(16) PerBatchConstants
+	struct alignas(16) PerBatchConstants
 	{
 		std::array<float, 16> uViewProj{};
 		std::array<float, 16> uLightViewProj{};
@@ -254,7 +256,7 @@ export namespace rendern
 				.format = rhi::Format::D32_FLOAT,
 				.usage = renderGraph::ResourceUsage::DepthStencil,
 				.debugName = "ShadowMap"
-			});
+				});
 
 			// Choose first directional light (or a default).
 			mathUtils::Vec3 lightDir = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light towards scene
@@ -272,113 +274,116 @@ export namespace rendern
 			// This prevents hard "shadow coverage clipping" when the camera rotates.
 			const rhi::SwapChainDesc scDesc = swapChain.GetDesc();
 			const float aspect = (scDesc.extent.height > 0)
-			    ? (static_cast<float>(scDesc.extent.width) / static_cast<float>(scDesc.extent.height))
-			    : 1.0f;
-			
+				? (static_cast<float>(scDesc.extent.width) / static_cast<float>(scDesc.extent.height))
+				: 1.0f;
+
 			// Limit how far we render directional shadows to keep resolution usable.
 			const float shadowFar = std::min(scene.camera.farZ, 60.0f);
 			const float shadowNear = std::max(scene.camera.nearZ, 0.05f);
-			
+
 			// Camera basis (orthonormal).
 			const mathUtils::Vec3 camF = mathUtils::Normalize(scene.camera.target - scene.camera.position);
 			mathUtils::Vec3 camR = mathUtils::Cross(camF, scene.camera.up);
 			camR = mathUtils::Normalize(camR);
 			const mathUtils::Vec3 camU = mathUtils::Cross(camR, camF);
-			
+
 			const float fovY = mathUtils::ToRadians(scene.camera.fovYDeg);
 			const float tanHalf = std::tan(fovY * 0.5f);
-			
+
 			auto MakeFrustumCorner = [&](float dist, float sx, float sy) -> mathUtils::Vec3
-			{
-			    // sx,sy are in {-1,+1} (left/right, bottom/top).
-			    const float halfH = dist * tanHalf;
-			    const float halfW = halfH * aspect;
-			    const mathUtils::Vec3 c = scene.camera.position + camF * dist;
-			    return c + camU * (sy * halfH) + camR * (sx * halfW);
-			};
-			
+				{
+					// sx,sy are in {-1,+1} (left/right, bottom/top).
+					const float halfH = dist * tanHalf;
+					const float halfW = halfH * aspect;
+					const mathUtils::Vec3 c = scene.camera.position + camF * dist;
+					return c + camU * (sy * halfH) + camR * (sx * halfW);
+				};
+
 			std::array<mathUtils::Vec3, 8> frustumCorners{};
 			// Near plane
 			frustumCorners[0] = MakeFrustumCorner(shadowNear, -1.0f, -1.0f);
-			frustumCorners[1] = MakeFrustumCorner(shadowNear,  1.0f, -1.0f);
-			frustumCorners[2] = MakeFrustumCorner(shadowNear,  1.0f,  1.0f);
-			frustumCorners[3] = MakeFrustumCorner(shadowNear, -1.0f,  1.0f);
+			frustumCorners[1] = MakeFrustumCorner(shadowNear, 1.0f, -1.0f);
+			frustumCorners[2] = MakeFrustumCorner(shadowNear, 1.0f, 1.0f);
+			frustumCorners[3] = MakeFrustumCorner(shadowNear, -1.0f, 1.0f);
 			// Far plane (shadow distance)
 			frustumCorners[4] = MakeFrustumCorner(shadowFar, -1.0f, -1.0f);
-			frustumCorners[5] = MakeFrustumCorner(shadowFar,  1.0f, -1.0f);
-			frustumCorners[6] = MakeFrustumCorner(shadowFar,  1.0f,  1.0f);
-			frustumCorners[7] = MakeFrustumCorner(shadowFar, -1.0f,  1.0f);
-			
+			frustumCorners[5] = MakeFrustumCorner(shadowFar, 1.0f, -1.0f);
+			frustumCorners[6] = MakeFrustumCorner(shadowFar, 1.0f, 1.0f);
+			frustumCorners[7] = MakeFrustumCorner(shadowFar, -1.0f, 1.0f);
+
 			// Frustum center + radius (for stable light placement).
 			mathUtils::Vec3 center{ 0.0f, 0.0f, 0.0f };
-			for (const auto& p : frustumCorners) center = center + p;
+			for (const auto& p : frustumCorners)
+			{
+				center = center + p;
+			}
 			center = center * (1.0f / 8.0f);
-			
+
 			float radius = 0.0f;
 			for (const auto& p : frustumCorners)
 			{
-			    radius = std::max(radius, mathUtils::Length(p - center));
+				radius = std::max(radius, mathUtils::Length(p - center));
 			}
-			
+
 			// Stable "up" for light view.
 			const mathUtils::Vec3 worldUp(0.0f, 1.0f, 0.0f);
 			const mathUtils::Vec3 lightUp = (std::abs(mathUtils::Dot(lightDir, worldUp)) > 0.99f)
-			    ? mathUtils::Vec3(0.0f, 0.0f, 1.0f)
-			    : worldUp;
-			
+				? mathUtils::Vec3(0.0f, 0.0f, 1.0f)
+				: worldUp;
+
 			// Place the light far enough so all corners are in front of it.
 			const float lightDist = radius + 100.0f;
 			const mathUtils::Vec3 lightPos = center - lightDir * lightDist;
 			const mathUtils::Mat4 lightView = mathUtils::LookAt(lightPos, center, lightUp);
-			
+
 			// Compute light-space AABB of the camera frustum slice.
-			float minX =  1e30f, minY =  1e30f, minZ =  1e30f;
+			float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
 			float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
-			
+
 			for (const auto& p : frustumCorners)
 			{
-			    const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(p, 1.0f);
-			    minX = std::min(minX, ls4.x); maxX = std::max(maxX, ls4.x);
-			    minY = std::min(minY, ls4.y); maxY = std::max(maxY, ls4.y);
-			    minZ = std::min(minZ, ls4.z); maxZ = std::max(maxZ, ls4.z);
+				const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(p, 1.0f);
+				minX = std::min(minX, ls4.x); maxX = std::max(maxX, ls4.x);
+				minY = std::min(minY, ls4.y); maxY = std::max(maxY, ls4.y);
+				minZ = std::min(minZ, ls4.z); maxZ = std::max(maxZ, ls4.z);
 			}
-			
+
 			// Padding to avoid hard coverage clipping.
 			const float extX = maxX - minX;
 			const float extY = maxY - minY;
 			const float extZ = maxZ - minZ;
-			
+
 			const float padXY = 0.10f * std::max(extX, extY) + 2.0f;
-			const float padZ  = 0.20f * extZ + 10.0f;
-			
+			const float padZ = 0.20f * extZ + 10.0f;
+
 			minX -= padXY; maxX += padXY;
 			minY -= padXY; maxY += padXY;
 			minZ -= padZ;  maxZ += padZ;
-			
+
 			// Extra depth margin for casters outside the camera frustum (important for directional lights).
 			constexpr float casterMargin = 80.0f;
 			minZ -= casterMargin;
-			
+
 			// Snap the ortho window to shadow texels (reduces shimmering / "special angle" popping).
-			const float widthLS  = maxX - minX;
+			const float widthLS = maxX - minX;
 			const float heightLS = maxY - minY;
-			
-			const float wuPerTexelX = widthLS  / static_cast<float>(shadowExtent.width);
+
+			const float wuPerTexelX = widthLS / static_cast<float>(shadowExtent.width);
 			const float wuPerTexelY = heightLS / static_cast<float>(shadowExtent.height);
-			
+
 			float cx = 0.5f * (minX + maxX);
 			float cy = 0.5f * (minY + maxY);
-			
+
 			cx = std::floor(cx / wuPerTexelX) * wuPerTexelX;
 			cy = std::floor(cy / wuPerTexelY) * wuPerTexelY;
-			
+
 			minX = cx - widthLS * 0.5f;  maxX = cx + widthLS * 0.5f;
 			minY = cy - heightLS * 0.5f; maxY = cy + heightLS * 0.5f;
-			
+
 			// OrthoRH_ZO expects positive zNear/zFar distances where view-space z is negative in front of the camera.
 			const float zNear = std::max(0.1f, -maxZ);
-			const float zFar  = std::max(zNear + 1.0f, -minZ);
-			
+			const float zFar = std::max(zNear + 1.0f, -minZ);
+
 			const mathUtils::Mat4 lightProj = mathUtils::OrthoRH_ZO(minX, maxX, minY, maxY, zNear, zFar);
 			const mathUtils::Mat4 dirLightViewProj = lightProj * lightView;
 
@@ -402,6 +407,31 @@ export namespace rendern
 			{
 				const rendern::MeshRHI* mesh = item.mesh ? &item.mesh->GetResource() : nullptr;
 				if (!mesh || mesh->indexCount == 0)
+				{
+					continue;
+				}
+
+				// IMPORTANT: exclude alpha-blended objects from shadow casting
+				MaterialParams params{};
+				MaterialPerm perm = MaterialPerm::UseShadow;
+				if (item.material.id != 0)
+				{
+					const auto& mat = scene.GetMaterial(item.material);
+					params = mat.params;
+					perm = EffectivePerm(mat);
+				}
+				else
+				{
+					params.baseColor = { 1,1,1,1 };
+					params.shininess = 32.0f;
+					params.specStrength = 0.2f;
+					params.shadowBias = 0.0f;
+					params.albedoDescIndex = 0;
+					perm = MaterialPerm::UseShadow;
+				}
+
+				const bool isTransparent = HasFlag(perm, MaterialPerm::Transparent) || (params.baseColor.w < 0.999f);
+				if (isTransparent)
 				{
 					continue;
 				}
@@ -434,7 +464,10 @@ export namespace rendern
 				for (const rendern::MeshRHI* mesh : meshes)
 				{
 					auto& vec = shadowTmp[mesh];
-					if (!mesh || vec.empty()) continue;
+					if (!mesh || vec.empty())
+					{
+						continue;
+					}
 
 					ShadowBatch shadowBatch{};
 					shadowBatch.mesh = mesh;
@@ -452,7 +485,7 @@ export namespace rendern
 
 			std::vector<InstanceData> transparentInstances;
 			transparentInstances.reserve(scene.drawItems.size());
-	
+
 			std::vector<TransparentTemp> transparentTmp;
 			transparentTmp.reserve(scene.drawItems.size());
 
@@ -475,6 +508,15 @@ export namespace rendern
 					const auto& mat = scene.GetMaterial(item.material);
 					params = mat.params;
 					perm = EffectivePerm(mat);
+				}
+				else
+				{
+					params.baseColor = { 1,1,1,1 };
+					params.shininess = 32.0f;
+					params.specStrength = 0.2f;
+					params.shadowBias = 0.0f;
+					params.albedoDescIndex = 0;
+					perm = MaterialPerm::UseShadow;
 				}
 
 				// IMPORTANT: BatchKey must include material parameters,
@@ -522,7 +564,10 @@ export namespace rendern
 
 			for (auto& [key, bt] : mainTmp)
 			{
-				if (bt.inst.empty()) continue;
+				if (bt.inst.empty())
+				{
+					continue;
+				}
 
 				Batch b{};
 				b.mesh = key.mesh;
@@ -548,7 +593,7 @@ export namespace rendern
 			{
 				mbatch.instanceOffset += mainBase;
 			}
-			
+
 			std::vector<TransparentDraw> transparentDraws;
 			transparentDraws.reserve(transparentTmp.size());
 			for (const auto& transparentInst : transparentTmp)
@@ -635,7 +680,10 @@ export namespace rendern
 
 						for (const ShadowBatch& b : shadowBatches)
 						{
-							if (!b.mesh || b.instanceCount == 0) continue;
+							if (!b.mesh || b.instanceCount == 0)
+							{
+								continue;
+							}
 
 							ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
 							ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
@@ -656,7 +704,9 @@ export namespace rendern
 			for (std::uint32_t li = 0; li < static_cast<std::uint32_t>(scene.lights.size()); ++li)
 			{
 				if (li >= kMaxLights)
+				{
 					break;
+				}
 
 				const auto& l = scene.lights[li];
 
@@ -668,7 +718,7 @@ export namespace rendern
 						.format = rhi::Format::D32_FLOAT,
 						.usage = renderGraph::ResourceUsage::DepthStencil,
 						.debugName = "SpotShadowMap"
-					});
+						});
 
 					mathUtils::Vec3 dir = mathUtils::Normalize(l.direction);
 					mathUtils::Vec3 up = (std::abs(mathUtils::Dot(dir, mathUtils::Vec3(0, 1, 0))) > 0.99f)
@@ -725,7 +775,10 @@ export namespace rendern
 
 							for (const ShadowBatch& b : shadowBatches)
 							{
-								if (!b.mesh || b.instanceCount == 0) continue;
+								if (!b.mesh || b.instanceCount == 0)
+								{
+									continue;
+								}
 
 								ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
 
@@ -737,7 +790,7 @@ export namespace rendern
 								ctx.commandList.DrawIndexed(
 									b.mesh->indexCount,
 									b.mesh->indexType,
-									0, 
+									0,
 									0,
 									b.instanceCount,
 									0);
@@ -754,14 +807,14 @@ export namespace rendern
 						.usage = renderGraph::ResourceUsage::RenderTarget,
 						.type = renderGraph::TextureType::Cube,
 						.debugName = "PointShadowCube"
-					});
+						});
 
 					const auto depthTmp = graph.CreateTexture(renderGraph::RGTextureDesc{
 						.extent = cubeExtent,
 						.format = rhi::Format::D32_FLOAT,
 						.usage = renderGraph::ResourceUsage::DepthStencil,
 						.debugName = "PointShadowDepthTmp"
-					});
+						});
 
 					PointShadowRec rec{};
 					rec.cube = cube;
@@ -772,17 +825,17 @@ export namespace rendern
 					pointShadows.push_back(rec);
 
 					auto FaceView = [](const mathUtils::Vec3& pos, int face) -> mathUtils::Mat4
-					{
-						// +X, -X, +Y, -Y, +Z, -Z
-						static const mathUtils::Vec3 dirs[6] = {
-							{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
-						};
+						{
+							// +X, -X, +Y, -Y, +Z, -Z
+							static const mathUtils::Vec3 dirs[6] = {
+								{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
+							};
 
-						static const mathUtils::Vec3 ups[6] = {
-							{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
+							static const mathUtils::Vec3 ups[6] = {
+								{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
+							};
+							return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 						};
-						return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
-					};
 
 					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(90.0f), 1.0f, 0.1f, rec.range);
 
@@ -795,9 +848,6 @@ export namespace rendern
 						clear.clearDepth = true;
 
 						clear.color = { 1.0f, 1.0f, 1.0f, 1.0f }; // far
-						//float id = (float)face / 5.0f;           // 0..1
-						//clear.color = { id, 0.0f, 0.0f, 1.0f };
-
 						clear.depth = 1.0f;
 
 						renderGraph::PassAttachments att{};
@@ -839,7 +889,10 @@ export namespace rendern
 
 								for (const ShadowBatch& shadowBatch : shadowBatches)
 								{
-									if (!shadowBatch.mesh || shadowBatch.instanceCount == 0) continue;
+									if (!shadowBatch.mesh || shadowBatch.instanceCount == 0)
+									{
+										continue;
+									}
 
 									ctx.commandList.BindInputLayout(shadowBatch.mesh->layoutInstanced);
 
@@ -851,7 +904,7 @@ export namespace rendern
 									ctx.commandList.DrawIndexed(
 										shadowBatch.mesh->indexCount,
 										shadowBatch.mesh->indexType,
-										0, 
+										0,
 										0,
 										shadowBatch.instanceCount,
 										0);
@@ -1047,12 +1100,15 @@ export namespace rendern
 							ctx.commandList.BindPipeline(MainPipelineFor(perm));
 							ctx.commandList.BindTextureDesc(0, batchTransparent.material.albedoDescIndex);
 
-							constexpr std::uint32_t kFlagUseTex = 1u << 0;
-							constexpr std::uint32_t kFlagUseShadow = 1u << 1;
-
 							std::uint32_t flags = 0;
-							if (useTex) flags |= kFlagUseTex;
-							if (useShadow) flags |= kFlagUseShadow;
+							if (useTex)
+							{
+								flags |= kFlagUseTex;
+							}
+							if (useShadow)
+							{
+								flags |= kFlagUseShadow;
+							}
 
 							PerBatchConstants constants{};
 							const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
@@ -1148,7 +1204,9 @@ export namespace rendern
 			for (const auto& l : scene.lights)
 			{
 				if (gpu.size() >= kMaxLights)
+				{
 					break;
+				}
 
 				GPULight out{};
 
@@ -1217,18 +1275,18 @@ export namespace rendern
 			// Main pipeline permutations (UseTex / UseShadow)
 			{
 				auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
-				{
-					std::vector<std::string> d;
-					if (useTex)
 					{
-						d.push_back("USE_TEX=1");
-					}
-					if (useShadow)
-					{
-						d.push_back("USE_SHADOW=1");
-					}
-					return d;
-				};
+						std::vector<std::string> d;
+						if (useTex)
+						{
+							d.push_back("USE_TEX=1");
+						}
+						if (useShadow)
+						{
+							d.push_back("USE_SHADOW=1");
+						}
+						return d;
+					};
 
 				for (std::uint32_t idx = 0; idx < 4; ++idx)
 				{
@@ -1241,17 +1299,23 @@ export namespace rendern
 						.name = "VSMain",
 						.filePath = shaderPath.string(),
 						.defines = defs
-					});
+						});
 					const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
 						.stage = rhi::ShaderStage::Pixel,
 						.name = "PSMain",
 						.filePath = shaderPath.string(),
 						.defines = defs
-					});
+						});
 
 					std::string psoName = "PSO_Mesh";
-					if (useTex) psoName += "_Tex";
-					if (useShadow) psoName += "_Shadow";
+					if (useTex)
+					{
+						psoName += "_Tex";
+					}
+					if (useShadow)
+					{
+						psoName += "_Shadow";
+					}
 
 					psoMain_[idx] = psoCache_.GetOrCreate(psoName, vs, ps);
 				}
@@ -1279,13 +1343,13 @@ export namespace rendern
 					.name = "VS_Shadow",
 					.filePath = shadowPath.string(),
 					.defines = {}
-				});
+					});
 				const auto psShadow = shaderLibrary_.GetOrCreateShader(ShaderKey{
 					.stage = rhi::ShaderStage::Pixel,
 					.name = "PS_Shadow",
 					.filePath = shadowPath.string(),
 					.defines = {}
-				});
+					});
 
 				psoShadow_ = psoCache_.GetOrCreate("PSO_Shadow", vsShadow, psShadow);
 
@@ -1308,13 +1372,13 @@ export namespace rendern
 					.name = "VS_ShadowPoint",
 					.filePath = pointShadowPath.string(),
 					.defines = {}
-				});
+					});
 				const auto psPoint = shaderLibrary_.GetOrCreateShader(ShaderKey{
 					.stage = rhi::ShaderStage::Pixel,
 					.name = "PS_ShadowPoint",
 					.filePath = pointShadowPath.string(),
 					.defines = {}
-				});
+					});
 				psoPointShadow_ = psoCache_.GetOrCreate("PSO_PointShadow", vsPoint, psPoint);
 
 				pointShadowState_.depth.testEnable = true;
