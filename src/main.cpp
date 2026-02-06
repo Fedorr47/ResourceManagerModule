@@ -369,11 +369,14 @@ namespace
         // Skybox cubemap (auto-resolve faces by base-name)
         TextureProperties skyboxProps{};
         skyboxProps.srgb = true;
+        skyboxProps.dimension = TextureDimension::Cube;
         skyboxProps.generateMips = true;
 
-        [[maybe_unused]] auto skyboxHandle = assets.LoadTextureCubeAsync(
+        skyboxProps.cubeFromCross = true;
+        skyboxProps.filePath = "textures/skybox/Cubemap_Sky_03-512x512.png";
+
+        [[maybe_unused]] auto skyboxHandle = assets.LoadTextureAsync(
             "Skybox",
-            "textures/skybox/cupertin-lake",
             skyboxProps);
 
         // Meshes

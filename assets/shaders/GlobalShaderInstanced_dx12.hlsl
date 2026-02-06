@@ -174,31 +174,45 @@ VSOut VSMain(VSIn IN)
 float Shadow2D(Texture2D<float> shadowMap, float4 shadowClip, float biasTexels)
 {
     float3 p = shadowClip.xyz / max(shadowClip.w, 1e-6f);
+        
+    // Only reject invalid depth. For XY we rely on BORDER addressing on the comparison sampler,
+    // so PCF near the frustum edge fades naturally instead of producing a hard cut.
+	if (p.z < 0.0f || p.z > 1.0f)
+	{
+		return 1.0f;
+	}
 
-    // clip -> ndc bounds check
-    if (p.x < -1.0f || p.x > 1.0f || p.y < -1.0f || p.y > 1.0f || p.z < 0.0f || p.z > 1.0f)
-    {
-        return 1.0f;
-    }
-
-    // ndc -> uv (note: flip Y)
-        float2 uv = float2(p.x, -p.y) * 0.5f + 0.5f;
-
-        uint w, h;
-        shadowMap.GetDimensions(w, h);
-        float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
-
-        float biasDepth = biasTexels * max(texel.x, texel.y);
-        float z = p.z - biasDepth;
-
-    // 2x2 PCF
-        float s = 0.0f;
-        s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(-0.5f, -0.5f), z);
-        s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(0.5f, -0.5f), z);
-        s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(-0.5f, 0.5f), z);
-        s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(0.5f, 0.5f), z);
-        return s * 0.25f;
-    }
+    // NDC -> UV (note: flip Y)
+    float2 uv = float2(p.x, -p.y) * 0.5f + 0.5f;
+    
+	uint w, h;
+	shadowMap.GetDimensions(w, h);
+	float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
+    
+	float biasDepth = biasTexels * max(texel.x, texel.y);
+	float z = p.z - biasDepth;
+    
+        // 3x3 PCF
+	float s = 0.0f;
+    [unroll] for (int y = -1; y <= 1; ++y)
+	{
+            [unroll]
+		for (int x = -1; x <= 1; ++x)
+		{
+			s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(x, y), z);
+		}
+	}
+    
+	float shadow = s / 9.0f;
+    
+        // Edge guard-band: smoothly fade out the shadow near the shadow-map boundary to avoid a visible seam
+        // when the spotlight still contributes light but the shadow frustum ends.
+	float edge = min(min(uv.x, uv.y), min(1.0f - uv.x, 1.0f - uv.y));
+	float fade = saturate(edge / (2.0f * max(texel.x, texel.y))); // ~2 texels
+    
+	return lerp(1.0f, shadow, fade);
+    
+ }
 
 float ShadowPoint(TextureCube<float> distCube,
                   float3 lightPos, float range,
@@ -423,7 +437,11 @@ float4 PSMain(VSOut IN) : SV_Target0
         float3 H = normalize(L + V);
         float spec = pow(max(dot(N, H), 0.0f), max(shininess, 1.0f));
         float3 specular = specStrength * spec;
-
+        
+        // shadowStrength in [0..1]
+		float shadowStrength = 0.85;
+		shadow = lerp(1.0f, shadow, shadowStrength);
+        
         color += (diffuse + specular) * (Lcolor * intensity * att) * shadow;
     }
 

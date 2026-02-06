@@ -255,7 +255,7 @@ export namespace rendern
 			const std::uint32_t lightCount = UploadLights(scene, camPos);
 
 			// ---------------- Directional shadow (single) ----------------
-			const rhi::Extent2D shadowExtent{ 2048, 2048 };
+			const rhi::Extent2D shadowExtent{ 4096, 4096 };
 			const auto shadowRG = graph.CreateTexture(renderGraph::RGTextureDesc{
 				.extent = shadowExtent,
 				.format = rhi::Format::D32_FLOAT,
@@ -283,7 +283,7 @@ export namespace rendern
 				: 1.0f;
 
 			// Limit how far we render directional shadows to keep resolution usable.
-			const float shadowFar = std::min(scene.camera.farZ, 60.0f);
+			const float shadowFar = std::min(scene.camera.farZ, 35.0f);
 			const float shadowNear = std::max(scene.camera.nearZ, 0.05f);
 
 			// Camera basis (orthonormal).
@@ -366,7 +366,7 @@ export namespace rendern
 			minZ -= padZ;  maxZ += padZ;
 
 			// Extra depth margin for casters outside the camera frustum (important for directional lights).
-			constexpr float casterMargin = 80.0f;
+			constexpr float casterMargin = 45.0f;
 			minZ -= casterMargin;
 
 			// Snap the ortho window to shadow texels (reduces shimmering / "special angle" popping).
@@ -934,7 +934,7 @@ export namespace rendern
 					sd.spotVPRows[i * 4 + 2] = vp[2];
 					sd.spotVPRows[i * 4 + 3] = vp[3];
 
-					sd.spotInfo[i] = mathUtils::Vec4(AsFloatBits(s.lightIndex), 0, settings_.spotShadowBaseBiasTexels, 0);
+					sd.spotInfo[i] = mathUtils::Vec4(AsFloatBits(s.lightIndex), 0, 0.0f, 0);
 				}
 
 				for (std::size_t i = 0; i < pointShadows.size(); ++i)
@@ -976,26 +976,33 @@ export namespace rendern
 
 					// --- Skybox draw ---
 					{
-						mathUtils::Mat4 viewNoTrans = view;
-						viewNoTrans[3] = mathUtils::Vec4(0, 0, 0, 1);
+						if (scene.skyboxDescIndex != 0)
+						{
+							mathUtils::Mat4 viewNoTrans = view;
+							viewNoTrans[3] = mathUtils::Vec4(0, 0, 0, 1);
 
-						const mathUtils::Mat4 vp = proj * viewNoTrans;
-						const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
+							const mathUtils::Mat4 vp = proj * viewNoTrans;
+							const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
 
-						SkyboxConstants c{};
-						std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+							SkyboxConstants c{};
+							std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+							std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
 
-						ctx.commandList.SetState(skyboxState_);
-						ctx.commandList.BindPipeline(psoSkybox_);
+							ctx.commandList.SetState(skyboxState_);
+							ctx.commandList.BindPipeline(psoSkybox_);
 
-						ctx.commandList.BindInputLayout(skyboxMesh_.layout);
-						ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
-						ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
+							ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex);
 
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
-						ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
+							ctx.commandList.BindInputLayout(skyboxMesh_.layout);
+							ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
+							ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
 
-						ctx.commandList.SetState(state_);
+
+							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+							ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
+
+							ctx.commandList.SetState(state_);
+						}
 					}
 
 					// Bind directional shadow map at slot 1 (t1)

@@ -2316,9 +2316,9 @@ export namespace rhi
             samplers[1] = MakeStaticSampler(
                 1,
                 D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,
-                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
-                D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
                 D3D12_COMPARISON_FUNC_LESS_EQUAL,
                 D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
 

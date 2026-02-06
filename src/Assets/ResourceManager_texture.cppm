@@ -103,7 +103,20 @@ public:
 			path = std::move(path),
 			ioCopy]() mutable
 			{
-				auto cpuOpt = ioCopy.decoder.Decode(propertiesCopy, path);
+				std::optional<TextureCPUData> cpuOpt{};
+				std::string decodeError{};
+				try
+				{
+					cpuOpt = ioCopy.decoder.Decode(propertiesCopy, path);
+				}
+				catch (const std::exception& e)
+				{
+					decodeError = e.what();
+				}
+				catch (...)
+				{
+					decodeError = "Texture decode threw (unknown exception)";
+				}
 
 				std::scoped_lock lock(mutex_);
 
@@ -127,7 +140,7 @@ public:
 				if (!cpuOpt)
 				{
 					entry.state = ResourceState::Failed;
-					entry.error = "Texture decode failed";
+					entry.error = decodeError.empty() ? "Texture decode failed" : decodeError;
 					entry.pendingCpu.reset();
 					return;
 				}

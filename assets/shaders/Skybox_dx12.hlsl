@@ -14,29 +14,25 @@ cbuffer PerDraw : register(b0)
 	float4x4 uViewProj;
 };
 
-VSOut VS_Skybox(VSIn i)
-{
-	VSOut o;
-	o.dir = i.pos;
+// Root signature: s0 exists
+SamplerState gLinear : register(s0);
+// Cubemap bound at t0
+TextureCube<float4> gSkybox : register(t0);
 
-	float4 clip = mul(float4(i.pos, 1.0), uViewProj);
-	
-	o.pos = float4(clip.xy, clip.w, clip.w);
-	return o;
+VSOut VS_Skybox(VSIn input)
+{
+	VSOut output;
+	output.dir = input.pos;
+
+	float4 clip = mul(float4(input.pos, 1.0), uViewProj);
+	output.pos = float4(clip.xy, clip.w, clip.w); // always at far plane
+	return output;
 }
 
-float4 PS_Skybox(VSOut i) : SV_Target
+float4 PS_Skybox(VSOut input) : SV_Target
 {
-	float3 d = normalize(i.dir);
-
-	float t = saturate(d.y * 0.5 + 0.5);
-	float3 horizon = float3(0.80, 0.86, 0.95);
-	float3 zenith = float3(0.10, 0.25, 0.60);
-	float3 col = lerp(horizon, zenith, t);
-
-	float3 sunDir = normalize(float3(0.2, 0.7, 0.1));
-	float sun = pow(saturate(dot(d, sunDir)), 256.0);
-	col += float3(1.2, 1.1, 0.9) * sun;
-
-	return float4(col, 1.0);
+	float3 dir = normalize(input.dir);
+	dir = float3(dir.x, dir.y, -dir.z);
+	const float3 color = gSkybox.Sample(gLinear, dir).rgb;
+	return float4(color, 1.0);
 }

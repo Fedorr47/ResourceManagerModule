@@ -68,6 +68,8 @@ export struct TextureProperties
 
 	// Optional: flip Y when decoding (useful for 2D textures; for cubemaps usually false).
 	bool flipY{ false };
+
+	bool cubeFromCross{ false };
 };
 
 

@@ -1,4 +1,4 @@
-module;
+﻿module;
 
 #define STB_IMAGE_IMPLEMENTATION
 #include <stb_image.h>
@@ -14,9 +14,75 @@ export module core:texture_decoder_stb;
 
 import :resource_manager_core;
 import :file_system;
+import :rhi;
 
 export class StbTextureDecoder final : public ITextureDecoder
 {
+	static void CopyRectRGBA8(
+		const std::uint8_t* src, int srcW, int srcH,
+		int x0, int y0, int size,
+		std::vector<std::uint8_t>& outFace)
+	{
+		outFace.resize(size * size * 4);
+
+		for (int y = 0; y < size; ++y)
+		{
+			const std::uint8_t* srcRow = src + ((y0 + y) * srcW + x0) * 4;
+			std::uint8_t* dstRow = outFace.data() + (y * size) * 4;
+			std::memcpy(dstRow, srcRow, size * 4);
+		}
+	}
+
+	static bool TryDecodeCubeCrossRGBA8(
+		const std::filesystem::path& filePath,
+		TextureCPUData& outCpu,
+		std::string& outError)
+	{
+		int width = 0;
+		int height = 0;
+		int channels = 0;
+
+		std::uint8_t* pixels = stbi_load(filePath.string().c_str(), &width, &height, &channels, 4);
+		if (!pixels)
+		{
+			outError = stbi_failure_reason() ? stbi_failure_reason() : "stbi_load failed";
+			return false;
+		}
+
+		const int faceSize = width / 4;
+		const bool isHorizontalCross = (width == faceSize * 4) && (height == faceSize * 3);
+
+		if (!isHorizontalCross)
+		{
+			stbi_image_free(pixels);
+			outError = "Not a 4x3 horizontal cross cubemap";
+			return false;
+		}
+
+		// coords in pixels:
+		struct Rect { int x; int y; };
+		const Rect rects[6] = {
+			{ 2 * faceSize, 1 * faceSize }, // +X
+			{ 0 * faceSize, 1 * faceSize }, // -X
+			{ 1 * faceSize, 0 * faceSize }, // +Y
+			{ 1 * faceSize, 2 * faceSize }, // -Y
+			{ 1 * faceSize, 1 * faceSize }, // +Z
+			{ 3 * faceSize, 1 * faceSize }, // -Z
+		};
+
+		outCpu.width = faceSize;
+		outCpu.height = faceSize;
+		outCpu.format = TextureFormat::RGBA;
+
+		for (int face = 0; face < 6; ++face)
+		{
+			CopyRectRGBA8(pixels, width, height, rects[face].x, rects[face].y, faceSize, outCpu.cubePixels[face]);
+		}
+
+		stbi_image_free(pixels);
+		return true;
+	}
+
 	std::optional<TextureCPUData> Decode(const TextureProperties& properties, std::string_view resolvedPath)
 	{
 		namespace fs = std::filesystem;
@@ -60,49 +126,69 @@ export class StbTextureDecoder final : public ITextureDecoder
 			};
 
 		// ---------------------- Cubemap ----------------------
+
 		if (properties.dimension == TextureDimension::Cube)
 		{
-			// Expect explicit face paths in properties.cubeFacePaths.
-			for (std::size_t i = 0; i < 6; ++i)
-			{
-				if (properties.cubeFacePaths[i].empty())
-				{
-					throw std::runtime_error("StbTextureDecoder: cubemap face path is empty (index " + std::to_string(i) + ")");
-				}
-			}
+			stbi_set_flip_vertically_on_load(0);
 
 			TextureCPUData out{};
 			out.dimension = TextureDimension::Cube;
 			out.format = TextureFormat::RGBA;
 			out.channels = 4;
 
-			int w0 = 0, h0 = 0;
-			for (std::size_t face = 0; face < 6; ++face)
+			if (properties.cubeFromCross)
 			{
-				const fs::path facePath = resolvePath(properties.cubeFacePaths[face]);
-
-				int w = 0, h = 0;
-				out.cubePixels[face] = loadFaceRGBA8(facePath, w, h);
-
-				if (face == 0)
+				std::string error;
+				if (!TryDecodeCubeCrossRGBA8(resolvePath(properties.filePath), out, error))
 				{
-					w0 = w; h0 = h;
+					throw std::runtime_error("Cubemap cross decode failed: " + error);
 				}
-				else
+				return out;
+			}
+			else
+			{
+				// Expect explicit face paths in properties.cubeFacePaths.
+				for (std::size_t i = 0; i < 6; ++i)
 				{
-					if (w != w0 || h != h0)
+					if (properties.cubeFacePaths[i].empty())
 					{
-						throw std::runtime_error(
-							"StbTextureDecoder: cubemap faces must have the same size. "
-							"Face " + std::to_string(face) + " has " + std::to_string(w) + "x" + std::to_string(h) +
-							", expected " + std::to_string(w0) + "x" + std::to_string(h0));
+						throw std::runtime_error("StbTextureDecoder: cubemap face path is empty (index " + std::to_string(i) + ")");
 					}
 				}
-			}
 
-			out.width = static_cast<std::uint32_t>(w0);
-			out.height = static_cast<std::uint32_t>(h0);
-			return out;
+
+				int w0 = 0, h0 = 0;
+				for (std::size_t face = 0; face < 6; ++face)
+				{
+					const fs::path facePath = resolvePath(properties.cubeFacePaths[face]);
+
+					int w = 0, h = 0;
+					out.cubePixels[face] = loadFaceRGBA8(facePath, w, h);
+
+					if (face == 0)
+					{
+						w0 = w; h0 = h;
+					}
+					else
+					{
+						if (w != w0 || h != h0)
+						{
+							throw std::runtime_error(
+								"StbTextureDecoder: cubemap faces must have the same size. "
+								"Face " + std::to_string(face) + " has " + std::to_string(w) + "x" + std::to_string(h) +
+								", expected " + std::to_string(w0) + "x" + std::to_string(h0));
+						}
+					}
+				}
+
+				out.width = static_cast<std::uint32_t>(w0);
+				out.height = static_cast<std::uint32_t>(h0);
+				return out;
+			}
+		}
+		else
+		{
+			stbi_set_flip_vertically_on_load(properties.flipY ? 1 : 0);
 		}
 
 		// ---------------------- Tex2D ----------------------
