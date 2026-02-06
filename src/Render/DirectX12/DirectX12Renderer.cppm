@@ -76,46 +76,46 @@ export namespace rendern
 
 	struct BatchKeyHash
 	{
-		static std::size_t HashU32(std::uint32_t v) noexcept { return std::hash<std::uint32_t>{}(v); }
-		static std::size_t HashPtr(const void* p) noexcept { return std::hash<const void*>{}(p); }
+		static std::size_t HashU32(std::uint32_t value) noexcept { return std::hash<std::uint32_t>{}(value); }
+		static std::size_t HashPtr(const void* ptr) noexcept { return std::hash<const void*>{}(ptr); }
 
-		static std::uint32_t FBits(float v) noexcept
+		static std::uint32_t FloatBits(float value) noexcept
 		{
-			std::uint32_t b{};
-			std::memcpy(&b, &v, sizeof(b));
-			return b;
+			std::uint32_t bits{};
+			std::memcpy(&bits, &value, sizeof(bits));
+			return bits;
 		}
 
-		static void HashCombine(std::size_t& h, std::size_t v) noexcept
+		static void HashCombine(std::size_t& seed, std::size_t value) noexcept
 		{
-			h ^= v + 0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+			seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
 		}
 
-		std::size_t operator()(const BatchKey& k) const noexcept
+		std::size_t operator()(const BatchKey& key) const noexcept
 		{
-			std::size_t h = HashPtr(k.mesh);
-			HashCombine(h, HashU32((std::uint32_t)k.albedoDescIndex));
-			HashCombine(h, HashU32(FBits(k.baseColor.x)));
-			HashCombine(h, HashU32(FBits(k.baseColor.y)));
-			HashCombine(h, HashU32(FBits(k.baseColor.z)));
-			HashCombine(h, HashU32(FBits(k.baseColor.w)));
-			HashCombine(h, HashU32(FBits(k.shininess)));
-			HashCombine(h, HashU32(FBits(k.specStrength)));
-			HashCombine(h, HashU32(FBits(k.shadowBias)));
-			return h;
+			std::size_t seed = HashPtr(key.mesh);
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.albedoDescIndex)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.x)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.y)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.z)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.w)));
+			HashCombine(seed, HashU32(FloatBits(key.shininess)));
+			HashCombine(seed, HashU32(FloatBits(key.specStrength)));
+			HashCombine(seed, HashU32(FloatBits(key.shadowBias)));
+			return seed;
 		}
 	};
 
 	struct BatchKeyEq
 	{
-		bool operator()(const BatchKey& a, const BatchKey& b) const noexcept
+		bool operator()(const BatchKey& lhs, const BatchKey& rhs) const noexcept
 		{
-			return a.mesh == b.mesh &&
-				a.albedoDescIndex == b.albedoDescIndex &&
-				a.baseColor == b.baseColor &&
-				a.shininess == b.shininess &&
-				a.specStrength == b.specStrength &&
-				a.shadowBias == b.shadowBias;
+			return lhs.mesh == rhs.mesh &&
+				lhs.albedoDescIndex == rhs.albedoDescIndex &&
+				lhs.baseColor == rhs.baseColor &&
+				lhs.shininess == rhs.shininess &&
+				lhs.specStrength == rhs.specStrength &&
+				lhs.shadowBias == rhs.shadowBias;
 		}
 	};
 
@@ -255,7 +255,7 @@ export namespace rendern
 			const std::uint32_t lightCount = UploadLights(scene, camPos);
 
 			// ---------------- Directional shadow (single) ----------------
-			const rhi::Extent2D shadowExtent{ 4096, 4096 };
+			const rhi::Extent2D shadowExtent{ 2048, 2048 };
 			const auto shadowRG = graph.CreateTexture(renderGraph::RGTextureDesc{
 				.extent = shadowExtent,
 				.format = rhi::Format::D32_FLOAT,
@@ -265,11 +265,11 @@ export namespace rendern
 
 			// Choose first directional light (or a default).
 			mathUtils::Vec3 lightDir = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light towards scene
-			for (const auto& l : scene.lights)
+			for (const auto& light : scene.lights)
 			{
-				if (l.type == LightType::Directional)
+				if (light.type == LightType::Directional)
 				{
-					lightDir = mathUtils::Normalize(l.direction);
+					lightDir = mathUtils::Normalize(light.direction);
 					break;
 				}
 			}
@@ -283,7 +283,7 @@ export namespace rendern
 				: 1.0f;
 
 			// Limit how far we render directional shadows to keep resolution usable.
-			const float shadowFar = std::min(scene.camera.farZ, 35.0f);
+			const float shadowFar = std::min(scene.camera.farZ, 60.0f);
 			const float shadowNear = std::max(scene.camera.nearZ, 0.05f);
 
 			// Camera basis (orthonormal).
@@ -300,8 +300,8 @@ export namespace rendern
 					// sx,sy are in {-1,+1} (left/right, bottom/top).
 					const float halfH = dist * tanHalf;
 					const float halfW = halfH * aspect;
-					const mathUtils::Vec3 c = scene.camera.position + camF * dist;
-					return c + camU * (sy * halfH) + camR * (sx * halfW);
+					const mathUtils::Vec3 planeCenter = scene.camera.position + camF * dist;
+					return planeCenter + camU * (sy * halfH) + camR * (sx * halfW);
 				};
 
 			std::array<mathUtils::Vec3, 8> frustumCorners{};
@@ -318,16 +318,16 @@ export namespace rendern
 
 			// Frustum center + radius (for stable light placement).
 			mathUtils::Vec3 center{ 0.0f, 0.0f, 0.0f };
-			for (const auto& p : frustumCorners)
+			for (const auto& corner : frustumCorners)
 			{
-				center = center + p;
+				center = center + corner;
 			}
 			center = center * (1.0f / 8.0f);
 
 			float radius = 0.0f;
-			for (const auto& p : frustumCorners)
+			for (const auto& corner : frustumCorners)
 			{
-				radius = std::max(radius, mathUtils::Length(p - center));
+				radius = std::max(radius, mathUtils::Length(corner - center));
 			}
 
 			// Stable "up" for light view.
@@ -345,9 +345,9 @@ export namespace rendern
 			float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
 			float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
 
-			for (const auto& p : frustumCorners)
+			for (const auto& corner : frustumCorners)
 			{
-				const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(p, 1.0f);
+				const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(corner, 1.0f);
 				minX = std::min(minX, ls4.x); maxX = std::max(maxX, ls4.x);
 				minY = std::min(minY, ls4.y); maxY = std::max(maxY, ls4.y);
 				minZ = std::min(minZ, ls4.z); maxZ = std::max(maxZ, ls4.z);
@@ -366,7 +366,7 @@ export namespace rendern
 			minZ -= padZ;  maxZ += padZ;
 
 			// Extra depth margin for casters outside the camera frustum (important for directional lights).
-			constexpr float casterMargin = 45.0f;
+			constexpr float casterMargin = 80.0f;
 			minZ -= casterMargin;
 
 			// Snap the ortho window to shadow texels (reduces shimmering / "special angle" popping).
@@ -544,8 +544,8 @@ export namespace rendern
 				const bool isTransparent = HasFlag(perm, MaterialPerm::Transparent) || (params.baseColor.w < 0.999f);
 				if (isTransparent)
 				{
-					const mathUtils::Vec3 d = item.transform.position - camPos;
-					const float dist2 = mathUtils::Dot(d, d);
+					const mathUtils::Vec3 deltaToCamera = item.transform.position - camPos;
+					const float dist2 = mathUtils::Dot(deltaToCamera, deltaToCamera);
 					const std::uint32_t localOff = static_cast<std::uint32_t>(transparentInstances.size());
 					transparentInstances.push_back(inst);
 					transparentTmp.push_back(TransparentTemp{ mesh, params, item.material, localOff, dist2 });
@@ -574,15 +574,15 @@ export namespace rendern
 					continue;
 				}
 
-				Batch b{};
-				b.mesh = key.mesh;
-				b.materialHandle = bt.materialHandle;
-				b.material = bt.material;
-				b.instanceOffset = static_cast<std::uint32_t>(mainInstances.size());
-				b.instanceCount = static_cast<std::uint32_t>(bt.inst.size());
+				Batch batch{};
+				batch.mesh = key.mesh;
+				batch.materialHandle = bt.materialHandle;
+				batch.material = bt.material;
+				batch.instanceOffset = static_cast<std::uint32_t>(mainInstances.size());
+				batch.instanceCount = static_cast<std::uint32_t>(bt.inst.size());
 
 				mainInstances.insert(mainInstances.end(), bt.inst.begin(), bt.inst.end());
-				mainBatches.push_back(b);
+				mainBatches.push_back(batch);
 			}
 
 			// ---- Combine and upload once ----
@@ -613,9 +613,9 @@ export namespace rendern
 			}
 
 			std::sort(transparentDraws.begin(), transparentDraws.end(),
-				[](const TransparentDraw& a, const TransparentDraw& b)
+				[](const TransparentDraw& first, const TransparentDraw& second)
 				{
-					return a.dist2 > b.dist2; // far -> near
+					return first.dist2 > second.dist2; // far -> near
 				});
 
 			std::vector<InstanceData> combinedInstances;
@@ -667,12 +667,12 @@ export namespace rendern
 					std::array<float, 16> uLightViewProj{};
 				};
 
-				ShadowPassConstants c{};
+				ShadowPassConstants shadowPassConstants{};
 				const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
-				std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+				std::memcpy(shadowPassConstants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 				graph.AddPass("ShadowPass", std::move(att),
-					[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
+					[this, shadowPassConstants, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
 					{
 						ctx.commandList.SetViewport(0, 0,
 							static_cast<int>(ctx.passExtent.width),
@@ -681,41 +681,24 @@ export namespace rendern
 						ctx.commandList.SetState(shadowState_);
 						ctx.commandList.BindPipeline(psoShadow_);
 
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &shadowPassConstants, 1 }));
 
-						for (const ShadowBatch& b : shadowBatches)
-						{
-							if (!b.mesh || b.instanceCount == 0)
-							{
-								continue;
-							}
+						this->DrawInstancedShadowBatches(ctx.commandList, shadowBatches, instStride);
 
-							ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
-							ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
-							ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, b.instanceOffset * instStride);
-							ctx.commandList.BindIndexBuffer(b.mesh->indexBuffer, b.mesh->indexType, 0);
-
-							ctx.commandList.DrawIndexed(
-								b.mesh->indexCount,
-								b.mesh->indexType,
-								0, 0,
-								b.instanceCount,
-								0);
-						}
 					});
 			}
 
 			// Collect up to kMaxSpotShadows / kMaxPointShadows from scene.lights (index aligns with UploadLights()).
-			for (std::uint32_t li = 0; li < static_cast<std::uint32_t>(scene.lights.size()); ++li)
+			for (std::uint32_t lightIndex = 0; lightIndex < static_cast<std::uint32_t>(scene.lights.size()); ++lightIndex)
 			{
-				if (li >= kMaxLights)
+				if (lightIndex >= kMaxLights)
 				{
 					break;
 				}
 
-				const auto& l = scene.lights[li];
+				const auto& light = scene.lights[lightIndex];
 
-				if (l.type == LightType::Spot && spotShadows.size() < kMaxSpotShadows)
+				if (light.type == LightType::Spot && spotShadows.size() < kMaxSpotShadows)
 				{
 					const rhi::Extent2D ext{ 1024, 1024 };
 					const auto rg = graph.CreateTexture(renderGraph::RGTextureDesc{
@@ -725,23 +708,23 @@ export namespace rendern
 						.debugName = "SpotShadowMap"
 						});
 
-					mathUtils::Vec3 dir = mathUtils::Normalize(l.direction);
-					mathUtils::Vec3 up = (std::abs(mathUtils::Dot(dir, mathUtils::Vec3(0, 1, 0))) > 0.99f)
+					mathUtils::Vec3 lightDirLocal = mathUtils::Normalize(light.direction);
+					mathUtils::Vec3 upVector = (std::abs(mathUtils::Dot(lightDirLocal, mathUtils::Vec3(0, 1, 0))) > 0.99f)
 						? mathUtils::Vec3(0, 0, 1)
 						: mathUtils::Vec3(0, 1, 0);
 
-					mathUtils::Mat4 v = mathUtils::LookAt(l.position, l.position + dir, up);
+					mathUtils::Mat4 lightView = mathUtils::LookAt(light.position, light.position + lightDirLocal, upVector);
 
-					const float outerHalf = std::max(1.0f, l.outerHalfAngleDeg);
-					const float farZ = std::max(1.0f, l.range);
+					const float outerHalf = std::max(1.0f, light.outerHalfAngleDeg);
+					const float farZ = std::max(1.0f, light.range);
 					const float nearZ = std::max(0.5f, farZ * 0.02f);
-					const mathUtils::Mat4 p = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(outerHalf * 2.0f), 1.0f, nearZ, farZ);
-					const mathUtils::Mat4 vp = p * v;
+					const mathUtils::Mat4 lightProj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(outerHalf * 2.0f), 1.0f, nearZ, farZ);
+					const mathUtils::Mat4 lightViewProj = lightProj * lightView;
 
 					SpotShadowRec rec{};
 					rec.tex = rg;
-					rec.viewProj = vp;
-					rec.lightIndex = li;
+					rec.viewProj = lightViewProj;
+					rec.lightIndex = lightIndex;
 					spotShadows.push_back(rec);
 
 					rhi::ClearDesc clear{};
@@ -762,12 +745,12 @@ export namespace rendern
 					{
 						std::array<float, 16> uLightViewProj{};
 					};
-					SpotPassConstants c{};
-					const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
-					std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+					SpotPassConstants spotPassConstants{};
+					const mathUtils::Mat4 lightViewProjTranspose = mathUtils::Transpose(lightViewProj);
+					std::memcpy(spotPassConstants.uLightViewProj.data(), mathUtils::ValuePtr(lightViewProjTranspose), sizeof(float) * 16);
 
 					graph.AddPass(passName, std::move(att),
-						[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
+						[this, spotPassConstants, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
 						{
 							ctx.commandList.SetViewport(0, 0,
 								static_cast<int>(ctx.passExtent.width),
@@ -776,33 +759,13 @@ export namespace rendern
 							ctx.commandList.SetState(shadowState_);
 							ctx.commandList.BindPipeline(psoShadow_);
 
-							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &spotPassConstants, 1 }));
 
-							for (const ShadowBatch& b : shadowBatches)
-							{
-								if (!b.mesh || b.instanceCount == 0)
-								{
-									continue;
-								}
+							this->DrawInstancedShadowBatches(ctx.commandList, shadowBatches, instStride);
 
-								ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
-
-								ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
-								ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, b.instanceOffset * instStride);
-
-								ctx.commandList.BindIndexBuffer(b.mesh->indexBuffer, b.mesh->indexType, 0);
-
-								ctx.commandList.DrawIndexed(
-									b.mesh->indexCount,
-									b.mesh->indexType,
-									0,
-									0,
-									b.instanceCount,
-									0);
-							}
 						});
 				}
-				else if (l.type == LightType::Point && pointShadows.size() < kMaxPointShadows)
+				else if (light.type == LightType::Point && pointShadows.size() < kMaxPointShadows)
 				{
 					// Point shadows use a cubemap R32_FLOAT distance map (color) + a temporary D32 depth buffer.
 					const rhi::Extent2D cubeExtent{ 2048, 2048 };
@@ -824,9 +787,9 @@ export namespace rendern
 					PointShadowRec rec{};
 					rec.cube = cube;
 					rec.depthTmp = depthTmp;
-					rec.pos = l.position;
-					rec.range = std::max(1.0f, l.range);
-					rec.lightIndex = li;
+					rec.pos = light.position;
+					rec.range = std::max(1.0f, light.range);
+					rec.lightIndex = lightIndex;
 					pointShadows.push_back(rec);
 
 					auto FaceView = [](const mathUtils::Vec3& pos, int face) -> mathUtils::Mat4
@@ -846,7 +809,7 @@ export namespace rendern
 
 					for (int face = 0; face < 6; ++face)
 					{
-						const mathUtils::Mat4 vp = proj90 * FaceView(rec.pos, face);
+						const mathUtils::Mat4 faceViewProj = proj90 * FaceView(rec.pos, face);
 
 						rhi::ClearDesc clear{};
 						clear.clearColor = true;
@@ -873,15 +836,15 @@ export namespace rendern
 							std::array<float, 4>  uMisc{};          // unused (bias is texel-based in main shader)
 						};
 
-						PointShadowConstants c{};
-						const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
-						std::memcpy(c.uFaceViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
-						c.uLightPosRange = { rec.pos.x, rec.pos.y, rec.pos.z, rec.range };
-						c.uMisc = { 0, 0, 0, 0 };
+						PointShadowConstants pointShadowConstants{};
+						const mathUtils::Mat4 faceViewProjTranspose = mathUtils::Transpose(faceViewProj);
+						std::memcpy(pointShadowConstants.uFaceViewProj.data(), mathUtils::ValuePtr(faceViewProjTranspose), sizeof(float) * 16);
+						pointShadowConstants.uLightPosRange = { rec.pos.x, rec.pos.y, rec.pos.z, rec.range };
+						pointShadowConstants.uMisc = { 0, 0, 0, 0 };
 
 
 						graph.AddPass(passName, std::move(att),
-							[this, c, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
+							[this, pointShadowConstants, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
 							{
 								ctx.commandList.SetViewport(0, 0,
 									static_cast<int>(ctx.passExtent.width),
@@ -890,30 +853,10 @@ export namespace rendern
 								ctx.commandList.SetState(pointShadowState_);
 								ctx.commandList.BindPipeline(psoPointShadow_);
 
-								ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+								ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &pointShadowConstants, 1 }));
 
-								for (const ShadowBatch& shadowBatch : shadowBatches)
-								{
-									if (!shadowBatch.mesh || shadowBatch.instanceCount == 0)
-									{
-										continue;
-									}
+								this->DrawInstancedShadowBatches(ctx.commandList, shadowBatches, instStride);
 
-									ctx.commandList.BindInputLayout(shadowBatch.mesh->layoutInstanced);
-
-									ctx.commandList.BindVertexBuffer(0, shadowBatch.mesh->vertexBuffer, shadowBatch.mesh->vertexStrideBytes, 0);
-									ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, shadowBatch.instanceOffset * instStride);
-
-									ctx.commandList.BindIndexBuffer(shadowBatch.mesh->indexBuffer, shadowBatch.mesh->indexType, 0);
-
-									ctx.commandList.DrawIndexed(
-										shadowBatch.mesh->indexCount,
-										shadowBatch.mesh->indexType,
-										0,
-										0,
-										shadowBatch.instanceCount,
-										0);
-								}
 							});
 					}
 				}
@@ -923,25 +866,25 @@ export namespace rendern
 			{
 				ShadowDataSB sd{};
 
-				for (std::size_t i = 0; i < spotShadows.size(); ++i)
+				for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
 				{
-					const auto& s = spotShadows[i];
+					const auto& spotShadow = spotShadows[spotShadowIndex];
 
-					const mathUtils::Mat4 vp = s.viewProj;
+					const mathUtils::Mat4 vp = spotShadow.viewProj;
 
-					sd.spotVPRows[i * 4 + 0] = vp[0];
-					sd.spotVPRows[i * 4 + 1] = vp[1];
-					sd.spotVPRows[i * 4 + 2] = vp[2];
-					sd.spotVPRows[i * 4 + 3] = vp[3];
+					sd.spotVPRows[spotShadowIndex * 4 + 0] = vp[0];
+					sd.spotVPRows[spotShadowIndex * 4 + 1] = vp[1];
+					sd.spotVPRows[spotShadowIndex * 4 + 2] = vp[2];
+					sd.spotVPRows[spotShadowIndex * 4 + 3] = vp[3];
 
-					sd.spotInfo[i] = mathUtils::Vec4(AsFloatBits(s.lightIndex), 0, 0.0f, 0);
+					sd.spotInfo[spotShadowIndex] = mathUtils::Vec4(AsFloatBits(spotShadow.lightIndex), 0, settings_.spotShadowBaseBiasTexels, 0);
 				}
 
-				for (std::size_t i = 0; i < pointShadows.size(); ++i)
+				for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
 				{
-					const auto& p = pointShadows[i];
-					sd.pointPosRange[i] = mathUtils::Vec4(p.pos, p.range);
-					sd.pointInfo[i] = mathUtils::Vec4(AsFloatBits(p.lightIndex), 0, settings_.pointShadowBaseBiasTexels, 0);
+					const auto& pointShadow = pointShadows[pointShadowIndex];
+					sd.pointPosRange[pointShadowIndex] = mathUtils::Vec4(pointShadow.pos, pointShadow.range);
+					sd.pointInfo[pointShadowIndex] = mathUtils::Vec4(AsFloatBits(pointShadow.lightIndex), 0, settings_.pointShadowBaseBiasTexels, 0);
 				}
 
 				device_.UpdateBuffer(shadowDataBuffer_, std::as_bytes(std::span{ &sd, 1 }));
@@ -974,31 +917,29 @@ export namespace rendern
 
 					const mathUtils::Mat4 viewProj = proj * view;
 
+
 					// --- Skybox draw ---
 					{
 						if (scene.skyboxDescIndex != 0)
 						{
-							mathUtils::Mat4 viewNoTrans = view;
-							viewNoTrans[3] = mathUtils::Vec4(0, 0, 0, 1);
+							mathUtils::Mat4 viewNoTranslation = view;
+							viewNoTranslation[3] = mathUtils::Vec4(0, 0, 0, 1);
 
-							const mathUtils::Mat4 vp = proj * viewNoTrans;
-							const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
+							const mathUtils::Mat4 viewProjSkybox = proj * viewNoTranslation;
+							const mathUtils::Mat4 viewProjSkyboxTranspose = mathUtils::Transpose(viewProjSkybox);
 
-							SkyboxConstants c{};
-							std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
-							std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+							SkyboxConstants skyboxConstants{};
+							std::memcpy(skyboxConstants.uViewProj.data(), mathUtils::ValuePtr(viewProjSkyboxTranspose), sizeof(float) * 16);
 
 							ctx.commandList.SetState(skyboxState_);
 							ctx.commandList.BindPipeline(psoSkybox_);
-
 							ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex);
 
 							ctx.commandList.BindInputLayout(skyboxMesh_.layout);
 							ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
 							ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
 
-
-							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &skyboxConstants, 1 }));
 							ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
 
 							ctx.commandList.SetState(state_);
@@ -1012,15 +953,15 @@ export namespace rendern
 					}
 
 					// Bind Spot shadow maps at t3..t6 and Point shadow cubemaps at t7..t10.
-					for (std::size_t i = 0; i < spotShadows.size(); ++i)
+					for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
 					{
-						const auto tex = ctx.resources.GetTexture(spotShadows[i].tex);
-						ctx.commandList.BindTexture2D(3 + static_cast<std::uint32_t>(i), tex);
+						const auto tex = ctx.resources.GetTexture(spotShadows[spotShadowIndex].tex);
+						ctx.commandList.BindTexture2D(3 + static_cast<std::uint32_t>(spotShadowIndex), tex);
 					}
-					for (std::size_t i = 0; i < pointShadows.size(); ++i)
+					for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
 					{
-						const auto tex = ctx.resources.GetTexture(pointShadows[i].cube);
-						ctx.commandList.BindTextureCube(7 + static_cast<std::uint32_t>(i), tex);
+						const auto tex = ctx.resources.GetTexture(pointShadows[pointShadowIndex].cube);
+						ctx.commandList.BindTextureCube(7 + static_cast<std::uint32_t>(pointShadowIndex), tex);
 					}
 
 					// Bind shadow metadata SB at t11
@@ -1032,22 +973,22 @@ export namespace rendern
 					constexpr std::uint32_t kFlagUseTex = 1u << 0;
 					constexpr std::uint32_t kFlagUseShadow = 1u << 1;
 
-					for (const Batch& b : mainBatches)
+					for (const Batch& batch : mainBatches)
 					{
-						if (!b.mesh || b.instanceCount == 0)
+						if (!batch.mesh || batch.instanceCount == 0)
 						{
 							continue;
 						}
 
 						MaterialPerm perm = MaterialPerm::UseShadow;
-						if (b.materialHandle.id != 0)
+						if (batch.materialHandle.id != 0)
 						{
-							perm = EffectivePerm(scene.GetMaterial(b.materialHandle));
+							perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
 						}
 						else
 						{
 							// Fallback: infer only from params.
-							if (b.material.albedoDescIndex != 0)
+							if (batch.material.albedoDescIndex != 0)
 							{
 								perm = perm | MaterialPerm::UseTex;
 							}
@@ -1057,7 +998,7 @@ export namespace rendern
 						const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
 
 						ctx.commandList.BindPipeline(MainPipelineFor(perm));
-						ctx.commandList.BindTextureDesc(0, b.material.albedoDescIndex);
+						ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
 
 						std::uint32_t flags = 0;
 						if (useTex)
@@ -1077,10 +1018,10 @@ export namespace rendern
 						std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 						constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.22f };
-						constants.uBaseColor = { b.material.baseColor.x, b.material.baseColor.y, b.material.baseColor.z, b.material.baseColor.w };
+						constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
 
-						const float materialBiasTexels = b.material.shadowBias;
-						constants.uMaterialFlags = { b.material.shininess, b.material.specStrength, materialBiasTexels, AsFloatBits(flags) };
+						const float materialBiasTexels = batch.material.shadowBias;
+						constants.uMaterialFlags = { batch.material.shininess, batch.material.specStrength, materialBiasTexels, AsFloatBits(flags) };
 
 						constants.uCounts = {
 							static_cast<float>(lightCount),
@@ -1097,13 +1038,13 @@ export namespace rendern
 						};
 
 						// IA (instanced)
-						ctx.commandList.BindInputLayout(b.mesh->layoutInstanced);
-						ctx.commandList.BindVertexBuffer(0, b.mesh->vertexBuffer, b.mesh->vertexStrideBytes, 0);
-						ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, b.instanceOffset * instStride);
-						ctx.commandList.BindIndexBuffer(b.mesh->indexBuffer, b.mesh->indexType, 0);
+						ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
+						ctx.commandList.BindVertexBuffer(0, batch.mesh->vertexBuffer, batch.mesh->vertexStrideBytes, 0);
+						ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batch.instanceOffset * instStride);
+						ctx.commandList.BindIndexBuffer(batch.mesh->indexBuffer, batch.mesh->indexType, 0);
 
 						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
-						ctx.commandList.DrawIndexed(b.mesh->indexCount, b.mesh->indexType, 0, 0, b.instanceCount, 0);
+						ctx.commandList.DrawIndexed(batch.mesh->indexCount, batch.mesh->indexType, 0, 0, batch.instanceCount, 0);
 					}
 
 					if (!transparentDraws.empty())
@@ -1217,6 +1158,32 @@ export namespace rendern
 		}
 
 	private:
+
+		void DrawInstancedShadowBatches(rhi::CommandList& commandList, std::span<const ShadowBatch> shadowBatches, std::uint32_t instanceStrideBytes) const
+		{
+			for (std::size_t batchIndex = 0; batchIndex < shadowBatches.size(); ++batchIndex)
+			{
+				const ShadowBatch& shadowBatch = shadowBatches[batchIndex];
+				if (!shadowBatch.mesh || shadowBatch.instanceCount == 0)
+				{
+					continue;
+				}
+
+				commandList.BindInputLayout(shadowBatch.mesh->layoutInstanced);
+				commandList.BindVertexBuffer(0, shadowBatch.mesh->vertexBuffer, shadowBatch.mesh->vertexStrideBytes, 0);
+				commandList.BindVertexBuffer(1, instanceBuffer_, instanceStrideBytes, shadowBatch.instanceOffset * instanceStrideBytes);
+				commandList.BindIndexBuffer(shadowBatch.mesh->indexBuffer, shadowBatch.mesh->indexType, 0);
+
+				commandList.DrawIndexed(
+					shadowBatch.mesh->indexCount,
+					shadowBatch.mesh->indexType,
+					0,
+					0,
+					shadowBatch.instanceCount,
+					0);
+			}
+		}
+
 		rhi::PipelineHandle MainPipelineFor(MaterialPerm perm) const noexcept
 		{
 			const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
@@ -1225,11 +1192,11 @@ export namespace rendern
 			return psoMain_[idx];
 		}
 
-		static float AsFloatBits(std::uint32_t u) noexcept
+		static float AsFloatBits(std::uint32_t packedBits) noexcept
 		{
-			float f{};
-			std::memcpy(&f, &u, sizeof(u));
-			return f;
+			float floatValue{};
+			std::memcpy(&floatValue, &packedBits, sizeof(packedBits));
+			return floatValue;
 		}
 
 		std::uint32_t UploadLights(const Scene& scene, const mathUtils::Vec3& camPos)
@@ -1237,24 +1204,24 @@ export namespace rendern
 			std::vector<GPULight> gpu;
 			gpu.reserve(std::min<std::size_t>(scene.lights.size(), kMaxLights));
 
-			for (const auto& l : scene.lights)
+			for (const auto& light : scene.lights)
 			{
 				if (gpu.size() >= kMaxLights)
 				{
 					break;
 				}
 
-				GPULight out{};
+				GPULight gpuLight{};
 
-				out.p0 = { l.position.x, l.position.y, l.position.z, static_cast<float>(static_cast<std::uint32_t>(l.type)) };
-				out.p1 = { l.direction.x, l.direction.y, l.direction.z, l.intensity };
-				out.p2 = { l.color.x, l.color.y, l.color.z, l.range };
+				gpuLight.p0 = { light.position.x, light.position.y, light.position.z, static_cast<float>(static_cast<std::uint32_t>(light.type)) };
+				gpuLight.p1 = { light.direction.x, light.direction.y, light.direction.z, light.intensity };
+				gpuLight.p2 = { light.color.x, light.color.y, light.color.z, light.range };
 
-				const float cosOuter = std::cos(mathUtils::DegToRad(l.outerHalfAngleDeg));
-				const float cosInner = std::cos(mathUtils::DegToRad(l.innerHalfAngleDeg));
+				const float cosOuter = std::cos(mathUtils::DegToRad(light.outerHalfAngleDeg));
+				const float cosInner = std::cos(mathUtils::DegToRad(light.innerHalfAngleDeg));
 
-				out.p3 = { cosInner, cosOuter, l.attLinear, l.attQuadratic };
-				gpu.push_back(out);
+				gpuLight.p3 = { cosInner, cosOuter, light.attLinear, light.attQuadratic };
+				gpu.push_back(gpuLight);
 			}
 
 			// Small default rig if the scene didn't provide any lights
@@ -1345,16 +1312,16 @@ export namespace rendern
 			{
 				auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
 					{
-						std::vector<std::string> d;
+						std::vector<std::string> defines;
 						if (useTex)
 						{
-							d.push_back("USE_TEX=1");
+							defines.push_back("USE_TEX=1");
 						}
 						if (useShadow)
 						{
-							d.push_back("USE_SHADOW=1");
+							defines.push_back("USE_SHADOW=1");
 						}
-						return d;
+						return defines;
 					};
 
 				for (std::uint32_t idx = 0; idx < 4; ++idx)
