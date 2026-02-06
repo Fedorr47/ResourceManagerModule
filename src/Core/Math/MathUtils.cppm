@@ -1,10 +1,18 @@
 module;
 
 #include <array>
-#include <cmath>
 #include <cstdint>
+#include <cmath>
+#include <iomanip>
+#include <iostream>
+#include <limits>
+#include <numbers>
+#include <string_view>
 
 export module core:math_utils;
+
+using namespace std::numbers;
+using namespace std::string_view_literals;
 
 export namespace mathUtils
 {
@@ -15,6 +23,9 @@ export namespace mathUtils
 	//  - Indexing matches GLM: m[col][row].
 	//  - Functions (Translate/Rotate/Scale/LookAtRH/PerspectiveRH_ZO/OrthoRH_ZO)
 	//    follow the same formulas as GLM.
+
+	inline constexpr float Pi = pi_v<double>;
+	inline constexpr float TwoPi = Pi*2;
 
 	struct Vec3
 	{
@@ -119,9 +130,14 @@ export namespace mathUtils
 	inline Vec3 Normalize(const Vec3& v) noexcept { return MakeUnitVector(v); }
 	inline Vec3 Sub(const Vec3& a, const Vec3& b) noexcept { return a - b; }
 
-	inline float ToRadians(float degrees) noexcept
+	[[nodiscard]] inline constexpr float DegToRad(float degrees) noexcept
 	{
-		return degrees * 0.01745329251994329576923690768489f; // pi/180
+		return degrees * (Pi / 180.0f);
+	}
+
+	[[nodiscard]] inline constexpr float RadToDeg(float radians) noexcept
+	{
+		return radians * (180.0f / Pi);
 	}
 
 	inline Mat4 Transpose(const Mat4& m) noexcept

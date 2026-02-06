@@ -418,18 +418,18 @@ export namespace rhi
 			commands.emplace_back(std::move(cmd));
 		}
 		void DrawIndexed(
-			std::uint32_t indexCount, 
-			IndexType indexType, 
-			std::uint32_t firstIndex = 0, 
-			int baseVertex = 0, 
-			uint32_t instanceCount = 1, 
+			std::uint32_t indexCount,
+			IndexType indexType,
+			std::uint32_t firstIndex = 0,
+			int baseVertex = 0,
+			uint32_t instanceCount = 1,
 			uint32_t firstInstance = 0)
 		{
 			commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex, instanceCount, firstInstance });
 		}
 		void Draw(
-			std::uint32_t vertexCount, 
-			std::uint32_t firstVertex = 0, 
+			std::uint32_t vertexCount,
+			std::uint32_t firstVertex = 0,
 			uint32_t instanceCount = 1,
 			uint32_t firstInstance = 0)
 		{
@@ -557,9 +557,11 @@ namespace rhi
 			handle.id = ++nextId_;
 			return handle;
 		}
-		TextureHandle CreateTextureCube(Extent2D extent, Format format) override
+		TextureHandle CreateTextureCube(Extent2D, Format) override
 		{
-			return {};
+			TextureHandle handle{};
+			handle.id = ++nextId_;
+			return handle;
 		}
 		void DestroyTexture(TextureHandle) noexcept override {}
 
@@ -569,9 +571,11 @@ namespace rhi
 			handle.id = ++nextId_;
 			return handle;
 		}
-		FrameBufferHandle CreateFramebufferCubeFace(TextureHandle colorCube, std::uint32_t faceIndex, TextureHandle depth)
+		FrameBufferHandle CreateFramebufferCubeFace(TextureHandle, std::uint32_t, TextureHandle) override
 		{
-			return {};
+			FrameBufferHandle handle{};
+			handle.id = ++nextId_;
+			return handle;
 		}
 		void DestroyFramebuffer(FrameBufferHandle) noexcept override {}
 

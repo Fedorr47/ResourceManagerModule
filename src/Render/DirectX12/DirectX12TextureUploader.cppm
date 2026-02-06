@@ -12,6 +12,7 @@
 #include <wrl/client.h>
 #include <stdexcept>
 #include <vector>
+#include <array>
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
@@ -39,7 +40,7 @@ struct MipLevelRGBA8
 
 std::vector<std::uint8_t> ConvertToRGBA8(const TextureCPUData& cpu, std::uint32_t width, std::uint32_t height)
 {
-	if (cpu.pixels.empty()) 
+	if (cpu.pixels.empty())
 	{
 		return {};
 	}
@@ -178,7 +179,196 @@ export namespace rendern
 
 		std::optional<GPUTexture> CreateAndUpload(const TextureCPUData& cpuData, const TextureProperties& properties) override
 		{
-			// 1) Validate
+			// Need DX12 device
+			auto* dxDev = dynamic_cast<rhi::DX12Device*>(&device_);
+			if (!dxDev)
+			{
+				return std::nullopt;
+			}
+
+			ID3D12Device* d3d = dxDev->NativeDevice();
+			ID3D12CommandQueue* queue = dxDev->NativeQueue();
+			if (!d3d || !queue)
+			{
+				return std::nullopt;
+			}
+
+			// ---------------------- Cubemap ----------------------
+			if (properties.dimension == TextureDimension::Cube)
+			{
+				const std::uint32_t width = cpuData.width ? cpuData.width : properties.width;
+				const std::uint32_t height = cpuData.height ? cpuData.height : properties.height;
+
+				if (width == 0 || height == 0)
+				{
+					return std::nullopt;
+				}
+
+				// Validate faces
+				const std::size_t expectedSize = static_cast<std::size_t>(width) * static_cast<std::size_t>(height) * 4u;
+				for (int face = 0; face < 6; ++face)
+				{
+					const auto& fp = cpuData.cubePixels[static_cast<std::size_t>(face)];
+					if (fp.empty() || fp.size() != expectedSize)
+					{
+						return std::nullopt;
+					}
+				}
+
+				// Build mip chains per face (RGBA8)
+				std::array<std::vector<MipLevelRGBA8>, 6> faceMips{};
+				for (int face = 0; face < 6; ++face)
+				{
+					const auto& fp = cpuData.cubePixels[static_cast<std::size_t>(face)];
+					std::vector<std::uint8_t> rgba0(fp.begin(), fp.end());
+					faceMips[static_cast<std::size_t>(face)] = MakeMipChain_Box2x2_RGBA8(rgba0, width, height, properties.generateMips);
+				}
+
+				const UINT mipLevels = static_cast<UINT>(faceMips[0].size());
+				for (int face = 1; face < 6; ++face)
+				{
+					if (faceMips[static_cast<std::size_t>(face)].size() != faceMips[0].size())
+					{
+						return std::nullopt;
+					}
+				}
+
+				const DXGI_FORMAT fmt = DxgiRGBA8(properties.srgb);
+
+				// Create default texture cube resource (Texture2DArray[6] with TEXTURECUBE SRV)
+				D3D12_RESOURCE_DESC texDesc{};
+				texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+				texDesc.Alignment = 0;
+				texDesc.Width = width;
+				texDesc.Height = height;
+				texDesc.DepthOrArraySize = 6; // 6 faces
+				texDesc.MipLevels = static_cast<UINT16>(mipLevels);
+				texDesc.Format = fmt;
+				texDesc.SampleDesc.Count = 1;
+				texDesc.SampleDesc.Quality = 0;
+				texDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
+				texDesc.Flags = D3D12_RESOURCE_FLAG_NONE;
+
+				ComPtr<ID3D12Resource> texture;
+				{
+					D3D12_HEAP_PROPERTIES heapProps{};
+					heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
+
+					ThrowIfFailed(
+						d3d->CreateCommittedResource(
+							&heapProps,
+							D3D12_HEAP_FLAG_NONE,
+							&texDesc,
+							D3D12_RESOURCE_STATE_COPY_DEST,
+							nullptr,
+							IID_PPV_ARGS(&texture)),
+						"DX12TextureUploader: CreateCommittedResource(textureCube) failed");
+				}
+
+				// Create upload buffer
+				const UINT numSubresources = mipLevels * 6u;
+				UINT64 uploadBytes = 0;
+				d3d->GetCopyableFootprints(&texDesc, 0, numSubresources, 0, nullptr, nullptr, nullptr, &uploadBytes);
+
+				ComPtr<ID3D12Resource> upload;
+				{
+					D3D12_HEAP_PROPERTIES uploadProps{};
+					uploadProps.Type = D3D12_HEAP_TYPE_UPLOAD;
+
+					auto upDesc = CD3DX12_RESOURCE_DESC::Buffer(uploadBytes);
+
+					ThrowIfFailed(
+						d3d->CreateCommittedResource(
+							&uploadProps,
+							D3D12_HEAP_FLAG_NONE,
+							&upDesc,
+							D3D12_RESOURCE_STATE_GENERIC_READ,
+							nullptr,
+							IID_PPV_ARGS(&upload)),
+						"DX12TextureUploader: CreateCommittedResource(upload) failed");
+				}
+
+				// Prepare subresources in (arraySlice-major) order:
+				// subresource = mip + slice * mipLevels (plane 0)
+				std::vector<D3D12_SUBRESOURCE_DATA> subs;
+				subs.reserve(numSubresources);
+
+				for (UINT slice = 0; slice < 6u; ++slice)
+				{
+					const auto& mips = faceMips[static_cast<std::size_t>(slice)];
+					for (UINT mip = 0; mip < mipLevels; ++mip)
+					{
+						const auto& mipInst = mips[mip];
+						D3D12_SUBRESOURCE_DATA subResData{};
+						subResData.pData = mipInst.rgba.data();
+						subResData.RowPitch = static_cast<LONG_PTR>(mipInst.width) * 4;
+						subResData.SlicePitch = subResData.RowPitch * static_cast<LONG_PTR>(mipInst.height);
+						subs.push_back(subResData);
+					}
+				}
+
+				// Record copy commands into a temporary list
+				ComPtr<ID3D12CommandAllocator> alloc;
+				ThrowIfFailed(
+					d3d->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)),
+					"DX12TextureUploader: CreateCommandAllocator failed");
+
+				ComPtr<ID3D12GraphicsCommandList> list;
+				ThrowIfFailed(
+					d3d->CreateCommandList(
+						0,
+						D3D12_COMMAND_LIST_TYPE_DIRECT,
+						alloc.Get(),
+						nullptr,
+						IID_PPV_ARGS(&list)),
+					"DX12TextureUploader: CreateCommandList failed");
+
+				UpdateSubresources(list.Get(), texture.Get(), upload.Get(), 0, 0, numSubresources, subs.data());
+
+				auto barrier = CD3DX12_RESOURCE_BARRIER::Transition(
+					texture.Get(),
+					D3D12_RESOURCE_STATE_COPY_DEST,
+					D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+
+				list->ResourceBarrier(1, &barrier);
+
+				ThrowIfFailed(list->Close(), "DX12TextureUploader: Close cmdlist failed");
+
+				ID3D12CommandList* lists[] = { list.Get() };
+				queue->ExecuteCommandLists(1, lists);
+
+				// Fence wait (so we can free upload immediately)
+				ComPtr<ID3D12Fence> fence;
+				ThrowIfFailed(d3d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)),
+					"DX12TextureUploader: CreateFence failed");
+
+				HANDLE eventHandle = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+				if (!eventHandle)
+				{
+					return std::nullopt;
+				}
+
+				const UINT64 fv = 1;
+				ThrowIfFailed(queue->Signal(fence.Get(), fv), "DX12TextureUploader: Signal failed");
+				if (fence->GetCompletedValue() < fv)
+				{
+					ThrowIfFailed(fence->SetEventOnCompletion(fv, eventHandle), "DX12TextureUploader: SetEventOnCompletion failed");
+					WaitForSingleObject(eventHandle, INFINITE);
+				}
+				CloseHandle(eventHandle);
+
+				// Register in DX12 RHI and allocate a TEXTURECUBE SRV.
+				const rhi::TextureHandle handle = dxDev->RegisterSampledTextureCube(texture.Get(), fmt, mipLevels);
+				if (!handle)
+				{
+					return std::nullopt;
+				}
+
+				return GPUTexture{ static_cast<unsigned int>(handle.id) };
+			}
+
+			// ---------------------- Tex2D ----------------------
+			// Validate
 			const std::uint32_t width = cpuData.width ? cpuData.width : properties.width;
 			const std::uint32_t height = cpuData.height ? cpuData.height : properties.height;
 
@@ -186,23 +376,8 @@ export namespace rendern
 			{
 				return std::nullopt;
 			}
-				
 
-			// 2) Need DX12 device
-			auto* dxDev = dynamic_cast<rhi::DX12Device*>(&device_);
-			if (!dxDev)
-			{
-				return std::nullopt;
-			}
-			
-			ID3D12Device* d3d = dxDev->NativeDevice();
-			ID3D12CommandQueue* queue = dxDev->NativeQueue();
-			if (!d3d || !queue)
-			{
-				return std::nullopt;
-			}
-			
-			// 3) Convert to RGBA8 and build mip chain
+			// Convert to RGBA8 and build mip chain
 			auto rgba0 = ConvertToRGBA8(cpuData, width, height);
 			if (rgba0.empty())
 			{
@@ -214,10 +389,9 @@ export namespace rendern
 			const DXGI_FORMAT fmt = DxgiRGBA8(properties.srgb);
 			const UINT mipLevels = static_cast<UINT>(mips.size());
 
-			// 4) Create default texture with mip levels
+			// Create default texture with mip levels
 			D3D12_RESOURCE_DESC texDesc{};
 			texDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-
 			texDesc.Alignment = 0;
 			texDesc.Width = width;
 			texDesc.Height = height;
@@ -245,7 +419,7 @@ export namespace rendern
 					"DX12TextureUploader: CreateCommittedResource(texture) failed");
 			}
 
-			// 5) Create upload buffer
+			// Create upload buffer
 			UINT64 uploadBytes = 0;
 			d3d->GetCopyableFootprints(&texDesc, 0, mipLevels, 0, nullptr, nullptr, nullptr, &uploadBytes);
 
@@ -267,7 +441,7 @@ export namespace rendern
 					"DX12TextureUploader: CreateCommittedResource(upload) failed");
 			}
 
-			// 6) Prepare subresources
+			// Prepare subresources
 			std::vector<D3D12_SUBRESOURCE_DATA> subs;
 			subs.reserve(mipLevels);
 			for (UINT i = 0; i < mipLevels; ++i)
@@ -280,7 +454,7 @@ export namespace rendern
 				subs.push_back(subResData);
 			}
 
-			// 7) Record copy commands into a temporary list
+			// Record copy commands into a temporary list
 			ComPtr<ID3D12CommandAllocator> alloc;
 			ThrowIfFailed(
 				d3d->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&alloc)),
@@ -289,11 +463,11 @@ export namespace rendern
 			ComPtr<ID3D12GraphicsCommandList> list;
 			ThrowIfFailed(
 				d3d->CreateCommandList(
-				0, 
-				D3D12_COMMAND_LIST_TYPE_DIRECT, 
-				alloc.Get(),
-				nullptr, 
-				IID_PPV_ARGS(&list)),
+					0,
+					D3D12_COMMAND_LIST_TYPE_DIRECT,
+					alloc.Get(),
+					nullptr,
+					IID_PPV_ARGS(&list)),
 				"DX12TextureUploader: CreateCommandList failed");
 
 			UpdateSubresources(list.Get(), texture.Get(), upload.Get(), 0, 0, mipLevels, subs.data());
@@ -310,7 +484,7 @@ export namespace rendern
 			ID3D12CommandList* lists[] = { list.Get() };
 			queue->ExecuteCommandLists(1, lists);
 
-			// 8) Fence wait (чтобы upload можно было сразу освободить и текстура гарантированно готова)
+			// Fence wait
 			ComPtr<ID3D12Fence> fence;
 			ThrowIfFailed(d3d->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)),
 				"DX12TextureUploader: CreateFence failed");
@@ -330,25 +504,19 @@ export namespace rendern
 			}
 			CloseHandle(eventHandle);
 
-			// 9) Register inside DX12 RHI as a TextureHandle and create SRV in device's heap
-			//    IMPORTANT: DX12Device must take ownership (AddRef/ComPtr::Attach).
+			// Register inside DX12 RHI as a TextureHandle and create SRV in device's heap
 			const rhi::TextureHandle handle = dxDev->RegisterSampledTexture(texture.Get(), fmt, mipLevels);
-
 			if (!handle)
 			{
 				return std::nullopt;
-			}	
-
-			// Ownership is transferred to DX12Device inside RegisterSampledTexture().
-			// We can safely release local ComPtr (it will Release its ref; device holds its own ref).
-			// (do nothing)
+			}
 
 			return GPUTexture{ static_cast<unsigned int>(handle.id) };
 		}
 
 		void Destroy(GPUTexture texture) noexcept override
 		{
-			if (texture.id == 0) 
+			if (texture.id == 0)
 			{
 				return;
 			}

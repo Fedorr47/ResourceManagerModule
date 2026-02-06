@@ -59,6 +59,24 @@ namespace
 
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
 	}
+
+	static void SetDefaultCubemapParameters(bool generateMips)
+	{
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_WRAP_R, GL_CLAMP_TO_EDGE);
+
+		if (generateMips)
+		{
+			glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR);
+		}
+		else
+		{
+			glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		}
+
+		glTexParameteri(GL_TEXTURE_CUBE_MAP, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	}
 }
 
 export namespace rendern
@@ -70,8 +88,80 @@ export namespace rendern
 		{
 			//assert(device.GetBackend() == rhi::Backend::OpenGL);
 		}
-		std::optional<GPUTexture> CreateAndUpload(const TextureCPUData& cpuData, const TextureProperties& properties)
+		std::optional<GPUTexture> CreateAndUpload(const TextureCPUData& cpuData, const TextureProperties& properties) override
 		{
+			// ---------------------- Cubemap ----------------------
+			if (properties.dimension == TextureDimension::Cube)
+			{
+				// We expect cpuData.cubePixels[0..5] to be filled.
+				const GLsizei width = static_cast<GLsizei>(cpuData.width ? cpuData.width : properties.width);
+				const GLsizei height = static_cast<GLsizei>(cpuData.height ? cpuData.height : properties.height);
+
+				if (width <= 0 || height <= 0)
+				{
+					return std::nullopt;
+				}
+
+				for (int i = 0; i < 6; ++i)
+				{
+					if (cpuData.cubePixels[static_cast<std::size_t>(i)].empty())
+					{
+						return std::nullopt;
+					}
+				}
+
+				GLuint textureId = 0;
+				glGenTextures(1, &textureId);
+				if (textureId == 0)
+				{
+					return std::nullopt;
+				}
+
+				glBindTexture(GL_TEXTURE_CUBE_MAP, textureId);
+				SetDefaultCubemapParameters(properties.generateMips);
+
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
+
+				const TextureFormat fmt = (cpuData.format == TextureFormat::RGB || cpuData.format == TextureFormat::GRAYSCALE)
+					? TextureFormat::RGBA
+					: cpuData.format;
+
+				const GLenum externalFormat = ToGLExternalFormat(fmt);
+				const GLenum internalFormat = ToGLInternalFormat(fmt, properties.srgb);
+
+				for (GLuint face = 0; face < 6; ++face)
+				{
+					const auto& facePixels = cpuData.cubePixels[face];
+					glTexImage2D(
+						GL_TEXTURE_CUBE_MAP_POSITIVE_X + face,
+						0,
+						internalFormat,
+						width,
+						height,
+						0,
+						externalFormat,
+						GL_UNSIGNED_BYTE,
+						facePixels.data());
+				}
+
+				if (properties.generateMips)
+				{
+					glGenerateMipmap(GL_TEXTURE_CUBE_MAP);
+				}
+
+				glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+				glBindTexture(GL_TEXTURE_CUBE_MAP, 0);
+
+				if (glGetError() != GL_NO_ERROR)
+				{
+					glDeleteTextures(1, &textureId);
+					return std::nullopt;
+				}
+
+				return GPUTexture{ static_cast<unsigned int>(textureId) };
+			}
+
+			// ---------------------- Tex2D ----------------------
 			if (cpuData.pixels.empty())
 			{
 				return std::nullopt;
@@ -120,7 +210,7 @@ export namespace rendern
 				return std::nullopt;
 			}
 
-			return GPUTexture { static_cast<unsigned int>(textureId) };
+			return GPUTexture{ static_cast<unsigned int>(textureId) };
 		}
 
 		void Destroy(GPUTexture texture) noexcept

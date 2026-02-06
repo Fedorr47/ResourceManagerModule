@@ -142,4 +142,39 @@ export namespace rendern
 		}
 		mesh = {};
 	}
+
+	MeshCPU MakeSkyboxCubeCPU()
+	{
+		using rendern::VertexDesc;
+		rendern::MeshCPU cpu{};
+
+		cpu.vertices = {
+			// px,py,pz,  nx,ny,nz,   u,v
+			VertexDesc{-1,-1,-1, 0,0,0, 0,0},
+			VertexDesc{ 1,-1,-1, 0,0,0, 0,0},
+			VertexDesc{ 1, 1,-1, 0,0,0, 0,0},
+			VertexDesc{-1, 1,-1, 0,0,0, 0,0},
+			VertexDesc{-1,-1, 1, 0,0,0, 0,0},
+			VertexDesc{ 1,-1, 1, 0,0,0, 0,0},
+			VertexDesc{ 1, 1, 1, 0,0,0, 0,0},
+			VertexDesc{-1, 1, 1, 0,0,0, 0,0},
+		};
+
+		cpu.indices = {
+			// -Z
+			0,1,2,  2,3,0,
+			// +Z
+			4,6,5,  6,4,7,
+			// -X
+			4,0,3,  3,7,4,
+			// +X
+			1,5,6,  6,2,1,
+			// -Y
+			4,5,1,  1,0,4,
+			// +Y
+			3,2,6,  6,7,3
+		};
+
+		return cpu;
+	}
 }

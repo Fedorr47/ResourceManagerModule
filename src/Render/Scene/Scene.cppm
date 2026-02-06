@@ -26,9 +26,9 @@ export namespace rendern
 		{
 			mathUtils::Mat4 m{ 1.0f };
 			m = mathUtils::Translate(m, position);
-			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.z), mathUtils::Vec3(0, 0, 1));
-			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.y), mathUtils::Vec3(0, 1, 0));
-			m = mathUtils::Rotate(m, mathUtils::ToRadians(rotationDegrees.x), mathUtils::Vec3(1, 0, 0));
+			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.z), mathUtils::Vec3(0, 0, 1));
+			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.y), mathUtils::Vec3(0, 1, 0));
+			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.x), mathUtils::Vec3(1, 0, 0));
 			m = mathUtils::Scale(m, scale);
 			return m;
 		}
@@ -152,6 +152,8 @@ export namespace rendern
 		std::vector<Material> materials; // persistent "assets" owned by Scene
 		std::vector<DrawItem> drawItems;
 		std::vector<Light> lights;
+
+		rhi::TextureDescIndex skyboxDescIndex{ 0 };
 
 		void Clear()
 		{

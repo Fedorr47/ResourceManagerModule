@@ -217,6 +217,11 @@ export namespace rendern
 		float dist2{};
 	};
 
+	struct alignas(16) SkyboxConstants
+	{
+		std::array<float, 16> uViewProj{};
+	};
+
 	class DX12Renderer
 	{
 	public:
@@ -287,7 +292,7 @@ export namespace rendern
 			camR = mathUtils::Normalize(camR);
 			const mathUtils::Vec3 camU = mathUtils::Cross(camR, camF);
 
-			const float fovY = mathUtils::ToRadians(scene.camera.fovYDeg);
+			const float fovY = mathUtils::DegToRad(scene.camera.fovYDeg);
 			const float tanHalf = std::tan(fovY * 0.5f);
 
 			auto MakeFrustumCorner = [&](float dist, float sx, float sy) -> mathUtils::Vec3
@@ -730,7 +735,7 @@ export namespace rendern
 					const float outerHalf = std::max(1.0f, l.outerHalfAngleDeg);
 					const float farZ = std::max(1.0f, l.range);
 					const float nearZ = std::max(0.5f, farZ * 0.02f);
-					const mathUtils::Mat4 p = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(outerHalf * 2.0f), 1.0f, nearZ, farZ);
+					const mathUtils::Mat4 p = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(outerHalf * 2.0f), 1.0f, nearZ, farZ);
 					const mathUtils::Mat4 vp = p * v;
 
 					SpotShadowRec rec{};
@@ -837,7 +842,7 @@ export namespace rendern
 							return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 						};
 
-					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(90.0f), 1.0f, 0.1f, rec.range);
+					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(90.0f), 1.0f, 0.1f, rec.range);
 
 					for (int face = 0; face < 6; ++face)
 					{
@@ -959,6 +964,40 @@ export namespace rendern
 
 					ctx.commandList.SetState(state_);
 
+					const float aspect = extent.height
+						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
+						: 1.0f;
+
+					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+					const mathUtils::Vec3 camPosLocal = scene.camera.position;
+
+					const mathUtils::Mat4 viewProj = proj * view;
+
+					// --- Skybox draw ---
+					{
+						mathUtils::Mat4 viewNoTrans = view;
+						viewNoTrans[3] = mathUtils::Vec4(0, 0, 0, 1);
+
+						const mathUtils::Mat4 vp = proj * viewNoTrans;
+						const mathUtils::Mat4 vpT = mathUtils::Transpose(vp);
+
+						SkyboxConstants c{};
+						std::memcpy(c.uViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+
+						ctx.commandList.SetState(skyboxState_);
+						ctx.commandList.BindPipeline(psoSkybox_);
+
+						ctx.commandList.BindInputLayout(skyboxMesh_.layout);
+						ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
+						ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
+
+						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+						ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
+
+						ctx.commandList.SetState(state_);
+					}
+
 					// Bind directional shadow map at slot 1 (t1)
 					{
 						const auto shadowTex = ctx.resources.GetTexture(shadowRG);
@@ -979,16 +1018,6 @@ export namespace rendern
 
 					// Bind shadow metadata SB at t11
 					ctx.commandList.BindStructuredBufferSRV(11, shadowDataBuffer_);
-
-					const float aspect = extent.height
-						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-						: 1.0f;
-
-					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::ToRadians(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-					const mathUtils::Vec3 camPosLocal = scene.camera.position;
-
-					const mathUtils::Mat4 viewProj = proj * view;
 
 					// Bind lights (t2 StructuredBuffer SRV)
 					ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
@@ -1161,7 +1190,6 @@ export namespace rendern
 			swapChain.Present();
 		}
 
-
 		void Shutdown()
 		{
 			if (instanceBuffer_)
@@ -1176,6 +1204,7 @@ export namespace rendern
 			{
 				device_.DestroyBuffer(shadowDataBuffer_);
 			}
+			DestroyMesh(device_, skyboxMesh_);
 			psoCache_.ClearCache();
 			shaderLibrary_.ClearCache();
 		}
@@ -1214,8 +1243,8 @@ export namespace rendern
 				out.p1 = { l.direction.x, l.direction.y, l.direction.z, l.intensity };
 				out.p2 = { l.color.x, l.color.y, l.color.z, l.range };
 
-				const float cosOuter = std::cos(mathUtils::ToRadians(l.outerHalfAngleDeg));
-				const float cosInner = std::cos(mathUtils::ToRadians(l.innerHalfAngleDeg));
+				const float cosOuter = std::cos(mathUtils::DegToRad(l.outerHalfAngleDeg));
+				const float cosInner = std::cos(mathUtils::DegToRad(l.innerHalfAngleDeg));
 
 				out.p3 = { cosInner, cosOuter, l.attLinear, l.attQuadratic };
 				gpu.push_back(out);
@@ -1245,7 +1274,7 @@ export namespace rendern
 				spot.p0 = { spotPos.x, spotPos.y, spotPos.z, static_cast<float>(static_cast<std::uint32_t>(LightType::Spot)) };
 				spot.p1 = { spotDir.x, spotDir.y, spotDir.z, 3.0f };
 				spot.p2 = { 0.8f, 0.9f, 1.0f, 30.0f };
-				spot.p3 = { std::cos(mathUtils::ToRadians(12.0f)), std::cos(mathUtils::ToRadians(20.0f)), 0.09f, 0.032f };
+				spot.p3 = { std::cos(mathUtils::DegToRad(12.0f)), std::cos(mathUtils::DegToRad(20.0f)), 0.09f, 0.032f };
 				gpu.push_back(spot);
 			}
 
@@ -1270,6 +1299,39 @@ export namespace rendern
 				shaderPath = corefs::ResolveAsset("shaders\\VS.vert");
 				shadowPath = corefs::ResolveAsset("shaders\\VS.vert");
 				break;
+			}
+
+			std::filesystem::path skyboxPath = corefs::ResolveAsset("shaders\\Skybox_dx12.hlsl");
+
+			// Skybox shaders
+			const auto vsSky = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Skybox",
+				.filePath = skyboxPath.string(),
+				.defines = {}
+				});
+			const auto psSky = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_Skybox",
+				.filePath = skyboxPath.string(),
+				.defines = {}
+				});
+
+			psoSkybox_ = psoCache_.GetOrCreate("PSO_Skybox", vsSky, psSky);
+
+			skyboxState_.depth.testEnable = true;
+			skyboxState_.depth.writeEnable = false;
+			skyboxState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+
+			skyboxState_.rasterizer.cullMode = rhi::CullMode::None;
+			skyboxState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+
+			skyboxState_.blend.enable = false;
+
+			// skybox mesh
+			{
+				MeshCPU skyCpu = MakeSkyboxCubeCPU();
+				skyboxMesh_ = UploadMesh(device_, skyCpu, "SkyboxCube_DX12");
 			}
 
 			// Main pipeline permutations (UseTex / UseShadow)
@@ -1458,5 +1520,9 @@ export namespace rendern
 		// Point shadow pass (R32_FLOAT distance cubemap)
 		rhi::PipelineHandle psoPointShadow_{};
 		rhi::GraphicsState pointShadowState_{};
+
+		MeshRHI skyboxMesh_{};
+		rhi::PipelineHandle psoSkybox_{};
+		rhi::GraphicsState skyboxState_{};
 	};
 } // namespace rendern

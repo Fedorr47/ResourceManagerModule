@@ -115,8 +115,13 @@ export namespace rendern
         void ClampPitch() noexcept
         {
             // Prevent gimbal singularity (looking straight up/down).
-            constexpr float kMaxPitch = 1.553343f; // ~89 degrees
+            constexpr float kMaxPitch = mathUtils::DegToRad(89.0f); // ~89 degrees
             pitchRad_ = std::clamp(pitchRad_, -kMaxPitch, kMaxPitch);
+        }
+
+        void NormalizeYaw()
+        {
+            yawRad_ = std::remainder(yawRad_, mathUtils::TwoPi);
         }
 
         void ApplyToCamera(Camera& cam)
@@ -127,17 +132,20 @@ export namespace rendern
 
         void UpdateLook(const InputState& input)
         {
-            const int dx = input.mouse.lookDx;
-            const int dy = input.mouse.lookDy;
+            const int deltaX = input.mouse.lookDx;
+            const int deltaY = input.mouse.lookDy;
 
-            if (dx == 0 && dy == 0)
+            if (deltaX == 0 && deltaY == 0)
+            {
                 return;
+            }
 
-            yawRad_ -= static_cast<float>(dx) * settings_.mouseSensitivity;
+            yawRad_ -= static_cast<float>(deltaX) * settings_.mouseSensitivity;
 
-            const float sign = settings_.invertY ? 1.0f : -1.0f;
-            pitchRad_ += sign * static_cast<float>(dy) * settings_.mouseSensitivity;
+            const float invertSign = settings_.invertY ? 1.0f : -1.0f;
+            pitchRad_ += invertSign * static_cast<float>(deltaY) * settings_.mouseSensitivity;
 
+            NormalizeYaw();
             ClampPitch();
         }
 

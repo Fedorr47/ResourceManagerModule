@@ -460,6 +460,32 @@ export namespace rhi
             return textureHandle;
         }
 
+        TextureHandle RegisterSampledTextureCube(ID3D12Resource* res, DXGI_FORMAT fmt, UINT mipLevels)
+        {
+            if (!res)
+            {
+                return {};
+            }
+
+            TextureHandle textureHandle{ ++nextTexId_ };
+            TextureEntry textureEntry{};
+
+            const D3D12_RESOURCE_DESC resourceDesc = res->GetDesc();
+            textureEntry.extent = Extent2D{
+                static_cast<std::uint32_t>(resourceDesc.Width),
+                static_cast<std::uint32_t>(resourceDesc.Height) };
+            textureEntry.format = rhi::Format::RGBA8_UNORM;
+            textureEntry.type = TextureEntry::Type::Cube;
+
+            // Take ownership (AddRef)
+            textureEntry.resource = res;
+
+            AllocateSRV(textureEntry, fmt, mipLevels);
+
+            textures_[textureHandle.id] = std::move(textureEntry);
+            return textureHandle;
+        }
+
         void SetSwapChain(DX12SwapChain* swapChain)
         {
             swapChain_ = swapChain;
@@ -702,7 +728,7 @@ export namespace rhi
             return textureHandle;
         }
 
-void DestroyTexture(TextureHandle texture) noexcept override
+        void DestroyTexture(TextureHandle texture) noexcept override
         {
             if (texture.id == 0)
             {
@@ -770,7 +796,7 @@ void DestroyTexture(TextureHandle texture) noexcept override
             return frameBuffer;
         }
 
-void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
+        void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
         {
             if (frameBuffer.id == 0)
             {
@@ -827,7 +853,7 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
         void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) override
         {
             if (!buffer || data.empty())
-            {  
+            {
                 return;
             }
 
@@ -865,7 +891,7 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
             }
 
             auto it = buffers_.find(buffer.id);
-            if (it == buffers_.end()) 
+            if (it == buffers_.end())
             {
                 return;
             }
@@ -890,11 +916,11 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
             if (entry.hasSRV && entry.srvIndex != 0)
             {
                 if (swapChain_)
-                { 
+                {
                     CurrentFrame().deferredFreeSrv.push_back(entry.srvIndex);
                 }
                 else
-                {   
+                {
                     freeSrv_.push_back(entry.srvIndex);
                 }
             }
@@ -1361,7 +1387,7 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
                                 rtvs[0] = swapChain_->CurrentRTV();
                                 numRT = 1;
 
-                                curNumRT = numRT; 
+                                curNumRT = numRT;
                                 curRTVFormats[0] = swapChain_->BackBufferFormat();
 
                                 dsv = swapChain_->DSV();
@@ -1556,7 +1582,7 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
                                 boundTex[cmd.slot] = GetTextureSRV(cmd.texture);
                             }
                         }
-                                                else if constexpr (std::is_same_v<T, CommandBindTextureCube>)
+                        else if constexpr (std::is_same_v<T, CommandBindTextureCube>)
                         {
                             if (cmd.slot < boundTex.size())
                             {
@@ -1575,7 +1601,7 @@ void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept override
                                 boundTex[cmd.slot] = GetTextureSRV(cmd.texture);
                             }
                         }
-else if constexpr (std::is_same_v<T, CommandTextureDesc>)
+                        else if constexpr (std::is_same_v<T, CommandTextureDesc>)
                         {
                             if (cmd.slot < boundTex.size())
                             {
@@ -1948,7 +1974,7 @@ else if constexpr (std::is_same_v<T, CommandTextureDesc>)
         };
 
 
-struct FramebufferEntry
+        struct FramebufferEntry
         {
             TextureHandle color{};
             TextureHandle depth{};

@@ -4,6 +4,7 @@ module;
 #include <string>
 #include <string_view>
 #include <vector>
+#include <array>
 #include <optional>
 #include <unordered_map>
 #include <memory>
@@ -23,6 +24,12 @@ export enum class TextureFormat : uint8_t
 	RGB,
 	RGBA,
 	GRAYSCALE
+};
+
+export enum class TextureDimension : uint8_t
+{
+	Tex2D,
+	Cube
 };
 
 export enum class ResourceState : uint8_t
@@ -45,19 +52,41 @@ export struct TextureProperties
 	std::uint32_t width{};
 	std::uint32_t height{};
 	TextureFormat format{ TextureFormat::RGBA };
+
+	// What kind of texture we are loading / uploading.
+	TextureDimension dimension{ TextureDimension::Tex2D };
+
+	// For 2D textures (or as a "base" path for debugging/logging).
 	std::string filePath{};
+
+	// For cubemaps: explicit 6-face file paths (can be relative to assets/ or absolute).
+	// Face order is fixed: +X, -X, +Y, -Y, +Z, -Z.
+	std::array<std::string, 6> cubeFacePaths{};
+
 	bool srgb{ true };
 	bool generateMips{ true };
+
+	// Optional: flip Y when decoding (useful for 2D textures; for cubemaps usually false).
+	bool flipY{ false };
 };
+
 
 export struct TextureCPUData
 {
+	TextureDimension dimension{ TextureDimension::Tex2D };
+
 	std::uint32_t width{};
 	std::uint32_t height{};
 	int channels{};
 	TextureFormat format{ TextureFormat::RGBA };
+
+	// Tex2D payload
 	std::vector<unsigned char> pixels;
+
+	// Cube payload (6 faces, each is width*height*channels)
+	std::array<std::vector<unsigned char>, 6> cubePixels{};
 };
+
 
 export struct GPUTexture
 {

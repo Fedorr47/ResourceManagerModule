@@ -70,6 +70,34 @@ export namespace rendern
 					const glm::mat4 proj = glm::perspective(glm::radians(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
 					const glm::mat4 view = glm::lookAt(scene.camera.position, scene.camera.target, scene.camera.up);
 
+					// --- Skybox draw ---
+					{
+						glm::mat4 viewNoTrans = view;
+						viewNoTrans[3] = glm::vec4(0, 0, 0, 1);
+
+						glm::mat4 vp = proj * viewNoTrans;
+
+						std::array<float, 16> vpArr{};
+						std::memcpy(vpArr.data(), glm::value_ptr(vp), sizeof(float) * 16);
+
+						ctx.commandList.SetState(skyboxState_);
+						ctx.commandList.BindPipeline(psoSkybox_);
+
+						ctx.commandList.BindInputLayout(skyboxMesh_.layout);
+						ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
+						ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
+
+						ctx.commandList.SetUniformMat4("uVP", vpArr);
+
+						if (scene.skyboxDescIndex != 0)
+						{
+							ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex); // slot t0
+						}
+						ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
+
+						ctx.commandList.SetState(state_);
+					}
+
 					auto DrawOne = [&](const MeshRHI& mesh, const glm::mat4& model, const MaterialParams& mat)
 					{
 						ctx.commandList.BindInputLayout(mesh.layout);
@@ -154,6 +182,7 @@ export namespace rendern
 
 		void Shutdown()
 		{
+			DestroyMesh(device_, skyboxMesh_);
 			DestroyMesh(device_, mesh_);
 			psoCache_.ClearCache();
 			shaderLibrary_.ClearCache();
@@ -218,6 +247,43 @@ export namespace rendern
 
 			psoNoTex_ = psoCache_.GetOrCreate("PSO_Mesh_NoTex", vertexShader, pixelShader);
 
+			// --- Skybox mesh ---
+			{
+				MeshCPU skyCpu = MakeSkyboxCubeCPU();
+				skyboxMesh_ = UploadMesh(device_, skyCpu, "SkyboxCube_GL");
+			}
+
+			// --- Skybox shaders/pso ---
+			{
+				std::filesystem::path vsPath = corefs::ResolveAsset("shaders\\SkyboxVS.vert");
+				std::filesystem::path psPath = corefs::ResolveAsset("shaders\\SkyboxFS.frag");
+
+				const auto vs = shaderLibrary_.GetOrCreateShader(ShaderKey{
+					.stage = rhi::ShaderStage::Vertex,
+					.name = "VS_Skybox_GL",
+					.filePath = vsPath.string(),
+					.defines = {}
+					});
+
+				const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
+					.stage = rhi::ShaderStage::Pixel,
+					.name = "PS_Skybox_GL",
+					.filePath = psPath.string(),
+					.defines = {}
+					});
+
+				psoSkybox_ = psoCache_.GetOrCreate("PSO_Skybox_GL", vs, ps);
+
+				skyboxState_.depth.testEnable = true;
+				skyboxState_.depth.writeEnable = false;
+				skyboxState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+
+				skyboxState_.rasterizer.cullMode = rhi::CullMode::None;
+				skyboxState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+
+				skyboxState_.blend.enable = false;
+			}
+
 			state_.depth.testEnable = true;
 			state_.depth.writeEnable = true;
 			state_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
@@ -238,6 +304,10 @@ export namespace rendern
 		rhi::PipelineHandle psoNoTex_{};
 		rhi::PipelineHandle psoTex_{};
 		rhi::GraphicsState state_{};
+
+		MeshRHI skyboxMesh_{};
+		rhi::PipelineHandle psoSkybox_{};
+		rhi::GraphicsState skyboxState_{};
 
 		std::size_t cpuFallbackVertexCount_{ 0 };
 	};

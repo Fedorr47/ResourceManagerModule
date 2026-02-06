@@ -37,7 +37,7 @@ export namespace rendern
 
 		friend bool operator==(const ShaderKey& lhs, const ShaderKey& rhs)
 		{
-			return 
+			return
 				lhs.stage == rhs.stage
 				&& lhs.name == rhs.name
 				&& lhs.filePath == rhs.filePath
@@ -84,37 +84,37 @@ export namespace rendern
 			const std::filesystem::path path = std::filesystem::path(key.filePath);
 
 			auto IsGLSL = [](std::filesystem::path p) -> bool
-			{
-				auto ext = p.extension().string();
-				for (char& c : ext) c = (char)std::tolower((unsigned char)c);
-				return ext == ".vert" || ext == ".frag" || ext == ".glsl";
-			};
+				{
+					auto ext = p.extension().string();
+					for (char& c : ext) c = (char)std::tolower((unsigned char)c);
+					return ext == ".vert" || ext == ".frag" || ext == ".glsl";
+				};
 
 			auto ApplyDefinesToHLSL = [](std::string_view source, const std::vector<std::string>& defines) -> std::string
-			{
-				if (defines.empty())
 				{
-					return std::string(source);
-				}
-
-				std::string out;
-				out.reserve(source.size() + defines.size() * 24);
-
-				for (std::string def : defines)
-				{
-					auto eq = def.find('=');
-					if (eq != std::string::npos)
+					if (defines.empty())
 					{
-						def[eq] = ' ';
+						return std::string(source);
 					}
-					out += "#define ";
-					out += def;
-					out += "\n";
-				}
 
-				out.append(source);
-				return out;
-			};
+					std::string out;
+					out.reserve(source.size() + defines.size() * 24);
+
+					for (std::string def : defines)
+					{
+						auto eq = def.find('=');
+						if (eq != std::string::npos)
+						{
+							def[eq] = ' ';
+						}
+						out += "#define ";
+						out += def;
+						out += "\n";
+					}
+
+					out.append(source);
+					return out;
+				};
 
 			FILE_UTILS::TextFile textSource;
 			std::string finalText;
@@ -299,11 +299,20 @@ export namespace rendern
 			GPUTexture gpuTexture{};
 
 			const rhi::Extent2D extent{
-				properties.width,
-				properties.height
+				(cpuData.width ? cpuData.width : properties.width),
+				(cpuData.height ? cpuData.height : properties.height)
 			};
 
-			rhi::TextureHandle textureHandle = device_.CreateTexture2D(extent, rhi::Format::RGBA8_UNORM);
+			rhi::TextureHandle textureHandle{};
+			if (properties.dimension == TextureDimension::Cube)
+			{
+				textureHandle = device_.CreateTextureCube(extent, rhi::Format::RGBA8_UNORM);
+			}
+			else
+			{
+				textureHandle = device_.CreateTexture2D(extent, rhi::Format::RGBA8_UNORM);
+			}
+
 			gpuTexture.id = textureHandle.id;
 			return gpuTexture;
 		}
