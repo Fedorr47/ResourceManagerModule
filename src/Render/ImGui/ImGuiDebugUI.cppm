@@ -176,6 +176,150 @@ namespace rendern::ui
             ImGui::PopID();
         }
 
+        static bool ProjectWorldToScreen(
+            const mathUtils::Vec3& worldPosition,
+            const mathUtils::Mat4& viewProj,
+            const ImVec2& displaySize,
+            ImVec2& outScreen)
+        {
+            const mathUtils::Vec4 clip = viewProj * mathUtils::Vec4(worldPosition, 1.0f);
+
+            if (clip.w <= 0.00001f)
+            {
+                return false;
+            }
+
+            const float invW = 1.0f / clip.w;
+            const float ndcX = clip.x * invW;
+            const float ndcY = clip.y * invW;
+
+            // optionally cull points outside screen
+            if (ndcX < -1.2f || ndcX > 1.2f || ndcY < -1.2f || ndcY > 1.2f)
+            {
+                return false;
+            }
+
+            const float screenX = (ndcX * 0.5f + 0.5f) * displaySize.x;
+            const float screenY = (1.0f - (ndcY * 0.5f + 0.5f)) * displaySize.y; // flip Y
+
+            outScreen = ImVec2(screenX, screenY);
+            return true;
+        }
+
+        static void DrawLightGizmosOverlay(const rendern::Scene& scene, const rendern::RendererSettings& rendererSettings)
+        {
+            const ImGuiIO& io = ImGui::GetIO();
+            const ImVec2 displaySize = io.DisplaySize;
+
+            const float aspect = (displaySize.y > 0.0f) ? (displaySize.x / displaySize.y) : 1.0f;
+
+            const mathUtils::Mat4 projection =
+                mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+
+            const mathUtils::Mat4 view =
+                mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+
+            const mathUtils::Mat4 viewProj = projection * view;
+
+            ImDrawList* drawList = ImGui::GetForegroundDrawList();
+            if (!drawList)
+            {
+                return;
+            }
+
+            const float pointRadius = 6.0f * rendererSettings.debugLightGizmoScale;
+            const float arrowLength = rendererSettings.lightGizmoArrowLength * rendererSettings.debugLightGizmoScale;
+
+            auto DrawArrow = [&](const mathUtils::Vec3& worldStart, const mathUtils::Vec3& worldEnd, ImU32 color)
+                {
+                    ImVec2 startScreen{};
+                    ImVec2 endScreen{};
+
+                    if (!ProjectWorldToScreen(worldStart, viewProj, displaySize, startScreen))
+                    {
+                        return;
+                    }
+                    if (!ProjectWorldToScreen(worldEnd, viewProj, displaySize, endScreen))
+                    {
+                        return;
+                    }
+
+                    drawList->AddLine(startScreen, endScreen, color, 2.0f);
+
+                    // simple arrow head (screen-space)
+                    const ImVec2 dir = ImVec2(endScreen.x - startScreen.x, endScreen.y - startScreen.y);
+                    const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
+                    if (len > 1.0f)
+                    {
+                        const ImVec2 unit = ImVec2(dir.x / len, dir.y / len);
+                        const ImVec2 left = ImVec2(-unit.y, unit.x);
+
+                        const float headSize = 8.0f * rendererSettings.debugLightGizmoScale;
+                        const ImVec2 p0 = endScreen;
+                        const ImVec2 p1 = ImVec2(endScreen.x - unit.x * headSize + left.x * headSize * 0.6f,
+                            endScreen.y - unit.y * headSize + left.y * headSize * 0.6f);
+                        const ImVec2 p2 = ImVec2(endScreen.x - unit.x * headSize - left.x * headSize * 0.6f,
+                            endScreen.y - unit.y * headSize - left.y * headSize * 0.6f);
+
+                        drawList->AddTriangleFilled(p0, p1, p2, color);
+                    }
+                };
+
+            for (std::size_t lightIndex = 0; lightIndex < scene.lights.size(); ++lightIndex)
+            {
+                const rendern::Light& light = scene.lights[lightIndex];
+
+                ImU32 color = IM_COL32(255, 255, 255, 255);
+                if (light.type == rendern::LightType::Directional) { color = IM_COL32(255, 230, 120, 255); }
+                if (light.type == rendern::LightType::Point) { color = IM_COL32(120, 255, 120, 255); }
+                if (light.type == rendern::LightType::Spot) { color = IM_COL32(120, 180, 255, 255); }
+
+                if (light.type == rendern::LightType::Directional)
+                {
+                    // directional has no position -> draw at camera target (or center)
+                    const mathUtils::Vec3 anchor = scene.camera.target;
+                    const mathUtils::Vec3 directionFromLight = mathUtils::Normalize(light.direction); // your convention: FROM light
+                    const mathUtils::Vec3 arrowEnd = anchor + directionFromLight * arrowLength;
+
+                    DrawArrow(anchor, arrowEnd, color);
+
+                    ImVec2 labelPos{};
+                    if (ProjectWorldToScreen(anchor, viewProj, displaySize, labelPos))
+                    {
+                        drawList->AddText(labelPos, color, "Dir");
+                    }
+
+                    continue;
+                }
+
+                // point / spot: draw position marker
+                ImVec2 lightScreen{};
+                if (ProjectWorldToScreen(light.position, viewProj, displaySize, lightScreen))
+                {
+                    drawList->AddCircleFilled(lightScreen, pointRadius, color);
+                    drawList->AddCircle(lightScreen, pointRadius + 2.0f, IM_COL32(0, 0, 0, 180), 0, 2.0f);
+
+                    char label[32]{};
+                    if (light.type == rendern::LightType::Point)
+                    {
+                        std::snprintf(label, sizeof(label), "P%zu", lightIndex);
+                    }
+                    else
+                    {
+                        std::snprintf(label, sizeof(label), "S%zu", lightIndex);
+                    }
+                    drawList->AddText(ImVec2(lightScreen.x + 8.0f, lightScreen.y - 10.0f), color, label);
+                }
+
+                if (light.type == rendern::LightType::Spot)
+                {
+                    const mathUtils::Vec3 directionFromLight = mathUtils::Normalize(light.direction); // FROM light
+                    const mathUtils::Vec3 arrowEnd = light.position + directionFromLight * arrowLength;
+                    DrawArrow(light.position, arrowEnd, color);
+                }
+            }
+        }
+
         // ------------------------------------------------------------
         // Light header row with actions on the right (clickable)
         // ------------------------------------------------------------
@@ -304,6 +448,17 @@ namespace rendern::ui
         ImGui::SliderFloat("Spot base", &rs.spotShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
         ImGui::SliderFloat("Point base", &rs.pointShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
         ImGui::SliderFloat("Slope scale", &rs.shadowSlopeScaleTexels, 0.0f, 10.0f, "%.3f");
+
+        ImGui::Separator();
+        ImGui::Text("Debug draw");
+        ImGui::Checkbox("Light gizmos (3D)", &rs.drawLightGizmos);
+        if (rs.drawLightGizmos)
+        {
+            ImGui::SliderFloat("Gizmo half-size", &rs.lightGizmoHalfSize, 0.01f, 2.0f, "%.3f");
+            ImGui::SliderFloat("Arrow length", &rs.lightGizmoArrowLength, 0.05f, 25.0f, "%.3f");
+            ImGui::SliderFloat("Arrow thickness", &rs.lightGizmoArrowThickness, 0.001f, 2.0f, "%.3f");
+            DrawLightGizmosOverlay(scene, rs);
+        }
 
         ImGui::Separator();
         if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen))

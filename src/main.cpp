@@ -632,6 +632,7 @@ int main(int argc, char** argv)
 
         // Renderer (facade) - Stage1 expects Scene
         rendern::RendererSettings rendererSettings{};
+        rendererSettings.drawLightGizmos = true;
         rendern::Renderer renderer{ *device, rendererSettings };
 
 #if defined(CORE_USE_DX12)
