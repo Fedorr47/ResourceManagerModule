@@ -404,6 +404,19 @@ namespace
 			throw std::runtime_error("Level JSON: material.flags must be array");
 		}
 		rendern::MaterialPerm flags = rendern::MaterialPerm::None;
+
+		auto ToLowerAscii = [](std::string s)
+		{
+			for (char& c : s)
+			{
+				if (c >= 'A' && c <= 'Z')
+				{
+					c = static_cast<char>(c - 'A' + 'a');
+				}
+			}
+			return s;
+		};
+
 		for (const auto& it : v.AsArray())
 		{
 			if (!it.IsString())
@@ -411,10 +424,11 @@ namespace
 				throw std::runtime_error("Level JSON: material.flags entries must be strings");
 			}
 			const std::string& s = it.AsString();
-			if (s == "UseShadow") flags |= rendern::MaterialPerm::UseShadow;
-			else if (s == "Transparent") flags |= rendern::MaterialPerm::Transparent;
-			else if (s == "Skinning") flags |= rendern::MaterialPerm::Skinning;
-			else if (s == "UseTex") flags |= rendern::MaterialPerm::UseTex; // usually inferred
+			const std::string norm = ToLowerAscii(s);
+			if (norm == "useshadow" || norm == "use_shadow") flags |= rendern::MaterialPerm::UseShadow;
+			else if (norm == "transparent") flags |= rendern::MaterialPerm::Transparent;
+			else if (norm == "skinning") flags |= rendern::MaterialPerm::Skinning;
+			else if (norm == "usetex" || norm == "use_tex") flags |= rendern::MaterialPerm::UseTex; // usually inferred
 			else
 			{
 				throw std::runtime_error("Level JSON: unknown material flag: " + s);
@@ -855,13 +869,44 @@ export namespace rendern
 		// --- skybox ---
 		if (auto* sb = TryGet(o, "skybox"))
 		{
-			if (sb->IsString())
+			// Accept either:
+			//   - string: "SkyboxTexId"
+			//   - object: { "textureId": "SkyboxTexId" }  (or "texture")
+			//   - null
+			if (sb->IsNull())
+			{
+				// ok
+			}
+			else if (sb->IsString())
 			{
 				out.skyboxTexture = sb->AsString();
 			}
-			else if (!sb->IsNull())
+			else if (sb->IsObject())
 			{
-				throw std::runtime_error("Level JSON: skybox must be string or null");
+				const JsonObject& sbo = sb->AsObject();
+				const JsonValue* t = TryGet(sbo, "textureId");
+				if (!t) t = TryGet(sbo, "texture");
+				if (!t) t = TryGet(sbo, "id");
+				if (!t)
+				{
+					throw std::runtime_error("Level JSON: skybox object must contain 'textureId' (or 'texture')");
+				}
+				if (t->IsNull())
+				{
+					// ok
+				}
+				else if (t->IsString())
+				{
+					out.skyboxTexture = t->AsString();
+				}
+				else
+				{
+					throw std::runtime_error("Level JSON: skybox.textureId must be string or null");
+				}
+			}
+			else
+			{
+				throw std::runtime_error("Level JSON: skybox must be string, object, or null");
 			}
 		}
 
