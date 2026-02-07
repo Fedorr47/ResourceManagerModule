@@ -325,9 +325,9 @@ namespace
 	// -----------------------------
 	// JSON -> typed helpers
 	// -----------------------------
-	const JsonValue* TryGet(const JsonObject& o, std::string_view key)
+	const JsonValue* TryGet(const JsonObject& jsonObject, std::string_view key)
 	{
-		if (auto it = o.find(std::string(key)); it != o.end())
+		if (auto it = jsonObject.find(std::string(key)); it != jsonObject.end())
 		{
 			return &it->second;
 		}
@@ -647,13 +647,13 @@ export namespace rendern
 		{
 			throw std::runtime_error("Level JSON: root must be object");
 		}
-		const JsonObject& o = root.AsObject();
+		const JsonObject& jsonObject = root.AsObject();
 
 		LevelAsset out;
-		out.name = GetStringOpt(o, "name", "Level");
+		out.name = GetStringOpt(jsonObject, "name", "Level");
 
 		// --- meshes ---
-		if (auto* meshesV = TryGet(o, "meshes"))
+		if (auto* meshesV = TryGet(jsonObject, "meshes"))
 		{
 			const JsonObject& meshesO = meshesV->AsObject();
 			for (const auto& [id, defV] : meshesO)
@@ -671,7 +671,7 @@ export namespace rendern
 		}
 
 		// --- textures ---
-		if (auto* texV = TryGet(o, "textures"))
+		if (auto* texV = TryGet(jsonObject, "textures"))
 		{
 			const JsonObject& texO = texV->AsObject();
 			for (const auto& [id, defV] : texO)
@@ -755,7 +755,7 @@ export namespace rendern
 		}
 
 		// --- materials ---
-		if (auto* matsV = TryGet(o, "materials"))
+		if (auto* matsV = TryGet(jsonObject, "materials"))
 		{
 			const JsonObject& matsO = matsV->AsObject();
 			for (const auto& [id, defV] : matsO)
@@ -801,7 +801,7 @@ export namespace rendern
 		}
 
 		// --- camera ---
-		if (auto* camV = TryGet(o, "camera"))
+		if (auto* camV = TryGet(jsonObject, "camera"))
 		{
 			const JsonObject& cd = camV->AsObject();
 			Camera cam;
@@ -827,7 +827,7 @@ export namespace rendern
 		}
 
 		// --- lights ---
-		if (auto* lightsV = TryGet(o, "lights"))
+		if (auto* lightsV = TryGet(jsonObject, "lights"))
 		{
 			for (const auto& lv : lightsV->AsArray())
 			{
@@ -867,7 +867,7 @@ export namespace rendern
 		}
 
 		// --- skybox ---
-		if (auto* sb = TryGet(o, "skybox"))
+		if (auto* sb = TryGet(jsonObject, "skybox"))
 		{
 			// Accept either:
 			//   - string: "SkyboxTexId"
@@ -911,7 +911,7 @@ export namespace rendern
 		}
 
 		// --- nodes ---
-		if (auto* nodesV = TryGet(o, "nodes"))
+		if (auto* nodesV = TryGet(jsonObject, "nodes"))
 		{
 			for (const auto& nv : nodesV->AsArray())
 			{

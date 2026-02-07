@@ -9,7 +9,7 @@ export namespace rendern
 {
 	struct RendererSettings
 	{
-		float dirShadowBaseBiasTexels{ 0.1f };
+		float dirShadowBaseBiasTexels{ 0.6f };
 		float spotShadowBaseBiasTexels{ 1.0f };
 		float pointShadowBaseBiasTexels{ 3.0f };
 		float shadowSlopeScaleTexels{ 2.0f };

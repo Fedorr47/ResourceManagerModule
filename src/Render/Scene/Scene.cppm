@@ -82,34 +82,34 @@ export namespace rendern
 	};
 
 	struct MaterialParams
-{
-    mathUtils::Vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+	{
+		mathUtils::Vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
 
-    // Legacy Phong params (still used by OpenGL path).
-    float shininess{ 64.0f };
-    float specStrength{ 0.5f };
+		// Legacy Phong params (still used by OpenGL path).
+		float shininess{ 64.0f };
+		float specStrength{ 0.5f };
 
-    // Shadow bias in "texels" (added to the global bias computed in shader).
-    float shadowBias{ 0.0f };
+		// Shadow bias in "texels" (added to the global bias computed in shader).
+		float shadowBias{ 0.0f };
 
-    // --- PBR params (DX12 path) ---
-    // Defaults are chosen to look reasonable even when only albedo is provided.
-    float metallic{ 0.0f };   // 0..1
-    float roughness{ 0.75f }; // 0..1
-    float ao{ 1.0f };         // 0..1
-    float emissiveStrength{ 1.0f };
+		// --- PBR params (DX12 path) ---
+		// Defaults are chosen to look reasonable even when only albedo is provided.
+		float metallic{ 0.0f };   // 0..1
+		float roughness{ 0.75f }; // 0..1
+		float ao{ 1.0f };         // 0..1
+		float emissiveStrength{ 1.0f };
 
-    // Cross-backend binding: if non-zero, renderer binds this descriptor at slot t0.
-    rhi::TextureDescIndex albedoDescIndex{ 0 };
+		// Cross-backend binding: if non-zero, renderer binds this descriptor at slot t0.
+		rhi::TextureDescIndex albedoDescIndex{ 0 };
 
-    // DX12 PBR maps (bound as separate SRV slots in the main shader):
-    //  t12 normal, t13 metalness, t14 roughness, t15 ao, t16 emissive
-    rhi::TextureDescIndex normalDescIndex{ 0 };
-    rhi::TextureDescIndex metalnessDescIndex{ 0 };
-    rhi::TextureDescIndex roughnessDescIndex{ 0 };
-    rhi::TextureDescIndex aoDescIndex{ 0 };
-    rhi::TextureDescIndex emissiveDescIndex{ 0 };
-};
+		// DX12 PBR maps (bound as separate SRV slots in the main shader):
+		//  t12 normal, t13 metalness, t14 roughness, t15 ao, t16 emissive
+		rhi::TextureDescIndex normalDescIndex{ 0 };
+		rhi::TextureDescIndex metalnessDescIndex{ 0 };
+		rhi::TextureDescIndex roughnessDescIndex{ 0 };
+		rhi::TextureDescIndex aoDescIndex{ 0 };
+		rhi::TextureDescIndex emissiveDescIndex{ 0 };
+	};
 
 	enum class MaterialPerm : std::uint32_t
 	{
