@@ -325,8 +325,8 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 				: 1.0f;
 
 			// Limit how far we render directional shadows to keep resolution usable.
+			const float shadowFar = std::min(scene.camera.farZ, 30.0f);
 			const float shadowNear = std::max(scene.camera.nearZ, 0.05f);
-			const float shadowFar = std::min(scene.camera.farZ, std::max(settings_.dirShadowDistance, shadowNear + 1.0f));
 
 			// Camera basis (orthonormal).
 			const mathUtils::Vec3 camF = mathUtils::Normalize(scene.camera.target - scene.camera.position);
@@ -433,129 +433,6 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 
 			const mathUtils::Mat4 lightProj = mathUtils::OrthoRH_ZO(minX, maxX, minY, maxY, zNear, zFar);
 			const mathUtils::Mat4 dirLightViewProj = lightProj * lightView;
-
-			// ---------------- Directional CSM (CPU-side only; shader can opt-in) ----------------
-			// We keep the legacy single-map directional shadow (shadowRG at t1) for compatibility.
-			// Additionally, we render up to 3 cascades and bind them at:
-			//   t18 = cascade 0 (near)
-			//   t19 = cascade 1 (mid)
-			//   t20 = cascade 2 (far)
-			// Shader-side cascade selection is intentionally NOT done here (you said you'll adjust shaders yourself).
-			const std::uint32_t csmCascadeCount = std::clamp<std::uint32_t>(settings_.dirShadowCascadeCount, 1u, 3u);
-			const float csmLambda = std::clamp(settings_.dirShadowSplitLambda, 0.0f, 1.0f);
-
-			// Compute split distances in view space (positive distance from camera).
-			std::array<float, 3> csmSplits{ shadowFar, shadowFar, shadowFar };
-			for (std::uint32_t i = 1; i <= csmCascadeCount; ++i)
-			{
-				const float p = static_cast<float>(i) / static_cast<float>(csmCascadeCount);
-				const float logSplit = shadowNear * std::pow(shadowFar / std::max(shadowNear, 1e-4f), p);
-				const float uniSplit = shadowNear + (shadowFar - shadowNear) * p;
-				const float split = uniSplit + (logSplit - uniSplit) * csmLambda;
-				csmSplits[i - 1] = split;
-			}
-			csmSplits[csmCascadeCount - 1] = shadowFar;
-
-			// Allocate cascade shadow maps (depth).
-			std::array<renderGraph::RGTextureHandle, 3> csmShadowRGs{};
-			for (std::uint32_t c = 0; c < csmCascadeCount; ++c)
-			{
-				const std::string name = "DirShadowCSM_C" + std::to_string(static_cast<int>(c));
-				csmShadowRGs[c] = graph.CreateTexture(renderGraph::RGTextureDesc{
-					.extent = shadowExtent,
-					.format = rhi::Format::D32_FLOAT,
-					.usage = renderGraph::ResourceUsage::DepthStencil,
-					.debugName = name.c_str()
-					});
-			}
-
-			// Build per-cascade light view-projection matrices.
-			std::array<mathUtils::Mat4, 3> csmViewProj{};
-			auto BuildDirCascadeVP = [&](float sliceNear, float sliceFar, const rhi::Extent2D& extent) -> mathUtils::Mat4
-				{
-					std::array<mathUtils::Vec3, 8> corners{};
-					// Near plane
-					corners[0] = MakeFrustumCorner(sliceNear, -1.0f, -1.0f);
-					corners[1] = MakeFrustumCorner(sliceNear, 1.0f, -1.0f);
-					corners[2] = MakeFrustumCorner(sliceNear, 1.0f, 1.0f);
-					corners[3] = MakeFrustumCorner(sliceNear, -1.0f, 1.0f);
-					// Far plane
-					corners[4] = MakeFrustumCorner(sliceFar, -1.0f, -1.0f);
-					corners[5] = MakeFrustumCorner(sliceFar, 1.0f, -1.0f);
-					corners[6] = MakeFrustumCorner(sliceFar, 1.0f, 1.0f);
-					corners[7] = MakeFrustumCorner(sliceFar, -1.0f, 1.0f);
-
-					mathUtils::Vec3 c{ 0.0f, 0.0f, 0.0f };
-					for (const auto& v : corners)
-					{
-						c = c + v;
-					}
-					c = c * (1.0f / 8.0f);
-
-					float r = 0.0f;
-					for (const auto& v : corners)
-					{
-						r = std::max(r, mathUtils::Length(v - c));
-					}
-
-					const float dist = r + 100.0f;
-					const mathUtils::Vec3 lp = c - lightDir * dist;
-					const mathUtils::Mat4 lv = mathUtils::LookAt(lp, c, lightUp);
-
-					float mnX = 1e30f, mnY = 1e30f, mnZ = 1e30f;
-					float mxX = -1e30f, mxY = -1e30f, mxZ = -1e30f;
-
-					for (const auto& corner : corners)
-					{
-						const mathUtils::Vec4 ls4 = lv * mathUtils::Vec4(corner, 1.0f);
-						mnX = std::min(mnX, ls4.x); mxX = std::max(mxX, ls4.x);
-						mnY = std::min(mnY, ls4.y); mxY = std::max(mxY, ls4.y);
-						mnZ = std::min(mnZ, ls4.z); mxZ = std::max(mxZ, ls4.z);
-					}
-
-					const float exX = mxX - mnX;
-					const float exY = mxY - mnY;
-					const float exZ = mxZ - mnZ;
-
-					const float padXYLocal = 0.10f * std::max(exX, exY) + 2.0f;
-					const float padZLocal = 0.20f * exZ + 10.0f;
-
-					mnX -= padXYLocal; mxX += padXYLocal;
-					mnY -= padXYLocal; mxY += padXYLocal;
-					mnZ -= padZLocal;  mxZ += padZLocal;
-
-					constexpr float casterMarginLocal = 80.0f;
-					mnZ -= casterMarginLocal;
-
-					const float wLS = mxX - mnX;
-					const float hLS = mxY - mnY;
-
-					const float wuPerTxX = wLS / static_cast<float>(extent.width);
-					const float wuPerTxY = hLS / static_cast<float>(extent.height);
-
-					float ccx = 0.5f * (mnX + mxX);
-					float ccy = 0.5f * (mnY + mxY);
-
-					ccx = std::floor(ccx / wuPerTxX) * wuPerTxX;
-					ccy = std::floor(ccy / wuPerTxY) * wuPerTxY;
-
-					mnX = ccx - wLS * 0.5f;  mxX = ccx + wLS * 0.5f;
-					mnY = ccy - hLS * 0.5f;  mxY = ccy + hLS * 0.5f;
-
-					const float zn = std::max(0.1f, -mxZ);
-					const float zf = std::max(zn + 1.0f, -mnZ);
-
-					const mathUtils::Mat4 lpj = mathUtils::OrthoRH_ZO(mnX, mxX, mnY, mxY, zn, zf);
-					return lpj * lv;
-				};
-
-			float prevSplit = shadowNear;
-			for (std::uint32_t c = 0; c < csmCascadeCount; ++c)
-			{
-				const float nextSplit = csmSplits[c];
-				csmViewProj[c] = BuildDirCascadeVP(prevSplit, nextSplit, shadowExtent);
-				prevSplit = nextSplit;
-			}
 
 			std::vector<SpotShadowRec> spotShadows;
 			std::vector<PointShadowRec> pointShadows;
@@ -866,50 +743,6 @@ key.specStrength = params.specStrength;
 					});
 			}
 
-
-			// ---------------- Directional CSM passes (depth-only) ----------------
-			// NOTE: These cascades are not consumed by the current shader by default.
-			// They are bound for experimentation / future shader-side cascade selection.
-			for (std::uint32_t cascadeIndex = 0; cascadeIndex < csmCascadeCount; ++cascadeIndex)
-			{
-				rhi::ClearDesc clear{};
-				clear.clearColor = false;
-				clear.clearDepth = true;
-				clear.depth = 1.0f;
-
-				renderGraph::PassAttachments att{};
-				att.useSwapChainBackbuffer = false;
-				att.color = std::nullopt;
-				att.depth = csmShadowRGs[cascadeIndex];
-				att.clearDesc = clear;
-
-				struct alignas(16) ShadowPassConstants
-				{
-					std::array<float, 16> uLightViewProj{};
-				};
-
-				ShadowPassConstants passConstants{};
-				const mathUtils::Mat4 vpT = mathUtils::Transpose(csmViewProj[cascadeIndex]);
-				std::memcpy(passConstants.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
-
-				const std::string passName = "DirShadowCSM_" + std::to_string(static_cast<int>(cascadeIndex));
-
-				graph.AddPass(passName, std::move(att),
-					[this, passConstants, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
-					{
-						ctx.commandList.SetViewport(0, 0,
-							static_cast<int>(ctx.passExtent.width),
-							static_cast<int>(ctx.passExtent.height));
-
-						ctx.commandList.SetState(shadowState_);
-						ctx.commandList.BindPipeline(psoShadow_);
-
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &passConstants, 1 }));
-
-						this->DrawInstancedShadowBatches(ctx.commandList, shadowBatches, instStride);
-					});
-			}
-
 			// Collect up to kMaxSpotShadows / kMaxPointShadows from scene.lights (index aligns with UploadLights()).
 			for (std::uint32_t lightIndex = 0; lightIndex < static_cast<std::uint32_t>(scene.lights.size()); ++lightIndex)
 			{
@@ -1121,9 +954,7 @@ key.specStrength = params.specStrength;
 			graph.AddSwapChainPass("MainPass", clearDesc,
 				[this, &scene, 
 				shadowRG, 
-				dirLightViewProj, 
-				csmCascadeCount,
-				csmShadowRGs,
+				dirLightViewProj,
 				lightCount, 
 				spotShadows, 
 				pointShadows, 
@@ -1184,14 +1015,6 @@ key.specStrength = params.specStrength;
 						const auto shadowTex = ctx.resources.GetTexture(shadowRG);
 						ctx.commandList.BindTexture2D(1, shadowTex);
 					}
-
-					// Directional CSM cascade maps (t18..t20). Not used unless shader opt-in.
-					for (std::uint32_t c = 0; c < csmCascadeCount; ++c)
-					{
-						const auto tex = ctx.resources.GetTexture(csmShadowRGs[c]);
-						ctx.commandList.BindTexture2D(18u + static_cast<std::uint32_t>(c), tex);
-					}
-
 
 					// Bind Spot shadow maps at t3..t6 and Point shadow cubemaps at t7..t10.
 					for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
