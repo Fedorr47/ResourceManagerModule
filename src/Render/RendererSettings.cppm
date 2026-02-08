@@ -15,7 +15,7 @@ export namespace rendern
 		float shadowSlopeScaleTexels{ 2.0f };
 
 		// Directional shadow cascade settings (DX12-only usage; safe to ignore in other backends)
-		float dirShadowDistance{ 60.0f };
+		float dirShadowDistance{ 200.0f };
 		std::uint32_t dirShadowCascadeCount{ 3 };
 		float dirShadowSplitLambda{ 0.7f };
 		bool enableDepthPrepass{ false };

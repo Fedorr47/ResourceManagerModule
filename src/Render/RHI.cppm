@@ -466,7 +466,7 @@ export namespace rhi
 		virtual std::string_view GetName() const = 0;
 
 		// Optional UI hooks (Dear ImGui). Default is no-op.
-		virtual void InitImGui(void* hwnd, int framesInFlight, Format rtvFormat) { (void)hwnd; (void)framesInFlight; (void)rtvFormat; }
+		virtual void InitImGui([[maybe_unused]] void* hwnd, [[maybe_unused]] int framesInFlight, [[maybe_unused]] Format rtvFormat) {}
 		virtual void ImGuiNewFrame() {}
 		virtual void ShutdownImGui() {}
 

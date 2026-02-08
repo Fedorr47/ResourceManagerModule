@@ -110,28 +110,28 @@ export namespace rendern
 		{
 			std::size_t seed = HashPtr(key.mesh);
 
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.albedoDescIndex)));
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.normalDescIndex)));
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.metalnessDescIndex)));
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.roughnessDescIndex)));
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.aoDescIndex)));
-HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.emissiveDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.albedoDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.normalDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.metalnessDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.roughnessDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.aoDescIndex)));
+			HashCombine(seed, HashU32(static_cast<std::uint32_t>(key.emissiveDescIndex)));
 
-HashCombine(seed, HashU32(FloatBits(key.baseColor.x)));
-HashCombine(seed, HashU32(FloatBits(key.baseColor.y)));
-HashCombine(seed, HashU32(FloatBits(key.baseColor.z)));
-HashCombine(seed, HashU32(FloatBits(key.baseColor.w)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.x)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.y)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.z)));
+			HashCombine(seed, HashU32(FloatBits(key.baseColor.w)));
 
-HashCombine(seed, HashU32(FloatBits(key.shadowBias)));
+			HashCombine(seed, HashU32(FloatBits(key.shadowBias)));
 
-HashCombine(seed, HashU32(FloatBits(key.metallic)));
-HashCombine(seed, HashU32(FloatBits(key.roughness)));
-HashCombine(seed, HashU32(FloatBits(key.ao)));
-HashCombine(seed, HashU32(FloatBits(key.emissiveStrength)));
+			HashCombine(seed, HashU32(FloatBits(key.metallic)));
+			HashCombine(seed, HashU32(FloatBits(key.roughness)));
+			HashCombine(seed, HashU32(FloatBits(key.ao)));
+			HashCombine(seed, HashU32(FloatBits(key.emissiveStrength)));
 
-// Legacy
-HashCombine(seed, HashU32(FloatBits(key.shininess)));
-HashCombine(seed, HashU32(FloatBits(key.specStrength)));
+			// Legacy
+			HashCombine(seed, HashU32(FloatBits(key.shininess)));
+			HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 			return seed;
 		}
 	};
@@ -141,20 +141,20 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 		bool operator()(const BatchKey& lhs, const BatchKey& rhs) const noexcept
 		{
 			return lhs.mesh == rhs.mesh &&
-	lhs.albedoDescIndex == rhs.albedoDescIndex &&
-	lhs.normalDescIndex == rhs.normalDescIndex &&
-	lhs.metalnessDescIndex == rhs.metalnessDescIndex &&
-	lhs.roughnessDescIndex == rhs.roughnessDescIndex &&
-	lhs.aoDescIndex == rhs.aoDescIndex &&
-	lhs.emissiveDescIndex == rhs.emissiveDescIndex &&
-	lhs.baseColor == rhs.baseColor &&
-	lhs.shadowBias == rhs.shadowBias &&
-	lhs.metallic == rhs.metallic &&
-	lhs.roughness == rhs.roughness &&
-	lhs.ao == rhs.ao &&
-	lhs.emissiveStrength == rhs.emissiveStrength &&
-	lhs.shininess == rhs.shininess &&
-	lhs.specStrength == rhs.specStrength;
+				lhs.albedoDescIndex == rhs.albedoDescIndex &&
+				lhs.normalDescIndex == rhs.normalDescIndex &&
+				lhs.metalnessDescIndex == rhs.metalnessDescIndex &&
+				lhs.roughnessDescIndex == rhs.roughnessDescIndex &&
+				lhs.aoDescIndex == rhs.aoDescIndex &&
+				lhs.emissiveDescIndex == rhs.emissiveDescIndex &&
+				lhs.baseColor == rhs.baseColor &&
+				lhs.shadowBias == rhs.shadowBias &&
+				lhs.metallic == rhs.metallic &&
+				lhs.roughness == rhs.roughness &&
+				lhs.ao == rhs.ao &&
+				lhs.emissiveStrength == rhs.emissiveStrength &&
+				lhs.shininess == rhs.shininess &&
+				lhs.specStrength == rhs.specStrength;
 		}
 	};
 
@@ -179,6 +179,7 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 		std::array<float, 16> uViewProj{};
 		std::array<float, 16> uLightViewProj{};
 		std::array<float, 4>  uCameraAmbient{}; // xyz + ambient
+        std::array<float, 4>  uCameraForward{}; // xyz + 0
 		std::array<float, 4>  uBaseColor{};     // fallback baseColor
 
 		// shininess, specStrength, materialShadowBiasTexels, flagsBits
@@ -193,13 +194,23 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 		// dirBaseTexels, spotBaseTexels, pointBaseTexels, slopeScaleTexels
 		std::array<float, 4>  uShadowBias{};
 	};
-	static_assert(sizeof(PerBatchConstants) == 224);
+	static_assert(sizeof(PerBatchConstants) == 240);
 
 
 	// shadow metadata for Spot/Point arrays (bound as StructuredBuffer at t11).
 	// We pack indices/bias as floats to keep the struct simple across compilers.
 	struct alignas(16) ShadowDataSB
 	{
+		// ---------------- Directional CSM (atlas) ----------------
+		// Cascades are packed into a single D32 atlas.
+		// Layout: [C0|C1|C2] horizontally, each tile is dirTileSize x dirTileSize.
+		// dirVPRows: cascadeCount * 4 rows.
+		std::array<mathUtils::Vec4, 12> dirVPRows{}; // 3 cascades * 4 rows
+		// dirSplits = { split1, split2, split3 (max shadow distance), fadeFraction }
+		mathUtils::Vec4 dirSplits{};
+		// dirInfo = { invAtlasW, invAtlasH, invTileRes, cascadeCount }
+		mathUtils::Vec4 dirInfo{};
+
 		// Spot view-projection matrices as ROWS (4 matrices * 4 rows = 16 float4).
 		std::array<mathUtils::Vec4, kMaxSpotShadows * 4> spotVPRows{};
 		// spotInfo[i] = { lightIndexBits, bias, 0, 0 }
@@ -296,13 +307,19 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 			// Upload lights once per frame (t2 StructuredBuffer SRV)
 			const std::uint32_t lightCount = UploadLights(scene, camPos);
 
-			// ---------------- Directional shadow (single) ----------------
-			const rhi::Extent2D shadowExtent{ 2048, 2048 };
+			// ---------------- Directional CSM (atlas) ----------------
+			// 3 cascades packed into a single D32 atlas:
+			//   atlas = (tileSize * cascadeCount) x tileSize.
+			// The shader selects the cascade and remaps UVs into the atlas.
+			constexpr std::uint32_t kMaxDirCascades = 3;
+			constexpr std::uint32_t dirTileSize = 2048; // user request
+			const std::uint32_t dirCascadeCount = std::clamp(settings_.dirShadowCascadeCount, 1u, kMaxDirCascades);
+			const rhi::Extent2D shadowExtent{ dirTileSize * dirCascadeCount, dirTileSize };
 			const auto shadowRG = graph.CreateTexture(renderGraph::RGTextureDesc{
 				.extent = shadowExtent,
 				.format = rhi::Format::D32_FLOAT,
 				.usage = renderGraph::ResourceUsage::DepthStencil,
-				.debugName = "ShadowMap"
+				.debugName = "DirShadowAtlas"
 				});
 
 			// Choose first directional light (or a default).
@@ -317,15 +334,15 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 			}
 
 			// --------------------------------
-			// Fit directional shadow ortho projection to a camera frustum slice in light-space.
-			// This prevents hard "shadow coverage clipping" when the camera rotates.
+			// Fit each cascade ortho projection to a camera frustum slice in light-space.
+			// The bounds are snapped to shadow texels to reduce shimmering.
 			const rhi::SwapChainDesc scDesc = swapChain.GetDesc();
 			const float aspect = (scDesc.extent.height > 0)
 				? (static_cast<float>(scDesc.extent.width) / static_cast<float>(scDesc.extent.height))
 				: 1.0f;
 
 			// Limit how far we render directional shadows to keep resolution usable.
-			const float shadowFar = std::min(scene.camera.farZ, 30.0f);
+			const float shadowFar = std::min(scene.camera.farZ, settings_.dirShadowDistance);
 			const float shadowNear = std::max(scene.camera.nearZ, 0.05f);
 
 			// Camera basis (orthonormal).
@@ -346,30 +363,16 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 					return planeCenter + camU * (sy * halfH) + camR * (sx * halfW);
 				};
 
-			std::array<mathUtils::Vec3, 8> frustumCorners{};
-			// Near plane
-			frustumCorners[0] = MakeFrustumCorner(shadowNear, -1.0f, -1.0f);
-			frustumCorners[1] = MakeFrustumCorner(shadowNear, 1.0f, -1.0f);
-			frustumCorners[2] = MakeFrustumCorner(shadowNear, 1.0f, 1.0f);
-			frustumCorners[3] = MakeFrustumCorner(shadowNear, -1.0f, 1.0f);
-			// Far plane (shadow distance)
-			frustumCorners[4] = MakeFrustumCorner(shadowFar, -1.0f, -1.0f);
-			frustumCorners[5] = MakeFrustumCorner(shadowFar, 1.0f, -1.0f);
-			frustumCorners[6] = MakeFrustumCorner(shadowFar, 1.0f, 1.0f);
-			frustumCorners[7] = MakeFrustumCorner(shadowFar, -1.0f, 1.0f);
-
-			// Frustum center + radius (for stable light placement).
-			mathUtils::Vec3 center{ 0.0f, 0.0f, 0.0f };
-			for (const auto& corner : frustumCorners)
+			// Cascade split distances (camera-space) using the "practical" split scheme.
+			std::array<float, kMaxDirCascades + 1> dirSplits{};
+			dirSplits[0] = shadowNear;
+			dirSplits[dirCascadeCount] = shadowFar;
+			for (std::uint32_t i = 1; i < dirCascadeCount; ++i)
 			{
-				center = center + corner;
-			}
-			center = center * (1.0f / 8.0f);
-
-			float radius = 0.0f;
-			for (const auto& corner : frustumCorners)
-			{
-				radius = std::max(radius, mathUtils::Length(corner - center));
+				const float p = static_cast<float>(i) / static_cast<float>(dirCascadeCount);
+				const float logSplit = shadowNear * std::pow(shadowFar / shadowNear, p);
+				const float uniSplit = shadowNear + (shadowFar - shadowNear) * p;
+				dirSplits[i] = std::lerp(uniSplit, logSplit, settings_.dirShadowSplitLambda);
 			}
 
 			// Stable "up" for light view.
@@ -378,61 +381,91 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 				? mathUtils::Vec3(0.0f, 0.0f, 1.0f)
 				: worldUp;
 
-			// Place the light far enough so all corners are in front of it.
-			const float lightDist = radius + 100.0f;
-			const mathUtils::Vec3 lightPos = center - lightDir * lightDist;
-			const mathUtils::Mat4 lightView = mathUtils::LookAt(lightPos, center, lightUp);
-
-			// Compute light-space AABB of the camera frustum slice.
-			float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
-			float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
-
-			for (const auto& corner : frustumCorners)
+			// Build a view-proj per cascade.
+			std::array<mathUtils::Mat4, kMaxDirCascades> dirCascadeVP{};
+			for (std::uint32_t c = 0; c < dirCascadeCount; ++c)
 			{
-				const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(corner, 1.0f);
-				minX = std::min(minX, ls4.x); maxX = std::max(maxX, ls4.x);
-				minY = std::min(minY, ls4.y); maxY = std::max(maxY, ls4.y);
-				minZ = std::min(minZ, ls4.z); maxZ = std::max(maxZ, ls4.z);
+				const float cNear = dirSplits[c];
+				const float cFar = dirSplits[c + 1];
+
+				std::array<mathUtils::Vec3, 8> frustumCorners{};
+				// Near plane
+				frustumCorners[0] = MakeFrustumCorner(cNear, -1.0f, -1.0f);
+				frustumCorners[1] = MakeFrustumCorner(cNear, 1.0f, -1.0f);
+				frustumCorners[2] = MakeFrustumCorner(cNear, 1.0f, 1.0f);
+				frustumCorners[3] = MakeFrustumCorner(cNear, -1.0f, 1.0f);
+				// Far plane
+				frustumCorners[4] = MakeFrustumCorner(cFar, -1.0f, -1.0f);
+				frustumCorners[5] = MakeFrustumCorner(cFar, 1.0f, -1.0f);
+				frustumCorners[6] = MakeFrustumCorner(cFar, 1.0f, 1.0f);
+				frustumCorners[7] = MakeFrustumCorner(cFar, -1.0f, 1.0f);
+
+				// Frustum center + radius (for stable light placement).
+				mathUtils::Vec3 center{ 0.0f, 0.0f, 0.0f };
+				for (const auto& corner : frustumCorners)
+				{
+					center = center + corner;
+				}
+				center = center * (1.0f / 8.0f);
+
+				float radius = 0.0f;
+				for (const auto& corner : frustumCorners)
+				{
+					radius = std::max(radius, mathUtils::Length(corner - center));
+				}
+
+				// Place the light far enough so all corners are in front of it.
+				const float lightDist = radius + 100.0f;
+				const mathUtils::Vec3 lightPos = center - lightDir * lightDist;
+				const mathUtils::Mat4 lightView = mathUtils::LookAt(lightPos, center, lightUp);
+
+				// Compute light-space AABB of the camera frustum slice.
+				float minX = 1e30f, minY = 1e30f, minZ = 1e30f;
+				float maxX = -1e30f, maxY = -1e30f, maxZ = -1e30f;
+				for (const auto& corner : frustumCorners)
+				{
+					const mathUtils::Vec4 ls4 = lightView * mathUtils::Vec4(corner, 1.0f);
+					minX = std::min(minX, ls4.x); maxX = std::max(maxX, ls4.x);
+					minY = std::min(minY, ls4.y); maxY = std::max(maxY, ls4.y);
+					minZ = std::min(minZ, ls4.z); maxZ = std::max(maxZ, ls4.z);
+				}
+
+				// Conservative padding in light-space to avoid hard clipping.
+				const float extX = maxX - minX;
+				const float extY = maxY - minY;
+				const float extZ = maxZ - minZ;
+
+				const float padXY = 0.05f * std::max(extX, extY) + 1.0f;
+				const float padZ = 0.10f * extZ + 5.0f;
+				minX -= padXY; maxX += padXY;
+				minY -= padXY; maxY += padXY;
+				minZ -= padZ;  maxZ += padZ;
+
+				// Extra depth margin for casters outside the camera frustum (increases with cascade index).
+				const float casterMargin = 20.0f + 30.0f * static_cast<float>(c);
+				minZ -= casterMargin;
+
+				// Snap the ortho window to shadow texels (reduces shimmering / popping).
+				const float widthLS = maxX - minX;
+				const float heightLS = maxY - minY;
+				const float wuPerTexelX = widthLS / static_cast<float>(dirTileSize);
+				const float wuPerTexelY = heightLS / static_cast<float>(dirTileSize);
+				float cx = 0.5f * (minX + maxX);
+				float cy = 0.5f * (minY + maxY);
+				cx = std::floor(cx / wuPerTexelX) * wuPerTexelX;
+				cy = std::floor(cy / wuPerTexelY) * wuPerTexelY;
+				minX = cx - widthLS * 0.5f;  maxX = cx + widthLS * 0.5f;
+				minY = cy - heightLS * 0.5f; maxY = cy + heightLS * 0.5f;
+
+				// OrthoRH_ZO expects positive zNear/zFar distances where view-space z is negative in front of the camera.
+				const float zNear = std::max(0.1f, -maxZ);
+				const float zFar = std::max(zNear + 1.0f, -minZ);
+				const mathUtils::Mat4 lightProj = mathUtils::OrthoRH_ZO(minX, maxX, minY, maxY, zNear, zFar);
+				dirCascadeVP[c] = lightProj * lightView;
 			}
 
-			// Padding to avoid hard coverage clipping.
-			const float extX = maxX - minX;
-			const float extY = maxY - minY;
-			const float extZ = maxZ - minZ;
-
-			const float padXY = 0.10f * std::max(extX, extY) + 2.0f;
-			const float padZ = 0.20f * extZ + 10.0f;
-
-			minX -= padXY; maxX += padXY;
-			minY -= padXY; maxY += padXY;
-			minZ -= padZ;  maxZ += padZ;
-
-			// Extra depth margin for casters outside the camera frustum (important for directional lights).
-			constexpr float casterMargin = 80.0f;
-			minZ -= casterMargin;
-
-			// Snap the ortho window to shadow texels (reduces shimmering / "special angle" popping).
-			const float widthLS = maxX - minX;
-			const float heightLS = maxY - minY;
-
-			const float wuPerTexelX = widthLS / static_cast<float>(shadowExtent.width);
-			const float wuPerTexelY = heightLS / static_cast<float>(shadowExtent.height);
-
-			float cx = 0.5f * (minX + maxX);
-			float cy = 0.5f * (minY + maxY);
-
-			cx = std::floor(cx / wuPerTexelX) * wuPerTexelX;
-			cy = std::floor(cy / wuPerTexelY) * wuPerTexelY;
-
-			minX = cx - widthLS * 0.5f;  maxX = cx + widthLS * 0.5f;
-			minY = cy - heightLS * 0.5f; maxY = cy + heightLS * 0.5f;
-
-			// OrthoRH_ZO expects positive zNear/zFar distances where view-space z is negative in front of the camera.
-			const float zNear = std::max(0.1f, -maxZ);
-			const float zFar = std::max(zNear + 1.0f, -minZ);
-
-			const mathUtils::Mat4 lightProj = mathUtils::OrthoRH_ZO(minX, maxX, minY, maxY, zNear, zFar);
-			const mathUtils::Mat4 dirLightViewProj = lightProj * lightView;
+			// For legacy constant-buffer field (kept for compatibility with older shaders).
+			const mathUtils::Mat4 dirLightViewProj = dirCascadeVP[0];
 
 			std::vector<SpotShadowRec> spotShadows;
 			std::vector<PointShadowRec> pointShadows;
@@ -569,23 +602,23 @@ HashCombine(seed, HashU32(FloatBits(key.specStrength)));
 				// IMPORTANT: BatchKey must include material parameters,
 				// otherwise different materials get incorrectly merged.
 				key.albedoDescIndex = params.albedoDescIndex;
-key.normalDescIndex = params.normalDescIndex;
-key.metalnessDescIndex = params.metalnessDescIndex;
-key.roughnessDescIndex = params.roughnessDescIndex;
-key.aoDescIndex = params.aoDescIndex;
-key.emissiveDescIndex = params.emissiveDescIndex;
+				key.normalDescIndex = params.normalDescIndex;
+				key.metalnessDescIndex = params.metalnessDescIndex;
+				key.roughnessDescIndex = params.roughnessDescIndex;
+				key.aoDescIndex = params.aoDescIndex;
+				key.emissiveDescIndex = params.emissiveDescIndex;
 
-key.baseColor = params.baseColor;
-key.shadowBias = params.shadowBias; // texels
+				key.baseColor = params.baseColor;
+				key.shadowBias = params.shadowBias; // texels
 
-key.metallic = params.metallic;
-key.roughness = params.roughness;
-key.ao = params.ao;
-key.emissiveStrength = params.emissiveStrength;
+				key.metallic = params.metallic;
+				key.roughness = params.roughness;
+				key.ao = params.ao;
+				key.emissiveStrength = params.emissiveStrength;
 
-// Legacy
-key.shininess = params.shininess;
-key.specStrength = params.specStrength;
+				// Legacy
+				key.shininess = params.shininess;
+				key.specStrength = params.specStrength;
 
 				// Instance (ROWS)
 				const mathUtils::Mat4 model = item.transform.ToMatrix();
@@ -703,11 +736,13 @@ key.specStrength = params.specStrength;
 			}
 
 			// ---------------- Create shadow passes (all reuse shadowBatches) ----------------
-			// Shadow pass (directional, depth-only)
+			// Directional CSM atlas (depth-only). We clear the whole atlas once, then render each cascade
+			// into its own 2048x2048 viewport tile.
+			for (std::uint32_t cascade = 0; cascade < dirCascadeCount; ++cascade)
 			{
 				rhi::ClearDesc clear{};
 				clear.clearColor = false;
-				clear.clearDepth = true;
+				clear.clearDepth = (cascade == 0u);
 				clear.depth = 1.0f;
 
 				renderGraph::PassAttachments att{};
@@ -723,15 +758,19 @@ key.specStrength = params.specStrength;
 				};
 
 				ShadowPassConstants shadowPassConstants{};
-				const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
-				std::memcpy(shadowPassConstants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+				const mathUtils::Mat4 vpT = mathUtils::Transpose(dirCascadeVP[cascade]);
+				std::memcpy(shadowPassConstants.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
 
-				graph.AddPass("ShadowPass", std::move(att),
-					[this, shadowPassConstants, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
+				const int vpX = static_cast<int>(cascade * dirTileSize);
+				const int vpY = 0;
+				const int vpW = static_cast<int>(dirTileSize);
+				const int vpH = static_cast<int>(dirTileSize);
+
+				const char* passName = (cascade == 0u) ? "DirShadow_C0" : (cascade == 1u) ? "DirShadow_C1" : "DirShadow_C2";
+				graph.AddPass(passName, std::move(att),
+					[this, shadowPassConstants, shadowBatches, instStride, vpX, vpY, vpW, vpH](renderGraph::PassContext& ctx) mutable
 					{
-						ctx.commandList.SetViewport(0, 0,
-							static_cast<int>(ctx.passExtent.width),
-							static_cast<int>(ctx.passExtent.height));
+						ctx.commandList.SetViewport(vpX, vpY, vpW, vpH);
 
 						ctx.commandList.SetState(shadowState_);
 						ctx.commandList.BindPipeline(psoShadow_);
@@ -921,6 +960,33 @@ key.specStrength = params.specStrength;
 			{
 				ShadowDataSB sd{};
 
+				// Directional CSM (atlas)
+				{
+					// Store up to 3 cascades; shader reads only the first dirCascadeCount entries.
+					for (std::uint32_t c = 0; c < dirCascadeCount; ++c)
+					{
+						// Mat4 is column-major (GLM convention). In the HLSL we multiply as `mul(v, M)`
+						// (row-vector), so we want to feed the *transposed* matrix. To avoid an extra CPU transpose,
+						// we pack the matrix columns and the shader reconstructs a float4x4 from them as rows.
+						const mathUtils::Mat4& vp = dirCascadeVP[c];
+						sd.dirVPRows[c * 4 + 0] = vp[0];
+						sd.dirVPRows[c * 4 + 1] = vp[1];
+						sd.dirVPRows[c * 4 + 2] = vp[2];
+						sd.dirVPRows[c * 4 + 3] = vp[3];
+					}
+
+					const float split1 = (dirCascadeCount >= 2) ? dirSplits[1] : dirSplits[dirCascadeCount];
+					const float split2 = (dirCascadeCount >= 3) ? dirSplits[2] : dirSplits[dirCascadeCount];
+					const float split3 = dirSplits[dirCascadeCount];
+					const float fadeFrac = 0.10f; // blend width as a fraction of cascade length
+					sd.dirSplits = mathUtils::Vec4(split1, split2, split3, fadeFrac);
+
+					const float invAtlasW = 1.0f / static_cast<float>(shadowExtent.width);
+					const float invAtlasH = 1.0f / static_cast<float>(shadowExtent.height);
+					const float invTile = 1.0f / static_cast<float>(dirTileSize);
+					sd.dirInfo = mathUtils::Vec4(invAtlasW, invAtlasH, invTile, static_cast<float>(dirCascadeCount));
+				}
+
 				for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
 				{
 					const auto& spotShadow = spotShadows[spotShadowIndex];
@@ -952,15 +1018,15 @@ key.specStrength = params.specStrength;
 			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
 			graph.AddSwapChainPass("MainPass", clearDesc,
-				[this, &scene, 
-				shadowRG, 
+				[this, &scene,
+				shadowRG,
 				dirLightViewProj,
-				lightCount, 
-				spotShadows, 
-				pointShadows, 
-				mainBatches, 
-				instStride, 
-				transparentDraws, 
+				lightCount,
+				spotShadows,
+				pointShadows,
+				mainBatches,
+				instStride,
+				transparentDraws,
 				imguiDrawData](renderGraph::PassContext& ctx)
 				{
 					const auto extent = ctx.passExtent;
@@ -979,6 +1045,7 @@ key.specStrength = params.specStrength;
 					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
 					const mathUtils::Vec3 camPosLocal = scene.camera.position;
 
+					const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
 					const mathUtils::Mat4 viewProj = proj * view;
 
 
@@ -1068,7 +1135,7 @@ key.specStrength = params.specStrength;
 						const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
 
 						ctx.commandList.BindPipeline(MainPipelineFor(perm));
-						ctx.commandList.BindTextureDesc(0,	batch.material.albedoDescIndex);
+						ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
 						ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
 						ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
 						ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
@@ -1142,6 +1209,7 @@ key.specStrength = params.specStrength;
 						std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 						constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.22f };
+						constants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
 						constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
 
 						const float materialBiasTexels = batch.material.shadowBias;
@@ -1202,12 +1270,12 @@ key.specStrength = params.specStrength;
 
 							ctx.commandList.BindPipeline(MainPipelineFor(perm));
 							ctx.commandList.BindTextureDesc(0, batchTransparent.material.albedoDescIndex);
-ctx.commandList.BindTextureDesc(12, batchTransparent.material.normalDescIndex);
-ctx.commandList.BindTextureDesc(13, batchTransparent.material.metalnessDescIndex);
-ctx.commandList.BindTextureDesc(14, batchTransparent.material.roughnessDescIndex);
-ctx.commandList.BindTextureDesc(15, batchTransparent.material.aoDescIndex);
-ctx.commandList.BindTextureDesc(16, batchTransparent.material.emissiveDescIndex);
-ctx.commandList.BindTextureDesc(17, scene.skyboxDescIndex);
+							ctx.commandList.BindTextureDesc(12, batchTransparent.material.normalDescIndex);
+							ctx.commandList.BindTextureDesc(13, batchTransparent.material.metalnessDescIndex);
+							ctx.commandList.BindTextureDesc(14, batchTransparent.material.roughnessDescIndex);
+							ctx.commandList.BindTextureDesc(15, batchTransparent.material.aoDescIndex);
+							ctx.commandList.BindTextureDesc(16, batchTransparent.material.emissiveDescIndex);
+							ctx.commandList.BindTextureDesc(17, scene.skyboxDescIndex);
 
 							std::uint32_t flags = 0;
 							if (useTex)
@@ -1227,6 +1295,7 @@ ctx.commandList.BindTextureDesc(17, scene.skyboxDescIndex);
 							std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
 
 							constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.22f };
+							constants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
 							constants.uBaseColor = { batchTransparent.material.baseColor.x, batchTransparent.material.baseColor.y, batchTransparent.material.baseColor.z, batchTransparent.material.baseColor.w };
 
 							const float materialBiasTexels = batchTransparent.material.shadowBias;

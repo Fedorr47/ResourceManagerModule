@@ -33,10 +33,8 @@ export namespace rendern
 
 #if defined(_WIN32)
         // Feed window messages that carry input info (mouse wheel, focus, etc.).
-        void OnWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+        void OnWndProc(HWND hwnd, UINT msg, WPARAM wParam, [[maybe_unused]] LPARAM lParam)
         {
-            (void)lParam;
-
             switch (msg)
             {
             case WM_MOUSEWHEEL:
@@ -141,9 +139,8 @@ export namespace rendern
             lastCenterValid_ = true;
         }
 
-        void ReleaseLook(HWND hwnd)
+        void ReleaseLook([[maybe_unused]] HWND hwnd)
         {
-            (void)hwnd;
             if (!lookActive_)
                 return;
 

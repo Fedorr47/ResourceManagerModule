@@ -37,6 +37,17 @@ TextureCube<float> gPointShadow3 : register(t10);
 // Shadow metadata buffer (one element)
 struct ShadowDataSB
 {
+    // ---------------- Directional CSM (atlas) ----------------
+    // 3 cascades packed into one atlas (tileSize x tileSize each, laid out horizontally).
+    // dirVPRows: row-major VP matrices (4 rows per cascade).
+    float4 dirVPRows[12];
+
+    // x=split1, y=split2, z=split3 (max distance), w=fadeFraction
+    float4 dirSplits;
+
+    // x=invAtlasW, y=invAtlasH, z=invTileRes, w=cascadeCount
+    float4 dirInfo;
+
     float4 spotVPRows[16]; // 4 matrices * 4 rows (row-major rows)
     float4 spotInfo[4]; // { lightIndexBits, 0, extraBiasTexels, 0 }
 
@@ -59,14 +70,15 @@ cbuffer PerBatchCB : register(b0)
     float4x4 uLightViewProj; // directional shadow VP (rows)
 
     float4 uCameraAmbient; // xyz + ambientStrength
+    float4 uCameraForward; // xyz + 0
     float4 uBaseColor; // fallback baseColor
 
     // x=shininess, y=specStrength, z=materialShadowBiasTexels, w=flags (bitpacked as float)
     float4 uMaterialFlags;
 
-
     // x=metallic, y=roughness, z=ao, w=emissiveStrength
     float4 uPbrParams;
+
     // x=lightCount, y=spotShadowCount, z=pointShadowCount, w=unused
     float4 uCounts;
 
@@ -88,9 +100,20 @@ static const uint kMaxSpotShadows = 4;
 static const uint kMaxPointShadows = 4;
 
 // Light types (must match rendern::LightType in C++)
-static const int LIGHT_DIR   = 0;
+static const int LIGHT_DIR = 0;
 static const int LIGHT_POINT = 1;
-static const int LIGHT_SPOT  = 2;
+static const int LIGHT_SPOT = 2;
+
+float4x4 LoadDirVP(ShadowDataSB sd, uint cascade)
+{
+    const uint base = cascade * 4u;
+    return float4x4(
+        sd.dirVPRows[base + 0u],
+        sd.dirVPRows[base + 1u],
+        sd.dirVPRows[base + 2u],
+        sd.dirVPRows[base + 3u]
+    );
+}
 
 // Helpers
 float4x4 MakeMatRows(float4 r0, float4 r1, float4 r2, float4 r3)
@@ -223,71 +246,49 @@ struct VSOut
     float3 worldPos : TEXCOORD0;
     float3 nrmW : TEXCOORD1;
     float2 uv : TEXCOORD2;
-    float4 shadowPos : TEXCOORD3; // directional shadow clip
+    float4 shadowPos : TEXCOORD3; // directional shadow clip (legacy / not used for CSM)
 };
 
-VSOut VSMain(VSIn IN)
-{
-    VSOut OUT;
-
-    float4x4 model = MakeMatRows(IN.i0, IN.i1, IN.i2, IN.i3);
-
-    float4 world = mul(float4(IN.pos, 1.0f), model);
-    OUT.worldPos = world.xyz;
-
-    float3 nrmW = mul(float4(IN.nrm, 0.0f), model).xyz;
-    OUT.nrmW = normalize(nrmW);
-
-    OUT.uv = IN.uv;
-    OUT.posH = mul(world, uViewProj);
-
-    OUT.shadowPos = mul(world, uLightViewProj);
-    return OUT;
-}
-
-// Shadow sampling
+// Shadow sampling (generic 2D depth compare, used by spots and legacy dir)
 float Shadow2D(Texture2D<float> shadowMap, float4 shadowClip, float biasTexels)
 {
     float3 p = shadowClip.xyz / max(shadowClip.w, 1e-6f);
-        
+
     // Only reject invalid depth. For XY we rely on BORDER addressing on the comparison sampler,
     // so PCF near the frustum edge fades naturally instead of producing a hard cut.
-	if (p.z < 0.0f || p.z > 1.0f)
-	{
-		return 1.0f;
-	}
+    if (p.z < 0.0f || p.z > 1.0f)
+        return 1.0f;
 
     // NDC -> UV (note: flip Y)
     float2 uv = float2(p.x, -p.y) * 0.5f + 0.5f;
-    
-	uint w, h;
-	shadowMap.GetDimensions(w, h);
-	float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
-    
-	float biasDepth = biasTexels * max(texel.x, texel.y);
-	float z = p.z - biasDepth;
-    
-        // 3x3 PCF
-	float s = 0.0f;
-    [unroll] for (int y = -1; y <= 1; ++y)
-	{
-            [unroll]
-		for (int x = -1; x <= 1; ++x)
-		{
-			s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(x, y), z);
-		}
-	}
-    
-	float shadow = s / 9.0f;
-    
-        // Edge guard-band: smoothly fade out the shadow near the shadow-map boundary to avoid a visible seam
-        // when the spotlight still contributes light but the shadow frustum ends.
-	float edge = min(min(uv.x, uv.y), min(1.0f - uv.x, 1.0f - uv.y));
-	float fade = saturate(edge / (2.0f * max(texel.x, texel.y))); // ~2 texels
-    
-	return lerp(1.0f, shadow, fade);
-    
- }
+
+    uint w, h;
+    shadowMap.GetDimensions(w, h);
+    float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
+
+    float biasDepth = biasTexels * max(texel.x, texel.y);
+    float z = p.z - biasDepth;
+
+    // 3x3 PCF
+    float s = 0.0f;
+    [unroll]
+    for (int y = -1; y <= 1; ++y)
+    {
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            s += shadowMap.SampleCmpLevelZero(gShadowCmp, uv + texel * float2(x, y), z);
+        }
+    }
+
+    float shadow = s / 9.0f;
+
+    // Edge guard-band: smoothly fade out the shadow near the shadow-map boundary to avoid a visible seam
+    float edge = min(min(uv.x, uv.y), min(1.0f - uv.x, 1.0f - uv.y));
+    float fade = saturate(edge / (2.0f * max(texel.x, texel.y))); // ~2 texels
+
+    return lerp(1.0f, shadow, fade);
+}
 
 // Wrapper that matches the CPU call-site signature (shadowClip, materialBiasTexels, baseBiasTexels, slopeScaleTexels).
 // NOTE: slopeScaleTexels is currently ignored here; kept for ABI stability with C++.
@@ -297,58 +298,154 @@ float Shadow2D(float4 shadowClip, float materialBiasTexels, float baseBiasTexels
     return Shadow2D(gDirShadow, shadowClip, biasTexels);
 }
 
-float ShadowPoint(TextureCube<float> distCube,
-                  float3 lightPos, float range,
-                  float3 worldPos, float biasTexels)
+// ---------------- Directional CSM (atlas) ----------------
+//
+// Atlas layout: `dirCascadeCount` tiles laid out horizontally (no gaps).
+// Tile size is constant (2048), atlas is 6144x2048 for 3 cascades.
+//
+// Key fixes / choices:
+// - Cascade selection uses view-depth (dot with camera forward), not Euclidean distance,
+//   otherwise cascade borders look "curved" / crooked.
+// - PCF taps are clamped to the tile (branchless) to avoid cross-cascade bleeding.
+
+float ShadowAtlasCSM(ShadowDataSB sd,
+                     float4 clip,
+                     uint cascade,
+                     float biasTexels,
+                     float kernelScale)
 {
-    float3 v = worldPos - lightPos;
-    float d = length(v);
-    float3 dir = v / max(d, 1e-6f);
+    float3 p = clip.xyz / max(clip.w, 1e-6f);
 
-    float nd = saturate(d / max(range, 1e-3f));
+    // Only reject invalid depth. XY is handled with tile bounds below.
+    if (p.z < 0.0f || p.z > 1.0f)
+        return 1.0f;
 
-    uint w, h, levels;
-    distCube.GetDimensions(0, w, h, levels);
+    // NDC -> tile-local UV (flip Y)
+    float2 uvLocal = float2(p.x, -p.y) * 0.5f + 0.5f;
 
-    // Bias is expressed in "shadow texels" by the CPU. Convert to normalized [0..1] distance.
-    const float invRes = 1.0f / float(max(w, h));
-    const float biasNorm = biasTexels * invRes;
+    // Outside the cascade frustum => fully lit.
+    if (uvLocal.x < 0.0f || uvLocal.x > 1.0f || uvLocal.y < 0.0f || uvLocal.y > 1.0f)
+        return 1.0f;
 
-    const float compare = nd - biasNorm;
+    // dirInfo:
+    //  x = 1/atlasW, y = 1/atlasH, z = 1/tileSize, w = cascadeCount
+    const uint cascadeCount = (uint) sd.dirInfo.w;
+    const float scaleX = 1.0f / max((float) cascadeCount, 1.0f);
 
-    // Manual PCF for distance-cubemap shadows.
-    // We can't use a comparison sampler here because the map is R32_FLOAT (distance), not a depth texture.
-    // We approximate a 2D kernel on the cubemap face by perturbing the lookup direction in a tangent basis.
-    float3 up = (abs(dir.y) < 0.99f) ? float3(0, 1, 0) : float3(1, 0, 0);
-    float3 T = normalize(cross(up, dir));
-    float3 B = cross(dir, T);
+    const float2 texelAtlas = float2(sd.dirInfo.x, sd.dirInfo.y); // 1/atlas dims
+    const float invTile = sd.dirInfo.z; // 1/tileSize (for depth bias)
 
-    // ~1-2 texels in "face space". Tune if you want softer/harder point-light shadow edges.
-    const float radius = 1.5f * invRes;
+    // Convert the per-material bias expressed in "tile texels" into normalized depth units.
+    const float z = p.z - (biasTexels * invTile);
 
-    // Poisson-ish disk (8 taps) + center.
-    const float2 taps[8] = {
-        float2(-0.326f, -0.406f), float2(-0.840f, -0.074f),
-        float2(-0.696f,  0.457f), float2(-0.203f,  0.621f),
-        float2( 0.962f, -0.195f), float2( 0.473f, -0.480f),
-        float2( 0.519f,  0.767f), float2( 0.185f, -0.893f)
-    };
+    // Tile bounds in atlas UV.
+    const float2 uvMin = float2((float) cascade * scaleX, 0.0f);
+    const float2 uvMax = uvMin + float2(scaleX, 1.0f);
 
-    float lit = 0.0f;
-    {
-        float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
-        lit += (compare <= stored) ? 1.0f : 0.0f;
-    }
+    // Map [0..1] tile-local UV into atlas UV.
+    const float2 uv = uvMin + float2(uvLocal.x * scaleX, uvLocal.y);
+
+    // PCF step (in atlas UV). kernelScale is in *tile texels*.
+    const float2 stepUV = texelAtlas * kernelScale;
+
+    // Guard band against cross-tile taps (scale with kernel).
+    const float2 pad = stepUV * 1.5f;
+    const float2 uvMinP = uvMin + pad;
+    const float2 uvMaxP = uvMax - pad;
+
+    float s = 0.0f;
 
     [unroll]
-    for (int i = 0; i < 8; ++i)
+    for (int y = -1; y <= 1; ++y)
     {
-        float3 ddir = normalize(dir + (T * taps[i].x + B * taps[i].y) * radius);
-        float stored = distCube.SampleLevel(gPointClamp, ddir, 0).r;
-        lit += (compare <= stored) ? 1.0f : 0.0f;
+        [unroll]
+        for (int x = -1; x <= 1; ++x)
+        {
+            const float2 uvTap = uv + stepUV * float2((float) x, (float) y);
+
+            // Branchless inside test (tile bounds, padded).
+            const float inX = step(uvMinP.x, uvTap.x) * step(uvTap.x, uvMaxP.x);
+            const float inY = step(uvMinP.y, uvTap.y) * step(uvTap.y, uvMaxP.y);
+            const float inside = inX * inY;
+
+            const float sample = gDirShadow.SampleCmpLevelZero(gShadowCmp, uvTap, z);
+            s += lerp(1.0f, sample, inside);
+        }
     }
 
-    return lit / 9.0f;
+    return s / 9.0f;
+}
+
+float DirShadowFactor(float3 worldPos, float NdotL,
+                      float materialBiasTexels,
+                      float baseBiasTexels,
+                      float slopeScaleTexels)
+{
+    ShadowDataSB sd = gShadowData[0];
+
+    const float3 camPos = uCameraAmbient.xyz;
+    const float3 camF = uCameraForward.xyz; // must be normalized on CPU
+
+    float distV = dot(worldPos - camPos, camF);
+    distV = max(distV, 0.0f);
+
+    // x=split1, y=split2, z=split3(max), w=fadeFraction
+    const float split1 = sd.dirSplits.x;
+    const float split2 = sd.dirSplits.y;
+    const float split3 = sd.dirSplits.z;
+    const float fadeFrac = sd.dirSplits.w;
+
+    if (distV >= split3)
+        return 1.0f;
+
+    const float biasTexels = ComputeBiasTexels(
+        NdotL, baseBiasTexels, slopeScaleTexels, materialBiasTexels, 0.0f);
+
+    uint c = (distV < split1) ? 0u : ((distV < split2) ? 1u : 2u);
+
+    // Slightly increase the filter radius for farther cascades.
+    const float kernelScale = 1.0f + 0.5f * (float) c; // 1.0, 1.5, 2.0 (tile texels)
+
+    float4x4 VP = LoadDirVP(sd, c);
+    float4 clip = mul(float4(worldPos, 1.0f), VP);
+    float s = ShadowAtlasCSM(sd, clip, c, biasTexels, kernelScale);
+
+    // Cross-fade band near split plane.
+    const float kMinBlend = 2.0f;
+    const float f = saturate(fadeFrac);
+
+    if (c == 0u)
+    {
+        const float prevSplit = 0.0f;
+        const float nextSplit = split1;
+        const float blend = max(kMinBlend, f * (nextSplit - prevSplit));
+
+        const float t = saturate((distV - (nextSplit - blend)) / max(blend, 1e-3f));
+        if (t > 0.0f)
+        {
+            float4x4 VP1 = LoadDirVP(sd, 1u);
+            float4 clip1 = mul(float4(worldPos, 1.0f), VP1);
+            const float s1 = ShadowAtlasCSM(sd, clip1, 1u, biasTexels, 1.5f);
+            s = lerp(s, s1, t);
+        }
+    }
+    else if (c == 1u)
+    {
+        const float prevSplit = split1;
+        const float nextSplit = split2;
+        const float blend = max(kMinBlend, f * (nextSplit - prevSplit));
+
+        const float t = saturate((distV - (nextSplit - blend)) / max(blend, 1e-3f));
+        if (t > 0.0f)
+        {
+            float4x4 VP2 = LoadDirVP(sd, 2u);
+            float4 clip2 = mul(float4(worldPos, 1.0f), VP2);
+            const float s2 = ShadowAtlasCSM(sd, clip2, 2u, biasTexels, 2.0f);
+            s = lerp(s, s2, t);
+        }
+    }
+
+    return s;
 }
 
 float SpotShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTexels)
@@ -371,6 +468,58 @@ float SpotShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTe
     if (slot == 2)
         return Shadow2D(gSpotShadow2, clip, biasTexels);
     return Shadow2D(gSpotShadow3, clip, biasTexels);
+}
+
+float ShadowPoint(TextureCube<float> distCube,
+                  float3 lightPos, float range,
+                  float3 worldPos, float biasTexels)
+{
+    float3 v = worldPos - lightPos;
+    float d = length(v);
+    float3 dir = v / max(d, 1e-6f);
+
+    float nd = saturate(d / max(range, 1e-3f));
+
+    uint w, h, levels;
+    distCube.GetDimensions(0, w, h, levels);
+
+    // Bias is expressed in "shadow texels" by the CPU. Convert to normalized [0..1] distance.
+    const float invRes = 1.0f / float(max(w, h));
+    const float biasNorm = biasTexels * invRes;
+
+    const float compare = nd - biasNorm;
+
+    // Manual PCF for distance-cubemap shadows (R32_FLOAT distance).
+    float3 up = (abs(dir.y) < 0.99f) ? float3(0, 1, 0) : float3(1, 0, 0);
+    float3 T = normalize(cross(up, dir));
+    float3 B = cross(dir, T);
+
+    // ~1-2 texels in "face space".
+    const float radius = 1.5f * invRes;
+
+    const float2 taps[8] =
+    {
+        float2(-0.326f, -0.406f), float2(-0.840f, -0.074f),
+        float2(-0.696f, 0.457f), float2(-0.203f, 0.621f),
+        float2(0.962f, -0.195f), float2(0.473f, -0.480f),
+        float2(0.519f, 0.767f), float2(0.185f, -0.893f)
+    };
+
+    float lit = 0.0f;
+    {
+        float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
+        lit += (compare <= stored) ? 1.0f : 0.0f;
+    }
+
+    [unroll]
+    for (int i = 0; i < 8; ++i)
+    {
+        float3 ddir = normalize(dir + (T * taps[i].x + B * taps[i].y) * radius);
+        float stored = distCube.SampleLevel(gPointClamp, ddir, 0).r;
+        lit += (compare <= stored) ? 1.0f : 0.0f;
+    }
+
+    return lit / 9.0f;
 }
 
 // Wrapper matching CPU call-site signature: (slot, worldPos, materialBiasTexels, baseBiasTexels, slopeScaleTexels)
@@ -414,6 +563,25 @@ float PointShadowFactor(uint slot, float3 worldPos, float materialBiasTexels, fl
     return PointShadowFactor(slot, sd, worldPos, biasTexels);
 }
 
+VSOut VSMain(VSIn IN)
+{
+    VSOut OUT;
+
+    float4x4 model = MakeMatRows(IN.i0, IN.i1, IN.i2, IN.i3);
+
+    float4 world = mul(float4(IN.pos, 1.0f), model);
+    OUT.worldPos = world.xyz;
+
+    float3 nrmW = mul(float4(IN.nrm, 0.0f), model).xyz;
+    OUT.nrmW = normalize(nrmW);
+
+    OUT.uv = IN.uv;
+    OUT.posH = mul(world, uViewProj);
+
+    OUT.shadowPos = mul(world, uLightViewProj);
+    return OUT;
+}
+
 // Pixel Shader
 float4 PSMain(VSOut IN) : SV_Target0
 {
@@ -444,17 +612,11 @@ float4 PSMain(VSOut IN) : SV_Target0
     const float emissiveStrength = max(uPbrParams.w, 0.0f);
 
     if (useMetalTex)
-    {
         metallic *= gMetalness.Sample(gLinear, IN.uv).r;
-    }
     if (useRoughTex)
-    {
         roughness *= gRoughness.Sample(gLinear, IN.uv).r;
-    }
     if (useAOTex)
-    {
         ao *= gAO.Sample(gLinear, IN.uv).r;
-    }
 
     roughness = clamp(roughness, 0.04f, 1.0f);
 
@@ -472,58 +634,44 @@ float4 PSMain(VSOut IN) : SV_Target0
 
     float3 Lo = 0.0f;
 
-    const int lightCount = (int)uCounts.x;
-    const int spotShadowCount = (int)uCounts.y;
-    const int pointShadowCount = (int)uCounts.z;
+    const int lightCount = (int) uCounts.x;
+    const int spotShadowCount = (int) uCounts.y;
+    const int pointShadowCount = (int) uCounts.z;
 
     [loop]
     for (int i = 0; i < lightCount; ++i)
     {
         const GPULight Ld = gLights[i];
-        const int type = (int)Ld.p0.w;
+        const int type = (int) Ld.p0.w;
 
         float3 L = 0.0f;
         float attenuation = 1.0f;
         float shadowFactor = 1.0f;
 
+        // Build L and attenuation first.
         if (type == LIGHT_DIR)
         {
             L = normalize(-Ld.p1.xyz);
-
-            if (useShadow)
-            {
-                shadowFactor = Shadow2D(IN.shadowPos, uMaterialFlags.z, uShadowBias.x, uShadowBias.w);
-            }
         }
         else if (type == LIGHT_POINT)
         {
             const float3 toLight = Ld.p0.xyz - IN.worldPos;
             const float dist = length(toLight);
             if (dist > Ld.p2.w)
-            {
                 continue;
-            }
 
             L = toLight / max(dist, 1e-6f);
 
             const float attLin = Ld.p3.z;
             const float attQuad = Ld.p3.w;
             attenuation = 1.0f / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
-
-            if (useShadow && pointShadowCount > 0)
-            {
-                // Use first point shadow cubemap (index 0) for now.
-                shadowFactor = PointShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.z, uShadowBias.w);
-            }
         }
         else if (type == LIGHT_SPOT)
         {
             const float3 toLight = Ld.p0.xyz - IN.worldPos;
             const float dist = length(toLight);
             if (dist > Ld.p2.w)
-            {
                 continue;
-            }
 
             L = toLight / max(dist, 1e-6f);
 
@@ -538,17 +686,34 @@ float4 PSMain(VSOut IN) : SV_Target0
             const float attLin = Ld.p3.z;
             const float attQuad = Ld.p3.w;
             attenuation = spotAtt / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
-
-            if (useShadow && spotShadowCount > 0)
-            {
-                shadowFactor = SpotShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.y, uShadowBias.w);
-            }
         }
-
-        const float NdotL = saturate(dot(N, L));
-        if (NdotL <= 0.0f)
+        else
         {
             continue;
+        }
+
+        // Now NdotL is valid.
+        const float NdotL = saturate(dot(N, L));
+        if (NdotL <= 0.0f)
+            continue;
+
+        // Shadows (dir uses NdotL for bias).
+        if (useShadow)
+        {
+            if (type == LIGHT_DIR)
+            {
+                shadowFactor = DirShadowFactor(IN.worldPos, NdotL, uMaterialFlags.z, uShadowBias.x, uShadowBias.w);
+            }
+            else if (type == LIGHT_POINT)
+            {
+                if (pointShadowCount > 0)
+                    shadowFactor = PointShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.z, uShadowBias.w);
+            }
+            else // SPOT
+            {
+                if (spotShadowCount > 0)
+                    shadowFactor = SpotShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.y, uShadowBias.w);
+            }
         }
 
         const float3 H = normalize(V + L);

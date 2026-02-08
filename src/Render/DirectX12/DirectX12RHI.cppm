@@ -2326,7 +2326,8 @@ export namespace rhi
             // s1: shadow comparison sampler (clamp)
             samplers[1] = MakeStaticSampler(
                 1,
-                D3D12_FILTER_COMPARISON_MIN_MAG_LINEAR_MIP_POINT,
+		// Point filter + explicit PCF in shader: keeps contact edges crisp and avoids "mushy" shadows.
+		D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
