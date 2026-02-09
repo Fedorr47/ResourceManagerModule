@@ -12,6 +12,11 @@ module;
 #include <stdexcept>
 #include <filesystem>
 #include <algorithm>
+#include <fstream>
+#include <sstream>
+#include <iomanip>
+#include <limits>
+#include <cmath>
 
 export module core:level;
 
@@ -270,7 +275,7 @@ namespace
 					case 't': out.push_back('\t'); break;
 					case 'u':
 						// Minimal handling: consume 4 hex digits and emit '?' (UTF-16 not needed for our configs).
-						for (int i = 0; i < 4; ++i) { (void)Get(); }
+						for (int i = 0; i < 4; ++i) { Get(); }
 						out.push_back('?');
 						break;
 					default:
@@ -512,6 +517,9 @@ export namespace rendern
 	struct LevelAsset
 	{
 		std::string name;
+		// Remember where this level was loaded from (used by editor Save).
+		// Can be asset-relative (e.g. "levels/demo.level.json") or absolute.
+		std::string sourcePath;
 
 		std::unordered_map<std::string, LevelMeshDef> meshes;
 		std::unordered_map<std::string, LevelTextureDef> textures;
@@ -667,6 +675,20 @@ export namespace rendern
 				return -1;
 			}
 			return nodeToDraw_[i];
+		}
+
+		int GetNodeIndexFromDrawIndex(int drawIndex) const noexcept
+		{
+			if (drawIndex < 0)
+			{
+				return -1;
+			}
+			const std::size_t i = static_cast<std::size_t>(drawIndex);
+			if (i >= drawToNode_.size())
+			{
+				return -1;
+			}
+			return drawToNode_[i];
 		}
 
 		// Create a new node and (optionally) spawn a DrawItem.
@@ -1090,6 +1112,7 @@ export namespace rendern
 
 		LevelAsset out;
 		out.name = GetStringOpt(jsonObject, "name", "Level");
+		out.sourcePath = std::string(levelRelativePath);
 
 		// --- meshes ---
 		if (auto* meshesV = TryGet(jsonObject, "meshes"))
@@ -1560,5 +1583,347 @@ export namespace rendern
 		}
 
 		return inst;
+	}
+
+	// -----------------------------
+	// Saver API (Level Editor)
+	// -----------------------------
+	void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAsset& level)
+	{
+		namespace fs = std::filesystem;
+
+		auto writeEscaped = [](std::ostream& os, std::string_view s)
+		{
+			os << '"';
+			for (char c : s)
+			{
+				switch (c)
+				{
+				case '"': os << "\\\""; break;
+				case '\\': os << "\\\\"; break;
+				case '\b': os << "\\b"; break;
+				case '\f': os << "\\f"; break;
+				case '\n': os << "\\n"; break;
+				case '\r': os << "\\r"; break;
+				case '\t': os << "\\t"; break;
+				default:
+					if (static_cast<unsigned char>(c) < 0x20)
+					{
+						// Control chars -> \u00XX
+						static const char* hex = "0123456789ABCDEF";
+						os << "\\u00" << hex[(c >> 4) & 0xF] << hex[c & 0xF];
+					}
+					else
+					{
+						os << c;
+					}
+					break;
+				}
+			}
+			os << '"';
+		};
+
+		auto writeBool = [](std::ostream& os, bool v) { os << (v ? "true" : "false"); };
+		auto writeFloat = [](std::ostream& os, float v)
+		{
+			if (std::isfinite(v)) os << v; else os << 0.0f;
+		};
+
+		auto writeVec3 = [&](std::ostream& os, const mathUtils::Vec3& v)
+		{
+			os << '['; writeFloat(os, v.x); os << ','; writeFloat(os, v.y); os << ','; writeFloat(os, v.z); os << ']';
+		};
+		auto writeVec4 = [&](std::ostream& os, const mathUtils::Vec4& v)
+		{
+			os << '['; writeFloat(os, v.x); os << ','; writeFloat(os, v.y); os << ','; writeFloat(os, v.z); os << ','; writeFloat(os, v.w); os << ']';
+		};
+		auto writeMat4ColMajor16 = [&](std::ostream& os, const mathUtils::Mat4& m)
+		{
+			os << '[';
+			for (int col = 0; col < 4; ++col)
+			{
+				for (int row = 0; row < 4; ++row)
+				{
+					if (col != 0 || row != 0) os << ',';
+					writeFloat(os, m[col][row]);
+				}
+			}
+			os << ']';
+		};
+
+		auto sortedKeys = [](const auto& umap)
+		{
+			std::vector<std::string> keys;
+			keys.reserve(umap.size());
+			for (const auto& [k, _] : umap) keys.push_back(k);
+			std::sort(keys.begin(), keys.end());
+			return keys;
+		};
+
+		// --- alive-only node remap (indices in JSON are dense) ---
+		std::vector<int> oldToNew(level.nodes.size(), -1);
+		std::vector<int> newToOld;
+		newToOld.reserve(level.nodes.size());
+		for (std::size_t i = 0; i < level.nodes.size(); ++i)
+		{
+			if (!level.nodes[i].alive)
+				continue;
+			oldToNew[i] = static_cast<int>(newToOld.size());
+			newToOld.push_back(static_cast<int>(i));
+		}
+
+		const fs::path absPath = corefs::ResolveAsset(fs::path(std::string(levelRelativeOrAbsPath)));
+		fs::create_directories(absPath.parent_path());
+
+		std::ofstream file(absPath, std::ios::binary | std::ios::trunc);
+		if (!file)
+		{
+			throw std::runtime_error("Level JSON: failed to open for write: " + absPath.string());
+		}
+
+		std::ostringstream ss;
+		ss.setf(std::ios::fixed);
+		ss << std::setprecision(6);
+
+		ss << "{\n";
+		ss << "  \"name\": "; writeEscaped(ss, level.name); ss << ",\n";
+
+		// meshes
+		ss << "  \"meshes\": {";
+		{
+			auto keys = sortedKeys(level.meshes);
+			for (std::size_t i = 0; i < keys.size(); ++i)
+			{
+				const auto& id = keys[i];
+				const LevelMeshDef& md = level.meshes.at(id);
+				if (i == 0) ss << "\n"; else ss << ",\n";
+				ss << "    "; writeEscaped(ss, id); ss << ": {\"path\": "; writeEscaped(ss, md.path);
+				if (!md.debugName.empty())
+				{
+					ss << ", \"debugName\": "; writeEscaped(ss, md.debugName);
+				}
+				ss << "}";
+			}
+			if (!keys.empty()) ss << "\n  ";
+		}
+		ss << "},\n";
+
+		// textures
+		ss << "  \"textures\": {";
+		{
+			auto keys = sortedKeys(level.textures);
+			for (std::size_t i = 0; i < keys.size(); ++i)
+			{
+				const auto& id = keys[i];
+				const LevelTextureDef& td = level.textures.at(id);
+				if (i == 0) ss << "\n"; else ss << ",\n";
+				ss << "    "; writeEscaped(ss, id); ss << ": {";
+				if (td.kind == LevelTextureKind::Tex2D)
+				{
+					ss << "\"kind\": \"tex2d\", \"path\": "; writeEscaped(ss, td.props.filePath);
+					ss << ", \"srgb\": "; writeBool(ss, td.props.srgb);
+					ss << ", \"mips\": "; writeBool(ss, td.props.generateMips);
+					ss << ", \"flipY\": "; writeBool(ss, td.props.flipY);
+				}
+				else
+				{
+					ss << "\"kind\": \"cube\"";
+					if (td.cubeSource == LevelCubeSource::Cross)
+					{
+						ss << ", \"source\": \"cross\", \"cross\": "; writeEscaped(ss, td.props.filePath);
+					}
+					else if (td.cubeSource == LevelCubeSource::AutoFaces)
+					{
+						ss << ", \"source\": \"auto\", \"baseOrDir\": "; writeEscaped(ss, td.baseOrDir);
+						if (!td.preferBase.empty())
+						{
+							ss << ", \"preferBase\": "; writeEscaped(ss, td.preferBase);
+						}
+					}
+					else // Faces
+					{
+						ss << ", \"source\": \"faces\", \"faces\": {";
+						ss << "\"px\": "; writeEscaped(ss, td.facePaths[0]);
+						ss << ", \"nx\": "; writeEscaped(ss, td.facePaths[1]);
+						ss << ", \"py\": "; writeEscaped(ss, td.facePaths[2]);
+						ss << ", \"ny\": "; writeEscaped(ss, td.facePaths[3]);
+						ss << ", \"pz\": "; writeEscaped(ss, td.facePaths[4]);
+						ss << ", \"nz\": "; writeEscaped(ss, td.facePaths[5]);
+						ss << "}";
+					}
+					ss << ", \"srgb\": "; writeBool(ss, td.props.srgb);
+					ss << ", \"mips\": "; writeBool(ss, td.props.generateMips);
+					ss << ", \"flipY\": "; writeBool(ss, td.props.flipY);
+				}
+				ss << "}";
+			}
+			if (!keys.empty()) ss << "\n  ";
+		}
+		ss << "},\n";
+
+		// materials
+		ss << "  \"materials\": {";
+		{
+			auto keys = sortedKeys(level.materials);
+			for (std::size_t i = 0; i < keys.size(); ++i)
+			{
+				const auto& id = keys[i];
+				const LevelMaterialDef& md = level.materials.at(id);
+				const MaterialParams& p = md.material.params;
+
+				if (i == 0) ss << "\n"; else ss << ",\n";
+				ss << "    "; writeEscaped(ss, id); ss << ": {";
+				ss << "\"baseColor\": "; writeVec4(ss, p.baseColor);
+				ss << ", \"shininess\": "; writeFloat(ss, p.shininess);
+				ss << ", \"specStrength\": "; writeFloat(ss, p.specStrength);
+				ss << ", \"shadowBias\": "; writeFloat(ss, p.shadowBias);
+				ss << ", \"metallic\": "; writeFloat(ss, p.metallic);
+				ss << ", \"roughness\": "; writeFloat(ss, p.roughness);
+				ss << ", \"ao\": "; writeFloat(ss, p.ao);
+				ss << ", \"emissiveStrength\": "; writeFloat(ss, p.emissiveStrength);
+
+				// flags as array (parser expects array)
+				ss << ", \"flags\": [";
+				bool firstFlag = true;
+				auto emitFlag = [&](std::string_view f)
+				{
+					if (!firstFlag) ss << ", ";
+					writeEscaped(ss, f);
+					firstFlag = false;
+				};
+				if (HasFlag(md.material.permFlags, MaterialPerm::UseTex)) emitFlag("useTex");
+				if (HasFlag(md.material.permFlags, MaterialPerm::UseShadow)) emitFlag("useShadow");
+				if (HasFlag(md.material.permFlags, MaterialPerm::Skinning)) emitFlag("skinning");
+				if (HasFlag(md.material.permFlags, MaterialPerm::Transparent)) emitFlag("transparent");
+				ss << "]";
+
+				// texture bindings
+				ss << ", \"textures\": {";
+				{
+					auto tkeys = sortedKeys(md.textureBindings);
+					for (std::size_t ti = 0; ti < tkeys.size(); ++ti)
+					{
+						const auto& slot = tkeys[ti];
+						const std::string& texId = md.textureBindings.at(slot);
+						if (ti == 0) ss << "\n"; else ss << ",\n";
+						ss << "      "; writeEscaped(ss, slot); ss << ": "; writeEscaped(ss, texId);
+					}
+					if (!tkeys.empty()) ss << "\n    ";
+				}
+				ss << "}";
+
+				ss << "}";
+			}
+			if (!keys.empty()) ss << "\n  ";
+		}
+		ss << "},\n";
+
+		// camera (always write if present)
+		if (level.camera)
+		{
+			const Camera& cam = *level.camera;
+			ss << "  \"camera\": {\"position\": "; writeVec3(ss, cam.position);
+			ss << ", \"target\": "; writeVec3(ss, cam.target);
+			ss << ", \"up\": "; writeVec3(ss, cam.up);
+			ss << ", \"fovYDeg\": "; writeFloat(ss, cam.fovYDeg);
+			ss << ", \"nearZ\": "; writeFloat(ss, cam.nearZ);
+			ss << ", \"farZ\": "; writeFloat(ss, cam.farZ);
+			ss << "},\n";
+		}
+
+		// lights
+		ss << "  \"lights\": [";
+		for (std::size_t i = 0; i < level.lights.size(); ++i)
+		{
+			const Light& l = level.lights[i];
+			if (i == 0) ss << "\n"; else ss << ",\n";
+			ss << "    {";
+			std::string_view type = "directional";
+			if (l.type == LightType::Point) type = "point";
+			else if (l.type == LightType::Spot) type = "spot";
+			ss << "\"type\": "; writeEscaped(ss, type);
+			ss << ", \"position\": "; writeVec3(ss, l.position);
+			ss << ", \"direction\": "; writeVec3(ss, l.direction);
+			ss << ", \"color\": "; writeVec3(ss, l.color);
+			ss << ", \"intensity\": "; writeFloat(ss, l.intensity);
+			ss << ", \"range\": "; writeFloat(ss, l.range);
+			ss << ", \"innerHalfAngleDeg\": "; writeFloat(ss, l.innerHalfAngleDeg);
+			ss << ", \"outerHalfAngleDeg\": "; writeFloat(ss, l.outerHalfAngleDeg);
+			ss << ", \"attConstant\": "; writeFloat(ss, l.attConstant);
+			ss << ", \"attLinear\": "; writeFloat(ss, l.attLinear);
+			ss << ", \"attQuadratic\": "; writeFloat(ss, l.attQuadratic);
+			ss << "}";
+		}
+		if (!level.lights.empty()) ss << "\n  ";
+		ss << "],\n";
+
+		// skybox: write as string or null (keep loader happy and stable)
+		ss << "  \"skybox\": ";
+		if (level.skyboxTexture && !level.skyboxTexture->empty())
+		{
+			writeEscaped(ss, *level.skyboxTexture);
+		}
+		else
+		{
+			ss << "null";
+		}
+		ss << ",\n";
+
+		// nodes (alive only)
+		ss << "  \"nodes\": [";
+		for (std::size_t ni = 0; ni < newToOld.size(); ++ni)
+		{
+			const LevelNode& n = level.nodes[static_cast<std::size_t>(newToOld[ni])];
+			if (ni == 0) ss << "\n"; else ss << ",\n";
+			ss << "    {";
+			ss << "\"name\": "; writeEscaped(ss, n.name);
+
+			int parent = -1;
+			if (n.parent >= 0)
+			{
+				const std::size_t op = static_cast<std::size_t>(n.parent);
+				if (op < oldToNew.size() && oldToNew[op] >= 0)
+					parent = oldToNew[op];
+			}
+			ss << ", \"parent\": " << parent;
+			ss << ", \"visible\": "; writeBool(ss, n.visible);
+
+			if (!n.mesh.empty())
+			{
+				ss << ", \"mesh\": "; writeEscaped(ss, n.mesh);
+			}
+			if (!n.material.empty())
+			{
+				ss << ", \"material\": "; writeEscaped(ss, n.material);
+			}
+
+			ss << ", \"transform\": {";
+			if (n.transform.useMatrix)
+			{
+				ss << "\"matrix\": ";
+				writeMat4ColMajor16(ss, n.transform.matrix);
+			}
+			else
+			{
+				ss << "\"position\": "; writeVec3(ss, n.transform.position);
+				ss << ", \"rotationDegrees\": "; writeVec3(ss, n.transform.rotationDegrees);
+				ss << ", \"scale\": "; writeVec3(ss, n.transform.scale);
+			}
+			ss << "}";
+
+			ss << "}";
+		}
+		if (!newToOld.empty()) ss << "\n  ";
+		ss << "]\n";
+
+		ss << "}\n";
+
+		const std::string outText = ss.str();
+		file.write(outText.data(), static_cast<std::streamsize>(outText.size()));
+		file.flush();
+		if (!file)
+		{
+			throw std::runtime_error("Level JSON: failed to write: " + absPath.string());
+		}
 	}
 }

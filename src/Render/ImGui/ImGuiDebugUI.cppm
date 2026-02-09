@@ -3,6 +3,9 @@ module;
 #include <cstdio>
 #include <cstring>
 #include <cctype>
+#include <limits>
+#include <algorithm>
+#include <cmath>
 
 #if defined(CORE_USE_DX12)
 #include <imgui.h>
@@ -217,6 +220,161 @@ namespace rendern::ui
 
             outScreen = ImVec2(screenX, screenY);
             return true;
+        }
+
+        struct Ray
+        {
+            mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
+            mathUtils::Vec3 dir{ 0.0f, 0.0f, 1.0f }; // normalized
+        };
+
+        static mathUtils::Vec3 MinVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
+        {
+            return { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) };
+        }
+
+        static mathUtils::Vec3 MaxVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
+        {
+            return { std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z) };
+        }
+
+        static mathUtils::Vec3 TransformPoint(const mathUtils::Mat4& m, const mathUtils::Vec3& p) noexcept
+        {
+            const mathUtils::Vec4 w = m * mathUtils::Vec4(p, 1.0f);
+            return { w.x, w.y, w.z };
+        }
+
+        static void TransformAABB(const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, const mathUtils::Mat4& m,
+            mathUtils::Vec3& outMin, mathUtils::Vec3& outMax) noexcept
+        {
+            const mathUtils::Vec3 c[8] =
+            {
+                { bmin.x, bmin.y, bmin.z }, { bmax.x, bmin.y, bmin.z }, { bmin.x, bmax.y, bmin.z }, { bmax.x, bmax.y, bmin.z },
+                { bmin.x, bmin.y, bmax.z }, { bmax.x, bmin.y, bmax.z }, { bmin.x, bmax.y, bmax.z }, { bmax.x, bmax.y, bmax.z },
+            };
+
+            mathUtils::Vec3 wmin{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
+            mathUtils::Vec3 wmax{ -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() };
+
+            for (const auto& p : c)
+            {
+                const mathUtils::Vec3 wp = TransformPoint(m, p);
+                wmin = MinVec3(wmin, wp);
+                wmax = MaxVec3(wmax, wp);
+            }
+
+            outMin = wmin;
+            outMax = wmax;
+        }
+
+        static bool IntersectRayAABB(const Ray& ray, const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, float& outT) noexcept
+        {
+            float tmin = 0.0f;
+            float tmax = std::numeric_limits<float>::infinity();
+
+            const float o[3] = { ray.origin.x, ray.origin.y, ray.origin.z };
+            const float d[3] = { ray.dir.x, ray.dir.y, ray.dir.z };
+            const float mn[3] = { bmin.x, bmin.y, bmin.z };
+            const float mx[3] = { bmax.x, bmax.y, bmax.z };
+
+            for (int axis = 0; axis < 3; ++axis)
+            {
+                const float dir = d[axis];
+                const float ori = o[axis];
+
+                if (std::abs(dir) < 1e-8f)
+                {
+                    if (ori < mn[axis] || ori > mx[axis])
+                    {
+                        return false;
+                    }
+                    continue;
+                }
+
+                const float invD = 1.0f / dir;
+                float t1 = (mn[axis] - ori) * invD;
+                float t2 = (mx[axis] - ori) * invD;
+                if (t1 > t2) std::swap(t1, t2);
+
+                tmin = std::max(tmin, t1);
+                tmax = std::min(tmax, t2);
+                if (tmin > tmax)
+                {
+                    return false;
+                }
+            }
+
+            outT = tmin;
+            return true;
+        }
+
+        static Ray BuildMouseRay(const rendern::Scene& scene, const rendern::CameraController& camCtl,
+            const ImVec2& mousePos, const ImVec2& displaySize) noexcept
+        {
+            const float w = (displaySize.x > 1.0f) ? displaySize.x : 1.0f;
+            const float h = (displaySize.y > 1.0f) ? displaySize.y : 1.0f;
+
+            // NDC in [-1..1], with +Y up.
+            const float ndcX = (mousePos.x / w) * 2.0f - 1.0f;
+            const float ndcY = 1.0f - (mousePos.y / h) * 2.0f;
+
+            const float aspect = w / h;
+            const float tanHalfFov = std::tan(mathUtils::DegToRad(scene.camera.fovYDeg) * 0.5f);
+
+            const mathUtils::Vec3 forward = camCtl.Forward();
+            const mathUtils::Vec3 up0 = scene.camera.up;
+            const mathUtils::Vec3 right = mathUtils::Normalize(mathUtils::Cross(up0, forward));
+            const mathUtils::Vec3 up = mathUtils::Normalize(mathUtils::Cross(forward, right));
+
+            mathUtils::Vec3 dir = forward;
+            dir = dir + right * (ndcX * aspect * tanHalfFov);
+            dir = dir + up * (ndcY * tanHalfFov);
+            dir = mathUtils::Normalize(dir);
+
+            Ray ray;
+            ray.origin = scene.camera.position;
+            ray.dir = dir;
+            return ray;
+        }
+
+        static int PickNodeUnderMouse(const rendern::Scene& scene, const rendern::LevelInstance& levelInst,
+            const ImVec2& mousePos, const ImVec2& displaySize, const rendern::CameraController& camCtl)
+        {
+            const Ray ray = BuildMouseRay(scene, camCtl, mousePos, displaySize);
+
+            float bestT = std::numeric_limits<float>::infinity();
+            int bestNode = -1;
+
+            for (int di = 0; di < static_cast<int>(scene.drawItems.size()); ++di)
+            {
+                const int nodeIndex = levelInst.GetNodeIndexFromDrawIndex(di);
+                if (nodeIndex < 0)
+                {
+                    continue;
+                }
+
+                const rendern::DrawItem& item = scene.drawItems[static_cast<std::size_t>(di)];
+                if (!item.mesh)
+                {
+                    continue;
+                }
+
+                const auto& b = item.mesh->GetBounds();
+                mathUtils::Vec3 wmin{}, wmax{};
+                TransformAABB(b.aabbMin, b.aabbMax, item.transform.ToMatrix(), wmin, wmax);
+
+                float t = 0.0f;
+                if (IntersectRayAABB(ray, wmin, wmax, t))
+                {
+                    if (t < bestT)
+                    {
+                        bestT = t;
+                        bestNode = nodeIndex;
+                    }
+                }
+            }
+
+            return bestNode;
         }
 
         static void DrawLightGizmosOverlay(const rendern::Scene& scene, const rendern::RendererSettings& rendererSettings)
@@ -561,7 +719,12 @@ namespace rendern::ui
         ImGui::End();
     }
 
-    void DrawLevelEditorUI(rendern::LevelAsset& level, rendern::LevelInstance& levelInst, AssetManager& assets, rendern::Scene& scene, rendern::CameraController& camCtl)
+    void DrawLevelEditorUI(
+        rendern::LevelAsset& level,
+        rendern::LevelInstance& levelInst, 
+        AssetManager& assets, 
+        rendern::Scene& scene,
+        rendern::CameraController& camCtl)
     {
         ImGui::Begin("Level Editor");
 
@@ -575,6 +738,115 @@ namespace rendern::ui
 
         static char nameBuf[128]{};
         static char importPathBuf[512]{};
+
+        // Save state
+        static char savePathBuf[512]{};
+        static char saveStatusBuf[512]{};
+        static std::string cachedSourcePath;
+        static bool saveStatusIsError = false;
+
+        // Keep save path input synced with loaded sourcePath (unless user edits it).
+        if (cachedSourcePath != level.sourcePath)
+        {
+            cachedSourcePath = level.sourcePath;
+            const std::string fallback = cachedSourcePath.empty() ? std::string("levels/edited.level.json") : cachedSourcePath;
+            std::snprintf(savePathBuf, sizeof(savePathBuf), "%s", fallback.c_str());
+        }
+
+        // ------------------------------------------------------------
+        // Mouse picking (click in viewport selects a node)
+        // ------------------------------------------------------------
+        {
+            const ImGuiIO& io = ImGui::GetIO();
+            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse)
+            {
+                const ImVec2 mp = io.MousePos;
+                const ImVec2 ds = io.DisplaySize;
+                if (mp.x >= 0.0f && mp.y >= 0.0f && mp.x <= ds.x && mp.y <= ds.y)
+                {
+                    const int picked = PickNodeUnderMouse(scene, levelInst, mp, ds, camCtl);
+                    if (picked >= 0 && picked < static_cast<int>(level.nodes.size()) && level.nodes[static_cast<std::size_t>(picked)].alive)
+                    {
+                        selectedNode = picked;
+                    }
+                    else
+                    {
+                        selectedNode = -1;
+                    }
+                }
+            }
+        }
+
+        // ------------------------------------------------------------
+        // File
+        // ------------------------------------------------------------
+        if (ImGui::CollapsingHeader("File", ImGuiTreeNodeFlags_DefaultOpen))
+        {
+            ImGui::InputText("Level path", savePathBuf, sizeof(savePathBuf));
+
+            auto doSaveToPath = [&](const std::string& path)
+            {
+                try
+                {
+                    // Persist camera/lights from the current scene into the level asset.
+                    level.camera = scene.camera;
+                    level.lights = scene.lights;
+
+                    rendern::SaveLevelAssetToJson(path, level);
+                    level.sourcePath = path;
+                    cachedSourcePath = path;
+                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Saved: %s", path.c_str());
+                    saveStatusIsError = false;
+                }
+                catch (const std::exception& e)
+                {
+                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: %s", e.what());
+                    saveStatusIsError = true;
+                }
+            };
+
+            const bool canHotkey = !ImGui::GetIO().WantTextInput;
+            const bool ctrlS = canHotkey && ImGui::IsKeyDown(ImGuiKey_ModCtrl) && ImGui::IsKeyPressed(ImGuiKey_S);
+
+            const std::string pathStr = std::string(savePathBuf);
+            bool clickedSave = ImGui::Button("Save (Ctrl+S)");
+            ImGui::SameLine();
+            bool clickedSaveAs = ImGui::Button("Save As");
+
+            if (ctrlS || clickedSave)
+            {
+                const std::string usePath = !level.sourcePath.empty() ? level.sourcePath : pathStr;
+                if (!usePath.empty())
+                {
+                    doSaveToPath(usePath);
+                }
+                else
+                {
+                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
+                    saveStatusIsError = true;
+                }
+            }
+            else if (clickedSaveAs)
+            {
+                if (!pathStr.empty())
+                {
+                    doSaveToPath(pathStr);
+                }
+                else
+                {
+                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
+                    saveStatusIsError = true;
+                }
+            }
+
+            if (saveStatusBuf[0] != '\0')
+            {
+                if (saveStatusIsError)
+                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", saveStatusBuf);
+                else
+                    ImGui::Text("%s", saveStatusBuf);
+            }
+        }
 
         // Build children adjacency (alive only)
         const std::size_t ncount = level.nodes.size();
@@ -951,7 +1223,9 @@ namespace rendern::ui
             ImGui::SameLine();
             bool doDelete = ImGui::Button("Delete (recursive)");
             if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+            {
                 doDelete = true;
+            }
 
             if (doDelete)
             {
@@ -959,9 +1233,13 @@ namespace rendern::ui
                 levelInst.DeleteSubtree(level, scene, selectedNode);
 
                 if (nodeAlive(parent))
+                {    
                     selectedNode = parent;
+                }
                 else
+                {
                     selectedNode = -1;
+                }
             }
         }
         else
