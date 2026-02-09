@@ -18,6 +18,7 @@ export namespace rendern
 		float dirShadowDistance{ 200.0f };
 		std::uint32_t dirShadowCascadeCount{ 3 };
 		float dirShadowSplitLambda{ 0.7f };
+		bool enableDepthPrepass{ false };
 		bool enableFrustumCulling{ true };
 		bool debugPrintDrawCalls{ false }; // prints MainPass draw-call count (DX12) once per ~60 frames
 

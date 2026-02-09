@@ -290,7 +290,7 @@ namespace
         g_imguiInitialized = false;
     }
 
-    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice& device, rendern::RendererSettings& settings, rendern::Scene& scene, rendern::CameraController& cameraController)
+    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice& device, rendern::RendererSettings& settings, rendern::Scene& scene, rendern::CameraController& cameraController, rendern::LevelAsset& levelAsset, rendern::LevelInstance& levelInstance, AssetManager& assets)
     {
         if (!g_imguiInitialized)
         {
@@ -304,6 +304,7 @@ namespace
         if (g_showUI)
         {
             rendern::ui::DrawRendererDebugUI(settings, scene, cameraController);
+            rendern::ui::DrawLevelEditorUI(levelAsset, levelInstance, assets, scene, cameraController);
         }
 
         ImGui::Render();
@@ -328,7 +329,7 @@ namespace
         return capture;
     }
 #else
-    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice&, rendern::RendererSettings&, rendern::Scene&, rendern::CameraController&)
+    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice&, rendern::RendererSettings&, rendern::Scene&, rendern::CameraController&, rendern::LevelAsset&, rendern::LevelInstance&, AssetManager&)
     {
         return nullptr;
     }
@@ -534,7 +535,7 @@ int main(int argc, char** argv)
         ResourceManager& resourceManager = assets.GetResourceManager();
 
         // Level asset (JSON)
-        const rendern::LevelAsset levelAsset = rendern::LoadLevelAssetFromJson("levels/demo.level.json");
+        rendern::LevelAsset levelAsset = rendern::LoadLevelAssetFromJson("levels/demo.level.json");
 
         // Renderer (facade) - Stage1 expects Scene
         rendern::RendererSettings rendererSettings{};
@@ -594,9 +595,8 @@ int main(int argc, char** argv)
             cameraController.Update(deltaSeconds, win32Input.State(), scene.camera);
 
             // ImGui (optional)
-            const void* imguiDrawData = BuildImGuiFrameIfEnabled(*device, rendererSettings, scene, cameraController);
-
-            // Render
+            const void* imguiDrawData = BuildImGuiFrameIfEnabled(*device, rendererSettings, scene, cameraController, levelAsset, levelInstance, assets);
+// Render
             renderer.SetSettings(rendererSettings);
             renderer.RenderFrame(*swapChain, scene, imguiDrawData);
 

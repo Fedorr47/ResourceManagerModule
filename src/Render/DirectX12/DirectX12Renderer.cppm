@@ -785,7 +785,9 @@ export namespace rendern
 				{
 					std::cout << "[DX12] MainPass draw calls: " << mainBatches.size()
 						<< " (instances main: " << mainInstances.size()
-						<< ", shadow: " << shadowInstances.size() << ")\n";
+						<< ", shadow: " << shadowInstances.size() << ")"
+						<< " | DepthPrepass: " << (settings_.enableDepthPrepass ? "ON" : "OFF")
+						<< " (draw calls: " << shadowBatches.size() << ")\n";
 				}
 			}
 
@@ -1065,10 +1067,58 @@ export namespace rendern
 				device_.UpdateBuffer(shadowDataBuffer_, std::as_bytes(std::span{ &sd, 1 }));
 			}
 
+			// ---------------- Optional depth pre-pass (swapchain depth) ----------------
+			const bool doDepthPrepass = settings_.enableDepthPrepass;
+			if (doDepthPrepass && psoShadow_)
+			{
+				// We use the existing depth-only shadow shader (writes SV_Depth, no color outputs).
+				// It expects a single matrix (uLightViewProj), so we feed it the camera view-projection.
+				rhi::ClearDesc preClear{};
+				preClear.clearColor = false; // keep backbuffer untouched
+				preClear.clearDepth = true;
+				preClear.depth = 1.0f;
+
+				graph.AddSwapChainPass("PreDepthPass", preClear,
+					[this, &scene, shadowBatches, instStride](renderGraph::PassContext& ctx) mutable
+					{
+						const auto extent = ctx.passExtent;
+						ctx.commandList.SetViewport(0, 0,
+							static_cast<int>(extent.width),
+							static_cast<int>(extent.height));
+
+						// Pre-depth state: depth test+write, opaque raster.
+						ctx.commandList.SetState(preDepthState_);
+						ctx.commandList.BindPipeline(psoShadow_);
+
+						const float aspect = extent.height
+							? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
+							: 1.0f;
+
+						const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(
+							mathUtils::DegToRad(scene.camera.fovYDeg),
+							aspect,
+							scene.camera.nearZ,
+							scene.camera.farZ);
+						const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+						const mathUtils::Mat4 viewProj = proj * view;
+
+						struct alignas(16) PreDepthConstants
+						{
+							std::array<float, 16> uLightViewProj{};
+						};
+						PreDepthConstants c{};
+						const mathUtils::Mat4 vpT = mathUtils::Transpose(viewProj);
+						std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
+						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+
+						this->DrawInstancedShadowBatches(ctx.commandList, shadowBatches, instStride);
+					});
+			}
+
 			// ---------------- Main pass (swapchain) ----------------
 			rhi::ClearDesc clearDesc{};
 			clearDesc.clearColor = true;
-			clearDesc.clearDepth = true;
+			clearDesc.clearDepth = !doDepthPrepass; // if we pre-filled depth, don't wipe it here
 			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
 			graph.AddSwapChainPass("MainPass", clearDesc,
@@ -1081,6 +1131,7 @@ export namespace rendern
 				mainBatches,
 				instStride,
 				transparentDraws,
+				doDepthPrepass,
 				imguiDrawData](renderGraph::PassContext& ctx)
 				{
 					const auto extent = ctx.passExtent;
@@ -1089,7 +1140,8 @@ export namespace rendern
 						static_cast<int>(extent.width),
 						static_cast<int>(extent.height));
 
-					ctx.commandList.SetState(state_);
+					// If we ran a depth prepass, keep depth read-only in the main pass.
+					ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 
 					const float aspect = extent.height
 						? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
@@ -1127,7 +1179,7 @@ export namespace rendern
 							ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &skyboxConstants, 1 }));
 							ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
 
-							ctx.commandList.SetState(state_);
+							ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 						}
 					}
 
@@ -1626,6 +1678,13 @@ export namespace rendern
 				transparentState_.depth.writeEnable = false;
 				transparentState_.blend.enable = true;
 				transparentState_.rasterizer.cullMode = rhi::CullMode::None;
+
+				// Depth pre-pass state: same raster as opaque, depth test+write enabled.
+				preDepthState_ = state_;
+
+				// Main pass state when running after a depth pre-pass: keep depth read-only.
+				mainAfterPreDepthState_ = state_;
+				mainAfterPreDepthState_.depth.writeEnable = false;
 			}
 
 			// Shadow pipeline (depth-only)
@@ -1736,6 +1795,8 @@ export namespace rendern
 		std::array<rhi::PipelineHandle, 4> psoMain_{}; // idx: (UseTex?1:0)|(UseShadow?2:0)
 		rhi::GraphicsState state_{};
 		rhi::GraphicsState transparentState_{};
+		rhi::GraphicsState preDepthState_{};
+		rhi::GraphicsState mainAfterPreDepthState_{};
 
 		rhi::BufferHandle instanceBuffer_{};
 		std::uint32_t instanceBufferSizeBytes_{ kDefaultInstanceBufferSizeBytes };

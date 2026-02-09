@@ -499,7 +499,10 @@ export namespace rendern
 	{
 		std::string name;
 		int parent{ -1 };
+
 		bool visible{ true };
+		bool alive{ true }; // editor/runtime tombstone (keeps indices stable)
+
 		Transform transform{};
 
 		std::string mesh;     // meshId
@@ -546,6 +549,9 @@ export namespace rendern
 	public:
 		LevelInstance() = default;
 
+		// -----------------------------
+		// Runtime: descriptor management
+		// -----------------------------
 		void ResolveTextureBindings(AssetManager& assets, BindlessTable& bindless, Scene& scene)
 		{
 			ResourceManager& rm = assets.GetResourceManager();
@@ -625,12 +631,445 @@ export namespace rendern
 			textureDesc_.clear();
 		}
 
+		// -----------------------------
+		// Editor/runtime mutation API
+		// (keeps LevelAsset indices stable via tombstones)
+		// -----------------------------
+		void SetRootTransform(const mathUtils::Mat4& root)
+		{
+			root_ = root;
+			transformsDirty_ = true;
+		}
+
+		bool IsValidNodeIndex(const LevelAsset& asset, int nodeIndex) const noexcept
+		{
+			return nodeIndex >= 0 && static_cast<std::size_t>(nodeIndex) < asset.nodes.size();
+		}
+
+		bool IsNodeAlive(const LevelAsset& asset, int nodeIndex) const noexcept
+		{
+			if (!IsValidNodeIndex(asset, nodeIndex)) 
+			{
+				return false;
+			}
+			return asset.nodes[static_cast<std::size_t>(nodeIndex)].alive;
+		}
+
+		int GetNodeDrawIndex(int nodeIndex) const noexcept
+		{
+			if (nodeIndex < 0) 
+			{
+				return -1;
+			}
+			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+			if (i >= nodeToDraw_.size()) 
+			{
+				return -1;
+			}
+			return nodeToDraw_[i];
+		}
+
+		// Create a new node and (optionally) spawn a DrawItem.
+		// Returns the new node index.
+		int AddNode(LevelAsset& asset,
+			Scene& scene,
+			AssetManager& assets,
+			std::string_view meshId,
+			std::string_view materialId,
+			int parentNodeIndex,
+			const Transform& localTransform,
+			std::string_view name = {})
+		{
+			LevelNode node;
+			node.name = std::string(name);
+			node.parent = parentNodeIndex;
+			node.visible = true;
+			node.alive = true;
+			node.transform = localTransform;
+			node.mesh = std::string(meshId);
+			node.material = std::string(materialId);
+
+			asset.nodes.push_back(std::move(node));
+
+			if (nodeToDraw_.size() < asset.nodes.size())
+			{ 
+				nodeToDraw_.resize(asset.nodes.size(), -1);
+			}
+			if (world_.size() < asset.nodes.size())
+			{	
+				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
+			}
+
+			const int newIndex = static_cast<int>(asset.nodes.size() - 1);
+
+			EnsureDrawForNode_(asset, scene, assets, newIndex);
+			transformsDirty_ = true;
+			return newIndex;
+		}
+
+		// Delete selected node and all its children. (tombstone - keeps indices stable)
+		void DeleteSubtree(LevelAsset& asset, Scene& scene, int rootNodeIndex)
+		{
+			if (!IsNodeAlive(asset, rootNodeIndex))
+			{
+				return;
+			}
+
+			const std::vector<int> toDelete = CollectSubtree_(asset, rootNodeIndex);
+			for (int idx : toDelete)
+			{
+				if (!IsNodeAlive(asset, idx))
+				{
+					continue;
+				}
+				LevelNode& n = asset.nodes[static_cast<std::size_t>(idx)];
+				n.alive = false;
+				n.visible = false;
+				DestroyDrawForNode_(scene, idx);
+			}
+
+			transformsDirty_ = true;
+		}
+
+		void SetNodeVisible(LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex, bool visible)
+		{
+			if (!IsNodeAlive(asset, nodeIndex))
+				return;
+
+			LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
+			n.visible = visible;
+
+			EnsureDrawForNode_(asset, scene, assets, nodeIndex);
+		}
+
+		void SetNodeMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex, std::string_view meshId)
+		{
+			if (!IsNodeAlive(asset, nodeIndex))
+			{
+				return;
+			}
+
+			LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
+			n.mesh = std::string(meshId);
+
+			EnsureDrawForNode_(asset, scene, assets, nodeIndex);
+		}
+
+		void SetNodeMaterial(LevelAsset& asset, Scene& scene, int nodeIndex, std::string_view materialId)
+		{
+			if (!IsNodeAlive(asset, nodeIndex))
+				return;
+
+			LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
+			n.material = std::string(materialId);
+
+			const int di = GetNodeDrawIndex(nodeIndex);
+			if (di >= 0 && static_cast<std::size_t>(di) < scene.drawItems.size())
+			{
+				scene.drawItems[static_cast<std::size_t>(di)].material = GetMaterialHandle_(materialId);
+			}
+		}
+
+		void MarkTransformsDirty() noexcept
+		{
+			transformsDirty_ = true;
+		}
+
+		// Recompute world transforms (with hierarchy) and push to Scene draw items.
+		void SyncTransformsIfDirty(const LevelAsset& asset, Scene& scene)
+		{
+			if (!transformsDirty_)
+				return;
+
+			RecomputeWorld_(asset);
+
+			// Push to Scene
+			const std::size_t ncount = asset.nodes.size();
+			if (nodeToDraw_.size() < ncount)
+				nodeToDraw_.resize(ncount, -1);
+
+			for (std::size_t i = 0; i < ncount; ++i)
+			{
+				const LevelNode& n = asset.nodes[i];
+				if (!n.alive)
+				{
+					continue;
+				}
+
+				const int di = nodeToDraw_[i];
+				if (di < 0 || static_cast<std::size_t>(di) >= scene.drawItems.size())
+				{
+					continue;
+				}
+
+				DrawItem& item = scene.drawItems[static_cast<std::size_t>(di)];
+				item.transform.useMatrix = true;
+				item.transform.matrix = world_[i];
+			}
+
+			transformsDirty_ = false;
+		}
+
 	private:
 		friend LevelInstance InstantiateLevel(Scene& scene, AssetManager& assets, BindlessTable& bindless, const LevelAsset& asset, const mathUtils::Mat4& root);
 
+		MaterialHandle GetMaterialHandle_(std::string_view materialId) const noexcept
+		{
+			if (materialId.empty())
+			{	
+				return {};
+			}
+
+			auto it = materialHandles_.find(std::string(materialId));
+			if (it == materialHandles_.end())
+			{
+				return {};
+			}
+			return it->second;
+		}
+
+		MeshHandle GetOrLoadMeshHandle_(const LevelAsset& asset, AssetManager& assets, const std::string& meshId) const
+		{
+			auto it = asset.meshes.find(meshId);
+			if (it == asset.meshes.end())
+			{
+				throw std::runtime_error("Level: node references unknown meshId: " + meshId);
+			}
+
+			MeshProperties p{};
+			p.filePath = it->second.path;
+			p.debugName = it->second.debugName;
+			return assets.LoadMeshAsync(meshId, std::move(p));
+		}
+
+		void EnsureDrawForNode_(const LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex)
+		{
+			if (nodeIndex < 0) 
+			{
+				return;
+			}
+
+			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+			if (i >= asset.nodes.size())
+			{
+				return;
+			}
+
+			const LevelNode& node = asset.nodes[i];
+			if (!node.alive || !node.visible || node.mesh.empty())
+			{
+				DestroyDrawForNode_(scene, nodeIndex);
+				return;
+			}
+
+			if (nodeToDraw_.size() < asset.nodes.size())
+			{	
+				nodeToDraw_.resize(asset.nodes.size(), -1);
+			}
+			if (world_.size() < asset.nodes.size())
+			{	
+				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
+			}
+
+			const int existing = nodeToDraw_[i];
+			if (existing >= 0 && static_cast<std::size_t>(existing) < scene.drawItems.size())
+			{
+				DrawItem& item = scene.drawItems[static_cast<std::size_t>(existing)];
+				item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
+				item.material = GetMaterialHandle_(node.material);
+				return;
+			}
+
+			// Spawn new draw item
+			DrawItem item{};
+			item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
+			item.material = GetMaterialHandle_(node.material);
+			item.transform.useMatrix = true;
+			item.transform.matrix = world_[i]; // will be updated on next SyncTransformsIfDirty()
+
+			const int drawIndex = static_cast<int>(scene.drawItems.size());
+			scene.AddDraw(item);
+
+			// Maintain mapping vectors aligned with scene.drawItems.
+			if (drawToNode_.size() < scene.drawItems.size())
+			{	
+				drawToNode_.resize(scene.drawItems.size(), -1);
+			}
+			drawToNode_[static_cast<std::size_t>(drawIndex)] = nodeIndex;
+			nodeToDraw_[i] = drawIndex;
+		}
+
+		void DestroyDrawForNode_(Scene& scene, int nodeIndex)
+		{
+			if (nodeIndex < 0) 
+			{
+				return;
+			}
+
+			const std::size_t nodeIdx = static_cast<std::size_t>(nodeIndex);
+			if (nodeIdx >= nodeToDraw_.size())
+			{
+				return;
+			}
+
+			const int di = nodeToDraw_[nodeIdx];
+			if (di < 0)
+			{
+				return;
+			}
+
+			const std::size_t drawIndex = static_cast<std::size_t>(di);
+			if (drawIndex >= scene.drawItems.size())
+			{
+				nodeToDraw_[nodeIdx] = -1;
+				return;
+			}
+
+			const std::size_t last = scene.drawItems.size() - 1;
+			if (drawIndex != last)
+			{
+				std::swap(scene.drawItems[drawIndex], scene.drawItems[last]);
+
+				if (last < drawToNode_.size())
+				{
+					const int movedNode = drawToNode_[last];
+					if (drawIndex < drawToNode_.size())
+						drawToNode_[drawIndex] = movedNode;
+					if (movedNode >= 0 && static_cast<std::size_t>(movedNode) < nodeToDraw_.size())
+						nodeToDraw_[static_cast<std::size_t>(movedNode)] = static_cast<int>(drawIndex);
+				}
+			}
+
+			scene.drawItems.pop_back();
+			if (!drawToNode_.empty())
+			{	
+				drawToNode_.pop_back();
+			}
+
+			nodeToDraw_[nodeIdx] = -1;
+		}
+
+		std::vector<int> CollectSubtree_(const LevelAsset& asset, int rootNodeIndex) const
+		{
+			std::vector<int> out;
+			if (rootNodeIndex < 0)
+				return out;
+
+			const std::size_t nodeCount = asset.nodes.size();
+			if (static_cast<std::size_t>(rootNodeIndex) >= nodeCount)
+			{	
+				return out;
+			}
+
+			// children adjacency (alive only)
+			std::vector<std::vector<int>> children;
+			children.resize(nodeCount);
+
+			for (std::size_t i = 0; i < nodeCount; ++i)
+			{
+				const LevelNode& node = asset.nodes[i];
+				if (!node.alive)
+					continue;
+				if (node.parent < 0)
+					continue;
+
+				const std::size_t p = static_cast<std::size_t>(node.parent);
+				if (p >= nodeCount)
+					continue;
+				if (!asset.nodes[p].alive)
+					continue;
+
+				children[p].push_back(static_cast<int>(i));
+			}
+
+			std::vector<int> stack;
+			stack.push_back(rootNodeIndex);
+
+			while (!stack.empty())
+			{
+				const int cur = stack.back();
+				stack.pop_back();
+
+				if (cur < 0 || static_cast<std::size_t>(cur) >= nodeCount)
+					continue;
+				if (!asset.nodes[static_cast<std::size_t>(cur)].alive)
+					continue;
+
+				out.push_back(cur);
+
+				for (int ch : children[static_cast<std::size_t>(cur)])
+				{
+					stack.push_back(ch);
+				}
+			}
+
+			return out;
+		}
+
+		void RecomputeWorld_(const LevelAsset& asset)
+		{
+			const std::size_t n = asset.nodes.size();
+			world_.resize(n, mathUtils::Mat4(1.0f));
+
+			std::vector<std::uint8_t> state;
+			state.resize(n, 0); // 0=unvisited, 1=visiting, 2=done
+
+			auto compute = [&](auto&& self, std::size_t i) -> const mathUtils::Mat4&
+			{
+				if (state[i] == 2)
+					return world_[i];
+
+				if (state[i] == 1)
+				{
+					// cycle - treat as root
+					world_[i] = root_ * asset.nodes[i].transform.ToMatrix();
+					state[i] = 2;
+					return world_[i];
+				}
+
+				state[i] = 1;
+
+				const LevelNode& node = asset.nodes[i];
+				if (!node.alive)
+				{
+					world_[i] = mathUtils::Mat4(1.0f);
+					state[i] = 2;
+					return world_[i];
+				}
+
+				mathUtils::Mat4 parentWorld = root_;
+				if (node.parent >= 0)
+				{
+					const std::size_t p = static_cast<std::size_t>(node.parent);
+					if (p < n && asset.nodes[p].alive)
+					{
+						parentWorld = self(self, p);
+					}
+				}
+
+				world_[i] = parentWorld * node.transform.ToMatrix();
+				state[i] = 2;
+				return world_[i];
+			};
+
+			for (std::size_t i = 0; i < n; ++i)
+			{
+				compute(compute, i);
+			}
+		}
+
+		// Descriptor runtime
 		std::unordered_map<std::string, rhi::TextureDescIndex> textureDesc_;
 		std::vector<PendingMaterialBinding> pendingBindings_;
 		std::optional<std::string> skyboxTextureId_;
+
+		// Editor/runtime state
+		mathUtils::Mat4 root_{ 1.0f };
+		std::vector<mathUtils::Mat4> world_;
+		std::vector<int> nodeToDraw_;
+		std::vector<int> drawToNode_;
+		std::unordered_map<std::string, MaterialHandle> materialHandles_;
+		bool transformsDirty_{ true };
 	};
 
 	// -----------------------------
@@ -920,6 +1359,15 @@ export namespace rendern
 				n.name = GetStringOpt(nd, "name");
 				n.parent = static_cast<int>(GetFloatOpt(nd, "parent", -1.0f));
 				n.visible = GetBoolOpt(nd, "visible", true);
+				n.alive = GetBoolOpt(nd, "alive", true);
+				if (auto* delV = TryGet(nd, "deleted"))
+				{
+					if (!delV->IsBool()) 
+					{
+						throw std::runtime_error("Level JSON: node.deleted must be bool");
+					}
+					n.alive = !delV->AsBool();
+				}
 				n.mesh = GetStringOpt(nd, "mesh");
 				n.material = GetStringOpt(nd, "material");
 
@@ -963,6 +1411,7 @@ export namespace rendern
 	LevelInstance InstantiateLevel(Scene& scene, AssetManager& assets, BindlessTable&, const LevelAsset& asset, const mathUtils::Mat4& root)
 	{
 		LevelInstance inst;
+		inst.root_ = root;
 
 		// Camera
 		if (asset.camera)
@@ -1050,28 +1499,27 @@ export namespace rendern
 			}
 		}
 
+		inst.materialHandles_ = materialHandles;
+
 		inst.skyboxTextureId_ = asset.skyboxTexture;
 
 		// Nodes: create draw items
-		std::vector<mathUtils::Mat4> world;
-		world.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
+		inst.nodeToDraw_.assign(asset.nodes.size(), -1);
+		inst.drawToNode_.clear();
+		inst.drawToNode_.reserve(asset.nodes.size());
+
+		// Compute world matrices (handles arbitrary parent order)
+		inst.transformsDirty_ = true;
+		inst.RecomputeWorld_(asset);
+		inst.transformsDirty_ = false;
 
 		for (std::size_t i = 0; i < asset.nodes.size(); ++i)
 		{
 			const LevelNode& n = asset.nodes[i];
-			mathUtils::Mat4 local = n.transform.ToMatrix();
-
-			mathUtils::Mat4 parent = root;
-			if (n.parent >= 0)
+			if (!n.alive)
 			{
-				const std::size_t p = static_cast<std::size_t>(n.parent);
-				if (p >= world.size())
-				{
-					throw std::runtime_error("Level JSON: node parent index out of range");
-				}
-				parent = world[p];
+				continue;
 			}
-			world[i] = parent * local;
 
 			if (!n.visible)
 			{
@@ -1103,8 +1551,12 @@ export namespace rendern
 			item.mesh = meshIt->second;
 			item.material = mat;
 			item.transform.useMatrix = true;
-			item.transform.matrix = world[i];
+			item.transform.matrix = inst.world_[i];
+
+			const int drawIndex = static_cast<int>(scene.drawItems.size());
 			scene.AddDraw(item);
+			inst.nodeToDraw_[i] = drawIndex;
+			inst.drawToNode_.push_back(static_cast<int>(i));
 		}
 
 		return inst;
