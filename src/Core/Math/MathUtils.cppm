@@ -49,7 +49,7 @@ export namespace mathUtils
 		float x{ 0 }, y{ 0 }, z{ 0 };
 
 		constexpr Vec3() = default;
-		constexpr Vec3(float X, float Y, float Z) : x(X), y(Y), z(X) {}
+		constexpr Vec3(float X, float Y, float Z) : x(X), y(Y), z(Z) {}
 
 		constexpr float& operator[](std::size_t i) noexcept
 		{
@@ -84,6 +84,8 @@ export namespace mathUtils
 			}
 		}
 
+		constexpr Vec3 xyz() const noexcept { return { x, y, z }; }
+
 		friend constexpr bool operator==(const Vec4& a, const Vec4& b) noexcept
 		{
 			return a.x == b.x && a.y == b.y && a.z == b.z && a.w == b.w;
@@ -102,21 +104,43 @@ export namespace mathUtils
 
 		constexpr Vec4& operator[](std::size_t col) noexcept { return columns[col]; }
 		constexpr const Vec4& operator[](std::size_t col) const noexcept { return columns[col]; }
+
+		constexpr float& operator()(std::size_t row, std::size_t col) noexcept
+		{
+			return const_cast<float&>(std::as_const(*this)(row,col));
+		}
+		constexpr const float& operator()(std::size_t row, std::size_t col) const noexcept
+		{
+			return columns[col][row];
+		}
 	};
 
 	// --- basic ops ---
+	constexpr Vec2 operator+(const Vec2& a, const Vec2& b) noexcept { return Vec2(a.x + b.x, a.y + b.y); }
+	constexpr Vec2 operator-(const Vec2& a, const Vec2& b) noexcept { return Vec2(a.x - b.x, a.y - b.y); }
+	constexpr Vec2 operator*(const Vec2& v, float s) noexcept { return Vec2(v.x * s, v.y * s); }
+	constexpr Vec2 operator*(float s, const Vec2& v) noexcept { return v * s; }
+	constexpr Vec2 operator/(const Vec2& v, float s) noexcept { return Vec2(v.x / s, v.y / s); }
+
 	constexpr Vec3 operator+(const Vec3& a, const Vec3& b) noexcept { return Vec3(a.x + b.x, a.y + b.y, a.z + b.z); }
 	constexpr Vec3 operator-(const Vec3& a, const Vec3& b) noexcept { return Vec3(a.x - b.x, a.y - b.y, a.z - b.z); }
 	constexpr Vec3 operator*(const Vec3& v, float s) noexcept { return Vec3(v.x * s, v.y * s, v.z * s); }
 	constexpr Vec3 operator*(float s, const Vec3& v) noexcept { return v * s; }
 	constexpr Vec3 operator/(const Vec3& v, float s) noexcept { return Vec3(v.x / s, v.y / s, v.z / s); }
 
+	constexpr Vec3& operator*=(Vec3& v, float s) noexcept {
+		v = v * s;
+		return v;
+	}
+
 	constexpr Vec4 operator+(const Vec4& a, const Vec4& b) noexcept { return Vec4(a.x + b.x, a.y + b.y, a.z + b.z, a.w + b.w); }
 	constexpr Vec4 operator-(const Vec4& a, const Vec4& b) noexcept { return Vec4(a.x - b.x, a.y - b.y, a.z - b.z, a.w - b.w); }
 	constexpr Vec4 operator*(const Vec4& v, float s) noexcept { return Vec4(v.x * s, v.y * s, v.z * s, v.w * s); }
 	constexpr Vec4 operator*(float s, const Vec4& v) noexcept { return v * s; }
 
+	inline float Dot(const Vec2& a, const Vec2& b) noexcept { return a.x * b.x + a.y * b.y; }
 	inline float Dot(const Vec3& a, const Vec3& b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
+	inline Vec3 Cross2(const Vec2& a, const Vec2& b) noexcept { return Vec3(0,0,a.x * b.y - a.y * b.y); }
 	inline Vec3 Cross(const Vec3& a, const Vec3& b) noexcept
 	{
 		return Vec3(
@@ -265,6 +289,50 @@ export namespace mathUtils
 	}
 
 	inline Mat4 operator*(const Mat4& a, const Mat4& b) noexcept { return Mul(a, b); }
+
+	Mat4 Inverse(const Mat4& m) noexcept
+	{
+		const Vec3 a = m[0].xyz();
+		const Vec3 b = m[1].xyz();
+		const Vec3 c = m[2].xyz();
+		const Vec3 d = m[3].xyz();
+
+		const float x = m(3,0);
+		const float y = m(3,1);
+		const float z = m(3,2);
+		const float w = m(3,3);
+
+		Vec3 s = Cross(a, b);
+		Vec3 t = Cross(c, d);
+		Vec3 u = a * y - b * x;
+		Vec3 v = c * w - d * z;
+
+		const float det = Dot(s, v) + Dot(t, u);
+
+		if (std::fabs(det) < 1e-8f)
+		{
+			return Mat4(1.0f);
+		}
+
+		float invDet = 1.0f / det;
+		s *= invDet;
+		t *= invDet;
+		u *= invDet;
+		v *= invDet;
+
+		Vec3 r0 = Cross(b, v) + t * y;
+		Vec3 r1 = Cross(v, a) - t * x;
+		Vec3 r2 = Cross(d, u) + s * w;
+		Vec3 r3 = Cross(u, c) - s * z;
+
+		Mat4 inverse(0.0f);
+		inverse[0] = Vec4(r0, -Dot(b, t));
+		inverse[1] = Vec4(r1, Dot(a, t));
+		inverse[2] = Vec4(r2, -Dot(d, s));
+		inverse[3] = Vec4(r3, Dot(c, s));
+
+		return Transpose(inverse);
+	}
 
 	// --- GLM-compatible transforms (column-major, post-multiply by transform) ---
 	inline Mat4 Translate(const Mat4& m, const Vec3& v) noexcept
