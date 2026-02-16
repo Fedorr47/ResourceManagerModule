@@ -43,6 +43,59 @@ namespace
     bool g_showDebugWindow = true;
     bool g_imguiInitialized = false;
 #endif
+    // ------------------------------------------------------------
+    // Main window menu (UE-style top menu via Win32 menu bar)
+    // ------------------------------------------------------------
+    constexpr UINT IDM_MAIN_EXIT = 0x1001;
+    constexpr UINT IDM_VIEW_DEBUG_WINDOW = 0x2001;
+
+    HMENU g_mainMenu = nullptr;
+
+#if defined(CORE_USE_DX12)
+    void UpdateMainMenuDebugWindowCheck()
+    {
+        if (!g_mainMenu)
+        {
+            return;
+        }
+
+        const UINT enableFlags = MF_BYCOMMAND | ((g_debugWindow && g_debugWindow->hwnd) ? MF_ENABLED : MF_GRAYED);
+        EnableMenuItem(g_mainMenu, IDM_VIEW_DEBUG_WINDOW, enableFlags);
+
+        const UINT checkFlags = MF_BYCOMMAND | (g_showDebugWindow ? MF_CHECKED : MF_UNCHECKED);
+        CheckMenuItem(g_mainMenu, IDM_VIEW_DEBUG_WINDOW, checkFlags);
+
+        if (g_window && g_window->hwnd)
+        {
+            DrawMenuBar(g_window->hwnd);
+        }
+    }
+#endif
+
+    HMENU CreateMainMenu(bool enableDebugItem, bool debugChecked)
+    {
+        HMENU menu = CreateMenu();
+        HMENU mainPopup = CreatePopupMenu();
+        HMENU viewPopup = CreatePopupMenu();
+
+        AppendMenuW(mainPopup, MF_STRING, IDM_MAIN_EXIT, L"Exit");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(mainPopup), L"Main");
+
+        UINT viewFlags = MF_STRING;
+        if (!enableDebugItem)
+        {
+            viewFlags |= MF_GRAYED;
+        }
+        if (debugChecked)
+        {
+            viewFlags |= MF_CHECKED;
+        }
+
+        AppendMenuW(viewPopup, viewFlags, IDM_VIEW_DEBUG_WINDOW, L"Open Debug Window\tF1");
+        AppendMenuW(menu, MF_POPUP, reinterpret_cast<UINT_PTR>(viewPopup), L"View");
+
+        return menu;
+    }
 
     LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
@@ -63,12 +116,45 @@ namespace
 
         switch (msg)
         {
+        case WM_COMMAND:
+        {
+            const int cmdId = static_cast<int>(LOWORD(wParam));
+            if (g_window && hwnd == g_window->hwnd)
+            {
+                switch (cmdId)
+                {
+                case IDM_MAIN_EXIT:
+                    DestroyWindow(hwnd);
+                    return 0;
+
+#if defined(CORE_USE_DX12)
+                case IDM_VIEW_DEBUG_WINDOW:
+                    g_showDebugWindow = !g_showDebugWindow;
+                    if (g_debugWindow && g_debugWindow->hwnd)
+                    {
+                        ShowWindow(g_debugWindow->hwnd, g_showDebugWindow ? SW_SHOW : SW_HIDE);
+                        if (g_showDebugWindow)
+                        {
+                            SetForegroundWindow(g_debugWindow->hwnd);
+                        }
+                    }
+                    UpdateMainMenuDebugWindowCheck();
+                    return 0;
+#endif
+
+                default:
+                    break;
+                }
+            }
+            break;
+        }
         case WM_CLOSE:
             #if defined(CORE_USE_DX12)
             if (g_debugWindow && hwnd == g_debugWindow->hwnd)
             {
                 ShowWindow(hwnd, SW_HIDE);
                 g_showDebugWindow = false;
+                UpdateMainMenuDebugWindowCheck();
                 return 0;
             }
             #endif
@@ -136,6 +222,7 @@ namespace
                             SetForegroundWindow(g_debugWindow->hwnd);
                         }
                     }
+                    UpdateMainMenuDebugWindowCheck();
                 }
                 return 0;
             }
@@ -149,7 +236,7 @@ namespace
         return DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
-    Win32Window CreateWindowWin32(int width, int height, const std::wstring& title, bool show = true)
+    Win32Window CreateWindowWin32(int width, int height, const std::wstring& title, bool show = true, HMENU menu = nullptr)
     {
         Win32Window window{};
         window.width = width;
@@ -179,7 +266,7 @@ namespace
         const DWORD style = WS_OVERLAPPEDWINDOW;
 
         RECT rect{ 0, 0, width, height };
-        AdjustWindowRect(&rect, style, FALSE);
+        AdjustWindowRect(&rect, style, menu != nullptr);
 
         window.hwnd = CreateWindowExW(
             0,
@@ -191,7 +278,7 @@ namespace
             rect.right - rect.left,
             rect.bottom - rect.top,
             nullptr,
-            nullptr,
+            menu,
             instanceHandle,
             nullptr);
 
@@ -602,7 +689,19 @@ int main(int argc, char** argv)
         const AppConfig config{};
         const rhi::Backend requestedBackend = ParseBackendFromArgs(argc, argv);
 
-        Win32Window window = CreateWindowWin32(config.windowWidth, config.windowHeight, config.windowTitle);
+        const bool canUseDebugWindow =
+#if defined(CORE_USE_DX12)
+            (requestedBackend == rhi::Backend::DirectX12);
+#else
+            false;
+#endif
+
+#if defined(CORE_USE_DX12)
+        g_showDebugWindow = canUseDebugWindow;
+#endif
+
+        g_mainMenu = CreateMainMenu(canUseDebugWindow, canUseDebugWindow);
+        Win32Window window = CreateWindowWin32(config.windowWidth, config.windowHeight, config.windowTitle, /*show=*/true, g_mainMenu);
         g_window = &window;
 
 #if defined(CORE_USE_DX12)
@@ -610,8 +709,9 @@ int main(int argc, char** argv)
         std::unique_ptr<rhi::IRHISwapChain> debugSwapChain;
         if (requestedBackend == rhi::Backend::DirectX12)
         {
-            debugWindow = CreateWindowWin32(900, 900, L"CoreEngineModule - Debug UI", /*show=*/true);
+            debugWindow = CreateWindowWin32(900, 900, L"CoreEngineModule - Debug UI", /*show=*/g_showDebugWindow);
             g_debugWindow = &debugWindow;
+            UpdateMainMenuDebugWindowCheck();
         }
 #endif
 
