@@ -195,12 +195,16 @@ export namespace rendern
 
 		DebugRay debugPickRay{};
 
+		// Editor selection (runtime-only). Index into LevelAsset::nodes.
+		int editorSelectedNode{ -1 };
+
 		void Clear()
 		{
 			drawItems.clear();
 			lights.clear();
 			skyboxDescIndex = 0;
 			debugPickRay = {};
+			editorSelectedNode = -1;
 
 		}
 

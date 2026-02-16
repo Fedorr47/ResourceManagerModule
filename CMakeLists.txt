@@ -268,6 +268,8 @@ set(COMMON_MODULES
   Render/Scene/Scene.cppm
   Render/Scene/Level.cppm
 
+  Render/Scene/Picking.cppm
+
   Render/Scene/CameraController.cppm
 
   Render/Model/ObjLoader.cppm

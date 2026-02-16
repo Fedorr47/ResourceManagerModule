@@ -739,6 +739,49 @@ int main(int argc, char** argv)
             win32Input.NewFrame(window.hwnd);
             cameraController.Update(deltaSeconds, win32Input.State(), scene.camera);
 
+            // Keep draw item transforms in sync even when the debug UI is closed.
+            levelInstance.SyncTransformsIfDirty(levelAsset, scene);
+
+            // Mouse picking in MAIN viewport (LMB selects a node).
+            {
+                const rendern::InputState& in = win32Input.State();
+                if (in.hasFocus && in.KeyPressed(VK_LBUTTON) && !in.mouse.rmbDown && !in.capture.captureMouse)
+                {
+                    POINT pt{};
+                    if (GetCursorPos(&pt) && ScreenToClient(window.hwnd, &pt))
+                    {
+                        const int mx = pt.x;
+                        const int my = pt.y;
+
+                        if (mx >= 0 && my >= 0 && mx < window.width && my < window.height)
+                        {
+                            const rendern::PickResult pick = rendern::PickNodeUnderScreenPoint(
+                                scene,
+                                levelInstance,
+                                static_cast<float>(mx),
+                                static_cast<float>(my),
+                                static_cast<float>(window.width),
+                                static_cast<float>(window.height));
+
+                            scene.debugPickRay.enabled = true;
+                            scene.debugPickRay.origin = pick.rayOrigin;
+                            scene.debugPickRay.direction = pick.rayDir;
+                            scene.debugPickRay.hit = (pick.nodeIndex >= 0) && std::isfinite(pick.t);
+                            scene.debugPickRay.length = scene.debugPickRay.hit ? pick.t : scene.camera.farZ;
+
+                            if (scene.debugPickRay.hit && levelInstance.IsNodeAlive(levelAsset, pick.nodeIndex))
+                            {
+                                scene.editorSelectedNode = pick.nodeIndex;
+                            }
+                            else
+                            {
+                                scene.editorSelectedNode = -1;
+                            }
+                        }
+                    }
+                }
+            }
+
             // ImGui (optional) - rendered into a separate debug window swapchain
             const void* imguiDrawData = BuildImGuiFrameIfEnabled(*device, rendererSettings, scene, cameraController, levelAsset, levelInstance, assets);
 

@@ -616,16 +616,17 @@ namespace rendern::ui
         static char nameBuf[128]{};
         static char importPathBuf[512]{};
 
+        // Selection is driven by the main viewport (mouse picking) or by this UI.
+        if (scene.editorSelectedNode != selectedNode)
+        {
+            selectedNode = scene.editorSelectedNode;
+        }
+
         // Save state
         static char savePathBuf[512]{};
         static char saveStatusBuf[512]{};
         static std::string cachedSourcePath;
         static bool saveStatusIsError = false;
-
-        static bool haveRay = false;
-        static Ray lastRay{};
-        static float lastRayLen = 5.0f;
-        static bool lastRayHit = false;
 
         // Keep save path input synced with loaded sourcePath (unless user edits it).
         if (cachedSourcePath != level.sourcePath)
@@ -633,63 +634,6 @@ namespace rendern::ui
             cachedSourcePath = level.sourcePath;
             const std::string fallback = cachedSourcePath.empty() ? std::string("levels/edited.level.json") : cachedSourcePath;
             std::snprintf(savePathBuf, sizeof(savePathBuf), "%s", fallback.c_str());
-        }
-
-        // ------------------------------------------------------------
-        // Mouse picking (click in viewport selects a node)
-        // ------------------------------------------------------------
-        {
-            const ImGuiIO& io = ImGui::GetIO();
-            static ImVec2 mousePos{};
-            static ImVec2 displaySize{};
-
-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse)
-            {
-                mousePos = io.MousePos;
-                displaySize = io.DisplaySize;
-
-                if (mousePos.x >= 0.0f && mousePos.y >= 0.0f && mousePos.x <= displaySize.x && mousePos.y <= displaySize.y)
-                {
-                    float bestT = 0.0f;
-                    Ray ray{};
-
-                    const int picked = PickNodeUnderMouse(scene, levelInst, mousePos, displaySize, camCtl, bestT, ray);
-
-                    haveRay = true;
-                    lastRay = ray;
-
-                    lastRayHit = (picked >= 0) && std::isfinite(bestT);
-                    lastRayLen = lastRayHit ? bestT : scene.camera.farZ;
-
-                    if (picked >= 0 && picked < static_cast<int>(level.nodes.size()) &&
-                        level.nodes[static_cast<std::size_t>(picked)].alive)
-                    {
-                        selectedNode = picked;
-                    }
-                    else
-                    {
-                        selectedNode = -1;
-                    }
-                }
-            }
-
-            // Expose pick ray to main-view debug draw.
-
-            scene.debugPickRay.enabled = haveRay;
-
-            if (haveRay)
-
-            {
-
-            	scene.debugPickRay.origin = lastRay.origin;
-
-            	scene.debugPickRay.direction = lastRay.dir;
-
-            	scene.debugPickRay.length = lastRayLen;
-
-            	scene.debugPickRay.hit = lastRayHit;
-
-            }
         }
 
         // ------------------------------------------------------------
@@ -1166,6 +1110,9 @@ namespace rendern::ui
         }
 
         ImGui::EndChild();
+
+        // Expose selection to the rest of the app (main viewport already writes here too).
+        scene.editorSelectedNode = selectedNode;
 
         // Push transforms to Scene if needed
         levelInst.SyncTransformsIfDirty(level, scene);

@@ -1,0 +1,5460 @@
+diff -ruN v1_orig/CMakeLists.txt v1_mod/CMakeLists.txt
+--- v1_orig/CMakeLists.txt	2026-02-14 14:23:44.000000000 +0000
++++ v1_mod/CMakeLists.txt	2026-02-16 10:26:02.800338403 +0000
+@@ -1,394 +1,396 @@
+-cmake_minimum_required(VERSION 3.30 FATAL_ERROR)
+-
+-# ------------------------------------------------------------
+-# Experimental: import std;
+-# ------------------------------------------------------------
+-option(ENABLE_IMPORT_STD "Enable CMake experimental support for `import std;`" ON)
+-
+-if (ENABLE_IMPORT_STD AND NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
+-  set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
+-    "d0edc3af-4c50-42ea-a356-e2862fe7a444"
+-    CACHE STRING "" FORCE)
+-endif()
+-
+-# Modules dyn-deps (needed for correct build order with Ninja/MSVC)
+-set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP 1)
+-
+-project(CoreEngineModule LANGUAGES C CXX)
+-
+-include(FetchContent)
+-
+-set(CMAKE_CXX_STANDARD 23)
+-set(CMAKE_CXX_STANDARD_REQUIRED ON)
+-set(CMAKE_CXX_EXTENSIONS OFF)
+-
+-# Modules
+-set(CMAKE_CXX_SCAN_FOR_MODULES ON)
+-if (ENABLE_IMPORT_STD)
+-  # Enable `import std;` support for targets created after this line
+-  set(CMAKE_CXX_MODULE_STD 1)
+-endif()
+-
+-option(USE_SUBMODULES "Prefer extern/* submodules if present" ON)
+-option(WITH_TESTS "Build tests" ON)
+-
+-# ------------------------------------------------------------
+-# --- Backend switch (cache) ---
+-# ------------------------------------------------------------
+-set(CORE_RENDER_BACKEND "GL" CACHE STRING "Render backend: GL or DX12")
+-set_property(CACHE CORE_RENDER_BACKEND PROPERTY STRINGS "GL" "DX12")
+-
+-if (CORE_RENDER_BACKEND STREQUAL "DX12" AND NOT WIN32)
+-  message(FATAL_ERROR "DX12 backend is Windows-only")
+-endif()
+-
+-if (CORE_RENDER_BACKEND STREQUAL "GL")
+-# ------------------------------------------------------------
+-# GLFW
+-# ------------------------------------------------------------
+-if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/glfw/CMakeLists.txt")
+-  add_subdirectory(extern/glfw EXCLUDE_FROM_ALL)
+-else()
+-  FetchContent_Declare(glfw
+-    GIT_REPOSITORY https://github.com/glfw/glfw.git
+-    GIT_TAG        3.4
+-  )
+-  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+-  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+-  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+-  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+-  FetchContent_MakeAvailable(glfw)
+-endif()
+-
+-if (TARGET glfw AND NOT TARGET GLFW::glfw)
+-  add_library(GLFW::glfw ALIAS glfw)
+-endif()
+-
+-
+-endif()
+-
+-if (CORE_RENDER_BACKEND STREQUAL "GL")
+-# ------------------------------------------------------------
+-# GLM (header-only)
+-# ------------------------------------------------------------
+-if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/glm/CMakeLists.txt")
+-  add_subdirectory(extern/glm EXCLUDE_FROM_ALL)
+-else()
+-  FetchContent_Declare(glm
+-    GIT_REPOSITORY https://github.com/g-truc/glm.git
+-    GIT_TAG        1.0.1
+-  )
+-  FetchContent_MakeAvailable(glm)
+-endif()
+-
+-if (NOT TARGET glm::glm)
+-  add_library(glm::glm INTERFACE IMPORTED)
+-  if (DEFINED glm_SOURCE_DIR AND EXISTS "${glm_SOURCE_DIR}/glm/glm.hpp")
+-    set_target_properties(glm::glm PROPERTIES
+-      INTERFACE_INCLUDE_DIRECTORIES "${glm_SOURCE_DIR}"
+-    )
+-  else()
+-    message(FATAL_ERROR "glm::glm target not found and glm_SOURCE_DIR is unknown")
+-  endif()
+-endif()
+-
+-
+-endif()
+-
+-# ------------------------------------------------------------
+-# OpenGL (only needed for GL backend)
+-# ------------------------------------------------------------
+-set(OPENGL_TARGET "")
+-if (CORE_RENDER_BACKEND STREQUAL "GL")
+-  find_package(OpenGL REQUIRED)
+-  if (TARGET OpenGL::GL)
+-    set(OPENGL_TARGET OpenGL::GL)
+-  elseif (TARGET OpenGL::OpenGL)
+-    set(OPENGL_TARGET OpenGL::OpenGL)
+-  else()
+-    message(FATAL_ERROR "No suitable OpenGL target found (expected OpenGL::GL or OpenGL::OpenGL)")
+-  endif()
+-endif()
+-
+-if (CORE_RENDER_BACKEND STREQUAL "GL")
+-# ------------------------------------------------------------
+-# GLEW (build/find ALWAYS, link only for GL)
+-# ------------------------------------------------------------
+-set(GLEW_USE_STATIC_LIBS TRUE)
+-find_package(GLEW QUIET)
+-
+-set(GLEW_HEADERS_DIR "")
+-
+-if (GLEW_FOUND AND TARGET GLEW::GLEW)
+-  # ok
+-else()
+-  FetchContent_Declare(glew_src
+-    URL https://github.com/nigels-com/glew/releases/download/glew-2.3.0/glew-2.3.0.tgz
+-    SOURCE_SUBDIR build/cmake
+-  )
+-  set(ONLY_LIBS ON  CACHE BOOL "" FORCE)
+-  set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
+-  FetchContent_MakeAvailable(glew_src)
+-
+-  if (TARGET glew_s AND NOT TARGET GLEW::GLEW)
+-    add_library(GLEW::GLEW ALIAS glew_s)
+-  elseif (TARGET glew AND NOT TARGET GLEW::GLEW)
+-    add_library(GLEW::GLEW ALIAS glew)
+-  elseif (TARGET libglew_static AND NOT TARGET GLEW::GLEW)
+-    add_library(GLEW::GLEW ALIAS libglew_static)
+-  elseif (TARGET libglew_shared AND NOT TARGET GLEW::GLEW)
+-    add_library(GLEW::GLEW ALIAS libglew_shared)
+-  endif()
+-
+-  if (DEFINED glew_src_SOURCE_DIR AND EXISTS "${glew_src_SOURCE_DIR}/include/GL/glew.h")
+-    set(GLEW_HEADERS_DIR "${glew_src_SOURCE_DIR}/include")
+-  endif()
+-endif()
+-
+-# Если ты в GL бекенде — GLEW обязан быть.
+-if (CORE_RENDER_BACKEND STREQUAL "GL" AND NOT TARGET GLEW::GLEW)
+-  message(FATAL_ERROR "GLEW target not available for GL backend.")
+-endif()
+-
+-
+-endif()
+-
+-# ------------------------------------------------------------
+-# STB
+-# ------------------------------------------------------------
+-FetchContent_Declare(stb
+-  GIT_REPOSITORY https://github.com/nothings/stb.git
+-  GIT_TAG master
+-)
+-FetchContent_MakeAvailable(stb)
+-
+-add_library(stb_headers INTERFACE)
+-target_include_directories(stb_headers INTERFACE "${stb_SOURCE_DIR}")
+-
+-
+-# ------------------------------------------------------------
+-# ImGui (DX12 + Win32 only)
+-# ------------------------------------------------------------
+-if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
+-  set(IMGUI_DIR "")
+-
+-  if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/imgui.cpp")
+-    set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui")
+-  else()
+-    FetchContent_Declare(imgui
+-      GIT_REPOSITORY https://github.com/ocornut/imgui.git
+-      GIT_TAG        v1.91.0
+-    )
+-    FetchContent_MakeAvailable(imgui)
+-    set(IMGUI_DIR "${imgui_SOURCE_DIR}")
+-  endif()
+-
+-  add_library(imgui STATIC
+-    "${IMGUI_DIR}/imgui.cpp"
+-    "${IMGUI_DIR}/imgui_draw.cpp"
+-    "${IMGUI_DIR}/imgui_tables.cpp"
+-    "${IMGUI_DIR}/imgui_widgets.cpp"
+-    "${IMGUI_DIR}/imgui_demo.cpp"
+-    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
+-    "${IMGUI_DIR}/backends/imgui_impl_dx12.cpp"
+-  )
+-
+-  target_include_directories(imgui PUBLIC
+-    "${IMGUI_DIR}"
+-    "${IMGUI_DIR}/backends"
+-  )
+-
+-  # Also allow imgui.cpp to see a project-level imconfig.h (if you have one in the repo root),
+-  # so that both the library and the app compile with the same config and struct layouts.
+-  target_include_directories(imgui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+-
+-  # Make sure the application picks the same ImGui headers that the imgui target was built with.
+-  # Otherwise IMGUI_CHECKVERSION() can assert on mismatched struct layout.
+-  set(IMGUI_INCLUDE_DIRS "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
+-
+-  # IMPORTANT: Do NOT set IMGUI_DISABLE_OBSOLETE_FUNCTIONS only for the imgui target.
+-  # That macro can change public struct layouts (ImGuiIO, etc.) and will trip IMGUI_CHECKVERSION()
+-  # if the application includes imgui.h without the same macro.
+-  # Keep defaults. If you ever need it, set it PUBLIC so it propagates to app.
+-
+-  # Backend needs D3D12/DXGI. (dxguid for IID definitions)
+-  target_link_libraries(imgui PUBLIC d3d12 dxgi dxguid)
+-endif()
+-
+-# ------------------------------------------------------------
+-# CoreEngineModuleLib
+-# ------------------------------------------------------------
+-add_library(CoreEngineModuleLib STATIC)
+-target_compile_features(CoreEngineModuleLib PUBLIC cxx_std_23)
+-
+-target_compile_definitions(CoreEngineModuleLib
+-  PUBLIC
+-    $<$<STREQUAL:${CORE_RENDER_BACKEND},DX12>:CORE_USE_DX12=1>
+-    $<$<STREQUAL:${CORE_RENDER_BACKEND},GL>:CORE_USE_GL=1>
+-)
+-
+-# If you vendor d3dx12.h in extern/, allow includes like "d3dx12.h" or "extern/d3dx12.h"
+-target_include_directories(CoreEngineModuleLib
+-  PUBLIC
+-    "${CMAKE_CURRENT_SOURCE_DIR}"
+-)
+-
+-set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
+-
+-set(COMMON_MODULES
+-  Core/Core.ixx
+-
+-  Core/Math/MathUtils.cppm
+-
+-  Input/Input.cppm
+-  Input/InputCore.cppm
+-  Input/ControllerBase.cppm
+-  Input/Win32Input.cppm
+-
+-  Timer/GameTimer.ixx
+-  Timer/GameTimer.cppm
+-
+-  Render/Render.ixx
+-  Render/RenderCore.cppm
+-  Render/RHI.cppm
+-  Render/RenderGraph.cppm
+-  Render/Debug/DebugDraw.cppm
+-  Render/Bindless.cppm
+-  Render/GpuMemory.cppm
+-  Render/RendererSettings.cppm
+-  Render/Renderer.cppm
+-  
+-  Render/Sync.cppm
+-  Render/FileSystem.cppm
+-
+-  Render/Shader/ShaderFiles.cppm
+-  Render/Shader/ShaderSystem.cppm
+-
+-  Render/Scene/SceneBridge.cppm
+-  Render/Scene/Scene.cppm
+-  Render/Scene/Level.cppm
+-
+-  Render/Scene/CameraController.cppm
+-
+-  Render/Model/ObjLoader.cppm
+-  Render/Model/Mesh/Mesh.cppm
+-
+-  Render/Decoders/TextureDecoderSTB.cppm
+-
+-  Assets/ResourceManager.ixx
+-  Assets/ResourceManager_core.cppm
+-  Assets/ResourceManager_texture.cppm
+-  Assets/ResourceManager_mesh.cppm
+-  Assets/AssetManager.cppm
+-)
+-
+-set(GL_MODULES
+-  Render/OpenGL/RenderGL.ixx
+-  Render/OpenGL/OpenGLCore.cppm
+-  Render/OpenGL/OpenGLRHI.cppm
+-  Render/OpenGL/OpenGLRenderer.cppm
+-  Render/OpenGL/OpenGLRenderer.cppm
+-)
+-
+-set(DX12_MODULES
+-  Render/DirectX12/RenderDX12.ixx
+-  Render/DirectX12/DirectX12Core.cppm
+-  Render/DirectX12/DirectX12RHI.cppm
+-  Render/DirectX12/DirectX12Renderer.cppm
+-  Render/DirectX12/DebugDrawRendererDX12.cppm
+-  Render/DirectX12/DirectX12TextureUploader.cppm
+-  Render/ImGui/ImGuiDebugUI.cppm
+-)
+-
+-set(CORE_MODULES ${COMMON_MODULES})
+-if (CORE_RENDER_BACKEND STREQUAL "DX12")
+-  list(APPEND CORE_MODULES ${DX12_MODULES})
+-else()
+-  list(APPEND CORE_MODULES ${GL_MODULES})
+-endif()
+-list(REMOVE_DUPLICATES CORE_MODULES)
+-
+-set(CORE_MODULES_ABS "")
+-foreach(f IN LISTS CORE_MODULES)
+-  list(APPEND CORE_MODULES_ABS "${SRC_DIR}/${f}")
+-endforeach()
+-
+-target_sources(CoreEngineModuleLib
+-  PUBLIC
+-    FILE_SET cxx_modules TYPE CXX_MODULES
+-      FILES ${CORE_MODULES_ABS}
+-)
+-
+-# Common deps
+-target_link_libraries(CoreEngineModuleLib
+-  PUBLIC
+-    stb_headers
+-)
+-
+-# GL-only deps (link AFTER CoreEngineModuleLib exists)
+-if (CORE_RENDER_BACKEND STREQUAL "GL")
+-  if (GLEW_HEADERS_DIR)
+-    target_include_directories(CoreEngineModuleLib PUBLIC "${GLEW_HEADERS_DIR}")
+-  endif()
+-
+-  target_link_libraries(CoreEngineModuleLib PUBLIC GLFW::glfw glm::glm GLEW::GLEW ${OPENGL_TARGET})
+-
+-  target_compile_definitions(CoreEngineModuleLib
+-    PUBLIC
+-      $<$<TARGET_EXISTS:glew_s>:GLEW_STATIC>
+-      $<$<TARGET_EXISTS:libglew_static>:GLEW_STATIC>
+-  )
+-endif()
+-
+-# DX12-only deps
+-if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
+-  target_include_directories(CoreEngineModuleLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/extern")
+-  target_link_libraries(CoreEngineModuleLib PUBLIC d3d12 dxgi dxguid)
+-  if (TARGET imgui)
+-    target_link_libraries(CoreEngineModuleLib PUBLIC imgui)
+-  endif()
+-endif()
+-
+-# ------------------------------------------------------------
+-# App
+-# ------------------------------------------------------------
+-add_executable(app src/main.cpp)
+-
+-add_custom_command(TARGET app POST_BUILD
+-  COMMAND ${CMAKE_COMMAND} -E copy_directory
+-          "${CMAKE_SOURCE_DIR}/assets"
+-          "$<TARGET_FILE_DIR:app>/assets"
+-)
+-
+-target_compile_features(app PRIVATE cxx_std_23)
+-target_link_libraries(app PRIVATE CoreEngineModuleLib)
+-
+-if (CORE_RENDER_BACKEND STREQUAL "DX12")
+-  # Put ImGui include dirs BEFORE project/extern include dirs to avoid picking up a stray imgui.h from elsewhere.
+-  target_include_directories(app SYSTEM BEFORE PRIVATE ${IMGUI_INCLUDE_DIRS})
+-endif()
+-
+-if (WIN32)
+-  find_library(D3DCOMPILER_LIB NAMES d3dcompiler_47 d3dcompiler REQUIRED)
+-  target_link_libraries(CoreEngineModuleLib PRIVATE ${D3DCOMPILER_LIB})
+-endif()
+-
+-# ------------------------------------------------------------
+-# Tests
+-# ------------------------------------------------------------
+-if (WITH_TESTS)
+-  enable_testing()
+-
+-  if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/googletest/CMakeLists.txt")
+-    add_subdirectory(extern/googletest EXCLUDE_FROM_ALL)
+-  else()
+-    FetchContent_Declare(googletest
+-      GIT_REPOSITORY https://github.com/google/googletest.git
+-      GIT_TAG        v1.14.0
+-    )
+-    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+-    FetchContent_MakeAvailable(googletest)
+-  endif()
+-
+-  add_subdirectory(tests)
+-endif()
++cmake_minimum_required(VERSION 3.30 FATAL_ERROR)
++
++# ------------------------------------------------------------
++# Experimental: import std;
++# ------------------------------------------------------------
++option(ENABLE_IMPORT_STD "Enable CMake experimental support for `import std;`" ON)
++
++if (ENABLE_IMPORT_STD AND NOT DEFINED CMAKE_EXPERIMENTAL_CXX_IMPORT_STD)
++  set(CMAKE_EXPERIMENTAL_CXX_IMPORT_STD
++    "d0edc3af-4c50-42ea-a356-e2862fe7a444"
++    CACHE STRING "" FORCE)
++endif()
++
++# Modules dyn-deps (needed for correct build order with Ninja/MSVC)
++set(CMAKE_EXPERIMENTAL_CXX_MODULE_DYNDEP 1)
++
++project(CoreEngineModule LANGUAGES C CXX)
++
++include(FetchContent)
++
++set(CMAKE_CXX_STANDARD 23)
++set(CMAKE_CXX_STANDARD_REQUIRED ON)
++set(CMAKE_CXX_EXTENSIONS OFF)
++
++# Modules
++set(CMAKE_CXX_SCAN_FOR_MODULES ON)
++if (ENABLE_IMPORT_STD)
++  # Enable `import std;` support for targets created after this line
++  set(CMAKE_CXX_MODULE_STD 1)
++endif()
++
++option(USE_SUBMODULES "Prefer extern/* submodules if present" ON)
++option(WITH_TESTS "Build tests" ON)
++
++# ------------------------------------------------------------
++# --- Backend switch (cache) ---
++# ------------------------------------------------------------
++set(CORE_RENDER_BACKEND "GL" CACHE STRING "Render backend: GL or DX12")
++set_property(CACHE CORE_RENDER_BACKEND PROPERTY STRINGS "GL" "DX12")
++
++if (CORE_RENDER_BACKEND STREQUAL "DX12" AND NOT WIN32)
++  message(FATAL_ERROR "DX12 backend is Windows-only")
++endif()
++
++if (CORE_RENDER_BACKEND STREQUAL "GL")
++# ------------------------------------------------------------
++# GLFW
++# ------------------------------------------------------------
++if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/glfw/CMakeLists.txt")
++  add_subdirectory(extern/glfw EXCLUDE_FROM_ALL)
++else()
++  FetchContent_Declare(glfw
++    GIT_REPOSITORY https://github.com/glfw/glfw.git
++    GIT_TAG        3.4
++  )
++  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
++  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
++  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
++  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
++  FetchContent_MakeAvailable(glfw)
++endif()
++
++if (TARGET glfw AND NOT TARGET GLFW::glfw)
++  add_library(GLFW::glfw ALIAS glfw)
++endif()
++
++
++endif()
++
++if (CORE_RENDER_BACKEND STREQUAL "GL")
++# ------------------------------------------------------------
++# GLM (header-only)
++# ------------------------------------------------------------
++if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/glm/CMakeLists.txt")
++  add_subdirectory(extern/glm EXCLUDE_FROM_ALL)
++else()
++  FetchContent_Declare(glm
++    GIT_REPOSITORY https://github.com/g-truc/glm.git
++    GIT_TAG        1.0.1
++  )
++  FetchContent_MakeAvailable(glm)
++endif()
++
++if (NOT TARGET glm::glm)
++  add_library(glm::glm INTERFACE IMPORTED)
++  if (DEFINED glm_SOURCE_DIR AND EXISTS "${glm_SOURCE_DIR}/glm/glm.hpp")
++    set_target_properties(glm::glm PROPERTIES
++      INTERFACE_INCLUDE_DIRECTORIES "${glm_SOURCE_DIR}"
++    )
++  else()
++    message(FATAL_ERROR "glm::glm target not found and glm_SOURCE_DIR is unknown")
++  endif()
++endif()
++
++
++endif()
++
++# ------------------------------------------------------------
++# OpenGL (only needed for GL backend)
++# ------------------------------------------------------------
++set(OPENGL_TARGET "")
++if (CORE_RENDER_BACKEND STREQUAL "GL")
++  find_package(OpenGL REQUIRED)
++  if (TARGET OpenGL::GL)
++    set(OPENGL_TARGET OpenGL::GL)
++  elseif (TARGET OpenGL::OpenGL)
++    set(OPENGL_TARGET OpenGL::OpenGL)
++  else()
++    message(FATAL_ERROR "No suitable OpenGL target found (expected OpenGL::GL or OpenGL::OpenGL)")
++  endif()
++endif()
++
++if (CORE_RENDER_BACKEND STREQUAL "GL")
++# ------------------------------------------------------------
++# GLEW (build/find ALWAYS, link only for GL)
++# ------------------------------------------------------------
++set(GLEW_USE_STATIC_LIBS TRUE)
++find_package(GLEW QUIET)
++
++set(GLEW_HEADERS_DIR "")
++
++if (GLEW_FOUND AND TARGET GLEW::GLEW)
++  # ok
++else()
++  FetchContent_Declare(glew_src
++    URL https://github.com/nigels-com/glew/releases/download/glew-2.3.0/glew-2.3.0.tgz
++    SOURCE_SUBDIR build/cmake
++  )
++  set(ONLY_LIBS ON  CACHE BOOL "" FORCE)
++  set(BUILD_UTILS OFF CACHE BOOL "" FORCE)
++  FetchContent_MakeAvailable(glew_src)
++
++  if (TARGET glew_s AND NOT TARGET GLEW::GLEW)
++    add_library(GLEW::GLEW ALIAS glew_s)
++  elseif (TARGET glew AND NOT TARGET GLEW::GLEW)
++    add_library(GLEW::GLEW ALIAS glew)
++  elseif (TARGET libglew_static AND NOT TARGET GLEW::GLEW)
++    add_library(GLEW::GLEW ALIAS libglew_static)
++  elseif (TARGET libglew_shared AND NOT TARGET GLEW::GLEW)
++    add_library(GLEW::GLEW ALIAS libglew_shared)
++  endif()
++
++  if (DEFINED glew_src_SOURCE_DIR AND EXISTS "${glew_src_SOURCE_DIR}/include/GL/glew.h")
++    set(GLEW_HEADERS_DIR "${glew_src_SOURCE_DIR}/include")
++  endif()
++endif()
++
++# Если ты в GL бекенде — GLEW обязан быть.
++if (CORE_RENDER_BACKEND STREQUAL "GL" AND NOT TARGET GLEW::GLEW)
++  message(FATAL_ERROR "GLEW target not available for GL backend.")
++endif()
++
++
++endif()
++
++# ------------------------------------------------------------
++# STB
++# ------------------------------------------------------------
++FetchContent_Declare(stb
++  GIT_REPOSITORY https://github.com/nothings/stb.git
++  GIT_TAG master
++)
++FetchContent_MakeAvailable(stb)
++
++add_library(stb_headers INTERFACE)
++target_include_directories(stb_headers INTERFACE "${stb_SOURCE_DIR}")
++
++
++# ------------------------------------------------------------
++# ImGui (DX12 + Win32 only)
++# ------------------------------------------------------------
++if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
++  set(IMGUI_DIR "")
++
++  if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui/imgui.cpp")
++    set(IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/extern/imgui")
++  else()
++    FetchContent_Declare(imgui
++      GIT_REPOSITORY https://github.com/ocornut/imgui.git
++      GIT_TAG        v1.91.0
++    )
++    FetchContent_MakeAvailable(imgui)
++    set(IMGUI_DIR "${imgui_SOURCE_DIR}")
++  endif()
++
++  add_library(imgui STATIC
++    "${IMGUI_DIR}/imgui.cpp"
++    "${IMGUI_DIR}/imgui_draw.cpp"
++    "${IMGUI_DIR}/imgui_tables.cpp"
++    "${IMGUI_DIR}/imgui_widgets.cpp"
++    "${IMGUI_DIR}/imgui_demo.cpp"
++    "${IMGUI_DIR}/backends/imgui_impl_win32.cpp"
++    "${IMGUI_DIR}/backends/imgui_impl_dx12.cpp"
++  )
++
++  target_include_directories(imgui PUBLIC
++    "${IMGUI_DIR}"
++    "${IMGUI_DIR}/backends"
++  )
++
++  # Also allow imgui.cpp to see a project-level imconfig.h (if you have one in the repo root),
++  # so that both the library and the app compile with the same config and struct layouts.
++  target_include_directories(imgui PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
++
++  # Make sure the application picks the same ImGui headers that the imgui target was built with.
++  # Otherwise IMGUI_CHECKVERSION() can assert on mismatched struct layout.
++  set(IMGUI_INCLUDE_DIRS "${IMGUI_DIR}" "${IMGUI_DIR}/backends")
++
++  # IMPORTANT: Do NOT set IMGUI_DISABLE_OBSOLETE_FUNCTIONS only for the imgui target.
++  # That macro can change public struct layouts (ImGuiIO, etc.) and will trip IMGUI_CHECKVERSION()
++  # if the application includes imgui.h without the same macro.
++  # Keep defaults. If you ever need it, set it PUBLIC so it propagates to app.
++
++  # Backend needs D3D12/DXGI. (dxguid for IID definitions)
++  target_link_libraries(imgui PUBLIC d3d12 dxgi dxguid)
++endif()
++
++# ------------------------------------------------------------
++# CoreEngineModuleLib
++# ------------------------------------------------------------
++add_library(CoreEngineModuleLib STATIC)
++target_compile_features(CoreEngineModuleLib PUBLIC cxx_std_23)
++
++target_compile_definitions(CoreEngineModuleLib
++  PUBLIC
++    $<$<STREQUAL:${CORE_RENDER_BACKEND},DX12>:CORE_USE_DX12=1>
++    $<$<STREQUAL:${CORE_RENDER_BACKEND},GL>:CORE_USE_GL=1>
++)
++
++# If you vendor d3dx12.h in extern/, allow includes like "d3dx12.h" or "extern/d3dx12.h"
++target_include_directories(CoreEngineModuleLib
++  PUBLIC
++    "${CMAKE_CURRENT_SOURCE_DIR}"
++)
++
++set(SRC_DIR "${CMAKE_CURRENT_SOURCE_DIR}/src")
++
++set(COMMON_MODULES
++  Core/Core.ixx
++
++  Core/Math/MathUtils.cppm
++
++  Input/Input.cppm
++  Input/InputCore.cppm
++  Input/ControllerBase.cppm
++  Input/Win32Input.cppm
++
++  Timer/GameTimer.ixx
++  Timer/GameTimer.cppm
++
++  Render/Render.ixx
++  Render/RenderCore.cppm
++  Render/RHI.cppm
++  Render/RenderGraph.cppm
++  Render/Debug/DebugDraw.cppm
++  Render/Bindless.cppm
++  Render/GpuMemory.cppm
++  Render/RendererSettings.cppm
++  Render/Renderer.cppm
++  
++  Render/Sync.cppm
++  Render/FileSystem.cppm
++
++  Render/Shader/ShaderFiles.cppm
++  Render/Shader/ShaderSystem.cppm
++
++  Render/Scene/SceneBridge.cppm
++  Render/Scene/Scene.cppm
++  Render/Scene/Level.cppm
++
++  Render/Scene/Picking.cppm
++
++  Render/Scene/CameraController.cppm
++
++  Render/Model/ObjLoader.cppm
++  Render/Model/Mesh/Mesh.cppm
++
++  Render/Decoders/TextureDecoderSTB.cppm
++
++  Assets/ResourceManager.ixx
++  Assets/ResourceManager_core.cppm
++  Assets/ResourceManager_texture.cppm
++  Assets/ResourceManager_mesh.cppm
++  Assets/AssetManager.cppm
++)
++
++set(GL_MODULES
++  Render/OpenGL/RenderGL.ixx
++  Render/OpenGL/OpenGLCore.cppm
++  Render/OpenGL/OpenGLRHI.cppm
++  Render/OpenGL/OpenGLRenderer.cppm
++  Render/OpenGL/OpenGLRenderer.cppm
++)
++
++set(DX12_MODULES
++  Render/DirectX12/RenderDX12.ixx
++  Render/DirectX12/DirectX12Core.cppm
++  Render/DirectX12/DirectX12RHI.cppm
++  Render/DirectX12/DirectX12Renderer.cppm
++  Render/DirectX12/DebugDrawRendererDX12.cppm
++  Render/DirectX12/DirectX12TextureUploader.cppm
++  Render/ImGui/ImGuiDebugUI.cppm
++)
++
++set(CORE_MODULES ${COMMON_MODULES})
++if (CORE_RENDER_BACKEND STREQUAL "DX12")
++  list(APPEND CORE_MODULES ${DX12_MODULES})
++else()
++  list(APPEND CORE_MODULES ${GL_MODULES})
++endif()
++list(REMOVE_DUPLICATES CORE_MODULES)
++
++set(CORE_MODULES_ABS "")
++foreach(f IN LISTS CORE_MODULES)
++  list(APPEND CORE_MODULES_ABS "${SRC_DIR}/${f}")
++endforeach()
++
++target_sources(CoreEngineModuleLib
++  PUBLIC
++    FILE_SET cxx_modules TYPE CXX_MODULES
++      FILES ${CORE_MODULES_ABS}
++)
++
++# Common deps
++target_link_libraries(CoreEngineModuleLib
++  PUBLIC
++    stb_headers
++)
++
++# GL-only deps (link AFTER CoreEngineModuleLib exists)
++if (CORE_RENDER_BACKEND STREQUAL "GL")
++  if (GLEW_HEADERS_DIR)
++    target_include_directories(CoreEngineModuleLib PUBLIC "${GLEW_HEADERS_DIR}")
++  endif()
++
++  target_link_libraries(CoreEngineModuleLib PUBLIC GLFW::glfw glm::glm GLEW::GLEW ${OPENGL_TARGET})
++
++  target_compile_definitions(CoreEngineModuleLib
++    PUBLIC
++      $<$<TARGET_EXISTS:glew_s>:GLEW_STATIC>
++      $<$<TARGET_EXISTS:libglew_static>:GLEW_STATIC>
++  )
++endif()
++
++# DX12-only deps
++if (WIN32 AND CORE_RENDER_BACKEND STREQUAL "DX12")
++  target_include_directories(CoreEngineModuleLib PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/extern")
++  target_link_libraries(CoreEngineModuleLib PUBLIC d3d12 dxgi dxguid)
++  if (TARGET imgui)
++    target_link_libraries(CoreEngineModuleLib PUBLIC imgui)
++  endif()
++endif()
++
++# ------------------------------------------------------------
++# App
++# ------------------------------------------------------------
++add_executable(app src/main.cpp)
++
++add_custom_command(TARGET app POST_BUILD
++  COMMAND ${CMAKE_COMMAND} -E copy_directory
++          "${CMAKE_SOURCE_DIR}/assets"
++          "$<TARGET_FILE_DIR:app>/assets"
++)
++
++target_compile_features(app PRIVATE cxx_std_23)
++target_link_libraries(app PRIVATE CoreEngineModuleLib)
++
++if (CORE_RENDER_BACKEND STREQUAL "DX12")
++  # Put ImGui include dirs BEFORE project/extern include dirs to avoid picking up a stray imgui.h from elsewhere.
++  target_include_directories(app SYSTEM BEFORE PRIVATE ${IMGUI_INCLUDE_DIRS})
++endif()
++
++if (WIN32)
++  find_library(D3DCOMPILER_LIB NAMES d3dcompiler_47 d3dcompiler REQUIRED)
++  target_link_libraries(CoreEngineModuleLib PRIVATE ${D3DCOMPILER_LIB})
++endif()
++
++# ------------------------------------------------------------
++# Tests
++# ------------------------------------------------------------
++if (WITH_TESTS)
++  enable_testing()
++
++  if (USE_SUBMODULES AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/extern/googletest/CMakeLists.txt")
++    add_subdirectory(extern/googletest EXCLUDE_FROM_ALL)
++  else()
++    FetchContent_Declare(googletest
++      GIT_REPOSITORY https://github.com/google/googletest.git
++      GIT_TAG        v1.14.0
++    )
++    set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
++    FetchContent_MakeAvailable(googletest)
++  endif()
++
++  add_subdirectory(tests)
++endif()
+diff -ruN v1_orig/src/Render/ImGui/ImGuiDebugUI.cppm v1_mod/src/Render/ImGui/ImGuiDebugUI.cppm
+--- v1_orig/src/Render/ImGui/ImGuiDebugUI.cppm	2026-02-14 15:27:24.000000000 +0000
++++ v1_mod/src/Render/ImGui/ImGuiDebugUI.cppm	2026-02-16 10:26:45.266691910 +0000
+@@ -1,1176 +1,1123 @@
+-module;
+-
+-#include <cstdio>
+-#include <cstring>
+-#include <cctype>
+-#include <limits>
+-#include <algorithm>
+-#include <cmath>
+-
+-#if defined(CORE_USE_DX12)
+-#include <imgui.h>
+-#endif
+-
+-// Debug UI panels implemented with Dear ImGui.
+-// NOTE: This module is built only for DX12 backend.
+-
+-export module core:imgui_debug_ui;
+-
+-import std;
+-
+-import :scene;
+-import :renderer_settings;
+-import :camera_controller;
+-import :math_utils;
+-import :level;
+-import :asset_manager;
+-
+-export namespace rendern::ui
+-{
+-    void DrawRendererDebugUI(rendern::RendererSettings& rs, rendern::Scene& scene, rendern::CameraController& camCtl);
+-
+-    // Minimal Level Editor:
+-    // - add/remove objects (recursive delete)
+-    // - choose mesh/material
+-    // - edit transform (position/rotation/scale)
+-    void DrawLevelEditorUI(rendern::LevelAsset& level, rendern::LevelInstance& levelInst, AssetManager& assets, rendern::Scene& scene, rendern::CameraController& camCtl);
+-}
+-
+-namespace rendern::ui
+-{
+-    namespace
+-    {
+-        constexpr const char* kLightTypeNames[] = { "Directional", "Point", "Spot" };
+-
+-        static int ToIndex(rendern::LightType t)
+-        {
+-            switch (t)
+-            {
+-            case rendern::LightType::Directional: return 0;
+-            case rendern::LightType::Point:       return 1;
+-            case rendern::LightType::Spot:        return 2;
+-            default:                             return 0;
+-            }
+-        }
+-
+-        static rendern::LightType FromIndex(int i)
+-        {
+-            switch (i)
+-            {
+-            case 0: return rendern::LightType::Directional;
+-            case 1: return rendern::LightType::Point;
+-            case 2: return rendern::LightType::Spot;
+-            default: return rendern::LightType::Directional;
+-            }
+-        }
+-
+-        static void EnsureNormalized(mathUtils::Vec3& v)
+-        {
+-            const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
+-            if (len2 > 1e-12f)
+-            {
+-                v = mathUtils::Normalize(v);
+-            }
+-            else
+-            {
+-                v = { 0.0f, -1.0f, 0.0f };
+-            }
+-        }
+-
+-        static bool DragVec3(const char* label, mathUtils::Vec3& v, float speed = 0.05f, float minv = 0.0f, float maxv = 0.0f)
+-        {
+-            float a[3] = { v.x, v.y, v.z };
+-            const bool changed = ImGui::DragFloat3(label, a, speed, minv, maxv, "%.3f");
+-            if (changed)
+-            {
+-                v.x = a[0];
+-                v.y = a[1];
+-                v.z = a[2];
+-            }
+-            return changed;
+-        }
+-
+-        static bool Color3(const char* label, mathUtils::Vec3& v)
+-        {
+-            float a[3] = { v.x, v.y, v.z };
+-            const bool changed = ImGui::ColorEdit3(label, a);
+-            if (changed)
+-            {
+-                v.x = a[0];
+-                v.y = a[1];
+-                v.z = a[2];
+-            }
+-            return changed;
+-        }
+-
+-        static mathUtils::Mat4 GetViewProj(const ImVec2& displaySize, Camera camera)
+-        {
+-            const float aspect = (displaySize.y > 0.0f) ? (displaySize.x / displaySize.y) : 1.0f;
+-
+-            const mathUtils::Mat4 projection =
+-                mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(camera.fovYDeg), aspect, camera.nearZ, camera.farZ);
+-
+-            const mathUtils::Mat4 view =
+-                mathUtils::LookAt(camera.position, camera.target, camera.up);
+-
+-            return projection * view;
+-        }
+-
+-        static void ApplyDefaultsForType(rendern::Light& l)
+-        {
+-            if (l.type == rendern::LightType::Directional)
+-            {
+-                l.position = { 0.0f, 0.0f, 0.0f };
+-                l.direction = { -0.4f, -1.0f, -0.3f };
+-                EnsureNormalized(l.direction);
+-                l.color = { 1.0f, 1.0f, 1.0f };
+-                l.intensity = 0.5f;
+-            }
+-            else if (l.type == rendern::LightType::Point)
+-            {
+-                l.position = { 0.0f, 5.0f, 0.0f };
+-                l.direction = { 0.0f, -1.0f, 0.0f };
+-                l.color = { 1.0f, 1.0f, 1.0f };
+-                l.intensity = 1.0f;
+-                l.range = 30.0f;
+-                l.attConstant = 1.0f;
+-                l.attLinear = 0.09f;
+-                l.attQuadratic = 0.032f;
+-            }
+-            else // Spot
+-            {
+-                l.position = { 2.0f, 4.0f, 2.0f };
+-                l.direction = { -1.0f, -2.0f, -1.0f };
+-                EnsureNormalized(l.direction);
+-                l.color = { 1.0f, 1.0f, 1.0f };
+-                l.intensity = 5.0f;
+-                l.range = 50.0f;
+-                l.innerHalfAngleDeg = 20.0f;
+-                l.outerHalfAngleDeg = 35.0f;
+-                l.attConstant = 1.0f;
+-                l.attLinear = 0.09f;
+-                l.attQuadratic = 0.032f;
+-            }
+-        }
+-
+-        static void DrawOneLightEditor(rendern::Light& l, std::size_t idx)
+-        {
+-            ImGui::PushID(static_cast<int>(idx));
+-
+-            int typeIdx = ToIndex(l.type);
+-            if (ImGui::Combo("Type", &typeIdx, kLightTypeNames, 3))
+-            {
+-                l.type = FromIndex(typeIdx);
+-                ApplyDefaultsForType(l);
+-            }
+-
+-            Color3("Color", l.color);
+-            ImGui::DragFloat("Intensity", &l.intensity, 0.01f, 0.0f, 200.0f, "%.3f");
+-
+-            ImGui::Separator();
+-
+-            switch (l.type)
+-            {
+-            case rendern::LightType::Directional:
+-                DragVec3("Direction", l.direction, 0.02f, -1.0f, 1.0f);
+-                if (ImGui::Button("Normalize direction"))
+-                    EnsureNormalized(l.direction);
+-                break;
+-
+-            case rendern::LightType::Point:
+-                DragVec3("Position", l.position, 0.05f);
+-                ImGui::DragFloat("Range", &l.range, 0.1f, 0.1f, 500.0f, "%.2f");
+-                ImGui::DragFloat("Att const", &l.attConstant, 0.01f, 0.0f, 10.0f, "%.3f");
+-                ImGui::DragFloat("Att linear", &l.attLinear, 0.001f, 0.0f, 10.0f, "%.4f");
+-                ImGui::DragFloat("Att quad", &l.attQuadratic, 0.001f, 0.0f, 10.0f, "%.5f");
+-                break;
+-
+-            case rendern::LightType::Spot:
+-                DragVec3("Position", l.position, 0.05f);
+-                DragVec3("Direction", l.direction, 0.02f, -1.0f, 1.0f);
+-                if (ImGui::Button("Normalize direction"))
+-                    EnsureNormalized(l.direction);
+-                ImGui::DragFloat("Range", &l.range, 0.1f, 0.1f, 500.0f, "%.2f");
+-                ImGui::DragFloat("Inner half angle", &l.innerHalfAngleDeg, 0.1f, 0.0f, 89.0f, "%.2f deg");
+-                ImGui::DragFloat("Outer half angle", &l.outerHalfAngleDeg, 0.1f, 0.0f, 89.0f, "%.2f deg");
+-                if (l.innerHalfAngleDeg > l.outerHalfAngleDeg)
+-                    l.innerHalfAngleDeg = l.outerHalfAngleDeg;
+-                ImGui::DragFloat("Att const", &l.attConstant, 0.01f, 0.0f, 10.0f, "%.3f");
+-                ImGui::DragFloat("Att linear", &l.attLinear, 0.001f, 0.0f, 10.0f, "%.4f");
+-                ImGui::DragFloat("Att quad", &l.attQuadratic, 0.001f, 0.0f, 10.0f, "%.5f");
+-                break;
+-            }
+-
+-            ImGui::PopID();
+-        }
+-        struct Ray
+-        {
+-            mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
+-            mathUtils::Vec3 dir{ 0.0f, 0.0f, 1.0f }; // normalized
+-        };
+-
+-        static mathUtils::Vec3 MinVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
+-        {
+-            return { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) };
+-        }
+-
+-        static mathUtils::Vec3 MaxVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
+-        {
+-            return { std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z) };
+-        }
+-
+-        static mathUtils::Vec3 TransformPoint(const mathUtils::Mat4& m, const mathUtils::Vec3& p) noexcept
+-        {
+-            const mathUtils::Vec4 w = m * mathUtils::Vec4(p, 1.0f);
+-            return { w.x, w.y, w.z };
+-        }
+-
+-        static void TransformAABB(const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, const mathUtils::Mat4& m,
+-            mathUtils::Vec3& outMin, mathUtils::Vec3& outMax) noexcept
+-        {
+-            const mathUtils::Vec3 c[8] =
+-            {
+-                { bmin.x, bmin.y, bmin.z }, { bmax.x, bmin.y, bmin.z }, { bmin.x, bmax.y, bmin.z }, { bmax.x, bmax.y, bmin.z },
+-                { bmin.x, bmin.y, bmax.z }, { bmax.x, bmin.y, bmax.z }, { bmin.x, bmax.y, bmax.z }, { bmax.x, bmax.y, bmax.z },
+-            };
+-
+-            mathUtils::Vec3 wmin{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
+-            mathUtils::Vec3 wmax{ -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() };
+-
+-            for (const auto& p : c)
+-            {
+-                const mathUtils::Vec3 wp = TransformPoint(m, p);
+-                wmin = MinVec3(wmin, wp);
+-                wmax = MaxVec3(wmax, wp);
+-            }
+-
+-            outMin = wmin;
+-            outMax = wmax;
+-        }
+-        static bool IntersectRayAABB(const Ray& ray, const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, float& outT) noexcept
+-        {
+-            float tmin = 0.0f;
+-            float tmax = std::numeric_limits<float>::infinity();
+-
+-            const float o[3] = { ray.origin.x, ray.origin.y, ray.origin.z };
+-            const float d[3] = { ray.dir.x, ray.dir.y, ray.dir.z };
+-            const float mn[3] = { bmin.x, bmin.y, bmin.z };
+-            const float mx[3] = { bmax.x, bmax.y, bmax.z };
+-
+-            for (int axis = 0; axis < 3; ++axis)
+-            {
+-                const float dir = d[axis];
+-                const float ori = o[axis];
+-
+-                if (std::abs(dir) < 1e-8f)
+-                {
+-                    if (ori < mn[axis] || ori > mx[axis])
+-                    {
+-                        return false;
+-                    }
+-                    continue;
+-                }
+-
+-                const float invD = 1.0f / dir;
+-                float t1 = (mn[axis] - ori) * invD;
+-                float t2 = (mx[axis] - ori) * invD;
+-                if (t1 > t2)
+-                {
+-                    std::swap(t1, t2);
+-                }
+-
+-                tmin = std::max(tmin, t1);
+-                tmax = std::min(tmax, t2);
+-                if (tmin > tmax)
+-                {
+-                    return false;
+-                }
+-            }
+-
+-            outT = tmin;
+-            return true;
+-        }
+-
+-        static Ray BuildMouseRay(
+-            const rendern::Scene& scene, 
+-            const rendern::CameraController& camCtl,
+-            const ImVec2& mousePos, 
+-            const ImVec2& displaySize) noexcept
+-        {
+-            const float width = (displaySize.x > 1.0f) ? displaySize.x : 1.0f;
+-            const float height = (displaySize.y > 1.0f) ? displaySize.y : 1.0f;
+-
+-            // NDC in [-1..1], with +Y up.
+-            const float ndcX = (mousePos.x / width) * 2.0f - 1.0f;
+-            const float ndcY = 1.0f - (mousePos.y / height) * 2.0f;
+-
+-            const float aspect = width / height;
+-            const float tanHalfFov = std::tan(mathUtils::DegToRad(scene.camera.fovYDeg) * 0.5f);
+-
+-            const mathUtils::Vec3 forward = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+-            const mathUtils::Vec3 right = mathUtils::Normalize(mathUtils::Cross(forward, scene.camera.up));
+-            const mathUtils::Vec3 up = mathUtils::Normalize(mathUtils::Cross(right, forward));
+-
+-            mathUtils::Vec3 dir = forward;
+-            dir = dir + right * (ndcX * aspect * tanHalfFov);
+-            dir = dir + up * (ndcY * tanHalfFov);
+-            dir = mathUtils::Normalize(dir);
+-
+-            Ray ray;
+-            ray.origin = scene.camera.position;
+-            ray.dir = dir;
+-            return ray;
+-        }
+-
+-        static int PickNodeUnderMouse(
+-            const rendern::Scene& scene, 
+-            const rendern::LevelInstance& levelInst,
+-            const ImVec2& mousePos, 
+-            const ImVec2& displaySize, 
+-            const rendern::CameraController& camCtl,
+-            float& outBestT,
+-            Ray& outRay)
+-        {
+-            outRay = BuildMouseRay(scene, camCtl, mousePos, displaySize);
+-
+-            float bestT = std::numeric_limits<float>::infinity();
+-            int bestNode = -1;
+-
+-            for (int di = 0; di < static_cast<int>(scene.drawItems.size()); ++di)
+-            {
+-                const int nodeIndex = levelInst.GetNodeIndexFromDrawIndex(di);
+-                if (nodeIndex < 0)
+-                {
+-                    continue;
+-                }
+-
+-                const rendern::DrawItem& item = scene.drawItems[static_cast<std::size_t>(di)];
+-                if (!item.mesh)
+-                {
+-                    continue;
+-                }
+-
+-                const auto& meshBounds = item.mesh->GetBounds();
+-                mathUtils::Vec3 wmin{}, wmax{};
+-                TransformAABB(meshBounds.aabbMin, meshBounds.aabbMax, item.transform.ToMatrix(), wmin, wmax);
+-
+-                float t = 0.0f;
+-                if (IntersectRayAABB(outRay, wmin, wmax, t))
+-                {
+-                    if (t < bestT)
+-                    {
+-                        bestT = t;
+-                        bestNode = nodeIndex;
+-                    }
+-                }
+-            }
+-
+-            outBestT = bestT;
+-            return bestNode;
+-        }
+-        // ------------------------------------------------------------
+-        // Light header row with actions on the right (clickable)
+-        // ------------------------------------------------------------
+-        static bool LightHeaderWithActions(const char* headerText,
+-            bool defaultOpen,
+-            bool& enabled,
+-            bool& doDelete)
+-        {
+-            doDelete = false;
+-
+-            ImGuiTreeNodeFlags flags =
+-                ImGuiTreeNodeFlags_Framed |
+-                ImGuiTreeNodeFlags_SpanAvailWidth |
+-                ImGuiTreeNodeFlags_AllowOverlap |
+-                ImGuiTreeNodeFlags_FramePadding;
+-
+-            if (defaultOpen)
+-                flags |= ImGuiTreeNodeFlags_DefaultOpen;
+-
+-            // Tree node label is hidden; we render text via format string to keep ID stable.
+-            const bool open = ImGui::TreeNodeEx("##light_node", flags, "%s", headerText);
+-
+-            // The last item is the header frame; place our controls on top-right of it.
+-            const ImVec2 rmin = ImGui::GetItemRectMin();
+-            const ImVec2 rmax = ImGui::GetItemRectMax();
+-
+-            // Reserve width for controls (tweakable).
+-            const float deleteW = 62.0f; // typical "Delete" button width
+-            const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
+-            const float checkW = ImGui::GetFrameHeight(); // checkbox square
+-            const float totalW = checkW + spacing + deleteW;
+-
+-            // Align to the center vertically.
+-            const float y = rmin.y + (rmax.y - rmin.y - ImGui::GetFrameHeight()) * 0.5f;
+-
+-            // Start X a bit before the right edge.
+-            const float x = rmax.x - totalW - spacing;
+-
+-            // Draw controls on the same line, but overlayed.
+-            ImGui::SetCursorScreenPos(ImVec2(x, y));
+-            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 2.0f));
+-
+-            // Checkbox (no label text to stay compact)
+-            ImGui::Checkbox("##Enabled", &enabled);
+-            ImGui::SameLine();
+-            doDelete = ImGui::Button("Delete");
+-
+-            ImGui::PopStyleVar();
+-
+-            return open;
+-        }
+-    }
+-
+-    void DrawRendererDebugUI(rendern::RendererSettings& rs, rendern::Scene& scene, rendern::CameraController& camCtl)
+-    {
+-        ImGui::Begin("Renderer / Shadows");
+-
+-        ImGui::Checkbox("Depth prepass", &rs.enableDepthPrepass);
+-        ImGui::Checkbox("Frustum culling", &rs.enableFrustumCulling);
+-        ImGui::Checkbox("Debug print draw calls", &rs.debugPrintDrawCalls);
+-
+-        // ------------------------------------------------------------
+-        // Camera
+-        // ------------------------------------------------------------
+-        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
+-        {
+-            rendern::Camera& cam = scene.camera;
+-
+-            if (DragVec3("Position", cam.position, 0.05f))
+-            {
+-                cam.target = cam.position + camCtl.Forward();
+-            }
+-            if (DragVec3("Target", cam.target, 0.05f))
+-            {
+-                camCtl.ResetFromCamera(cam);
+-            }
+-
+-            constexpr float kRadToDeg = 57.29577951308232f;
+-            constexpr float kDegToRad = 0.017453292519943295f;
+-
+-            float yawDeg = camCtl.YawRad() * kRadToDeg;
+-            float pitchDeg = camCtl.PitchRad() * kRadToDeg;
+-
+-            bool changedAngles = false;
+-            changedAngles |= ImGui::SliderFloat("Yaw (deg)", &yawDeg, -180.0f, 180.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+-            changedAngles |= ImGui::SliderFloat("Pitch (deg)", &pitchDeg, -89.0f, 89.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
+-
+-            if (changedAngles)
+-            {
+-                camCtl.SetYawPitchRad(yawDeg * kDegToRad, pitchDeg * kDegToRad, cam);
+-            }
+-
+-            ImGui::SliderFloat("FOV Y (deg)", &cam.fovYDeg, 20.0f, 120.0f);
+-            ImGui::InputFloat("Near Z", &cam.nearZ, 0.01f, 0.1f, "%.4f");
+-            ImGui::InputFloat("Far Z", &cam.farZ, 1.0f, 10.0f, "%.1f");
+-
+-            auto& s = camCtl.Settings();
+-
+-            bool enabledCtl = camCtl.Enabled();
+-            if (ImGui::Checkbox("Enable controller", &enabledCtl))
+-            {
+-                camCtl.SetEnabled(enabledCtl);
+-            }
+-            ImGui::Checkbox("Invert Y", &s.invertY);
+-            ImGui::SliderFloat("Move speed", &s.moveSpeed, 0.1f, 50.0f);
+-            ImGui::SliderFloat("Sprint multiplier", &s.sprintMultiplier, 1.0f, 12.0f);
+-            ImGui::SliderFloat("Mouse sensitivity", &s.mouseSensitivity, 0.0005f, 0.01f, "%.4f", ImGuiSliderFlags_Logarithmic);
+-
+-            if (ImGui::Button("Reset view"))
+-            {
+-                cam.position = mathUtils::Vec3(5.0f, 10.0f, 10.0f);
+-                cam.target = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+-                cam.up = mathUtils::Vec3(0.0f, 1.0f, 0.0f);
+-                cam.fovYDeg = 60.0f;
+-                cam.nearZ = 0.01f;
+-                cam.farZ = 200.0f;
+-                camCtl.ResetFromCamera(cam);
+-            }
+-
+-            ImGui::TextDisabled("Controls: hold RMB to look, WASD move, QE up/down, Shift sprint");
+-            ImGui::Separator();
+-        }
+-
+-        ImGui::Separator();
+-        ImGui::Text("Shadow bias (texels)");
+-        ImGui::SliderFloat("Dir base", &rs.dirShadowBaseBiasTexels, 0.0f, 5.0f, "%.3f");
+-        ImGui::SliderFloat("Spot base", &rs.spotShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
+-        ImGui::SliderFloat("Point base", &rs.pointShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
+-        ImGui::SliderFloat("Slope scale", &rs.shadowSlopeScaleTexels, 0.0f, 10.0f, "%.3f");
+-
+-        ImGui::Separator();
+-        ImGui::Text("Debug draw");
+-        ImGui::Checkbox("Light gizmos (3D)", &rs.drawLightGizmos);
+-        ImGui::Checkbox("Depth test (gizmos)", &rs.debugDrawDepthTest);
+-        if (rs.drawLightGizmos)
+-        {
+-            ImGui::SliderFloat("Gizmo half-size", &rs.lightGizmoHalfSize, 0.01f, 2.0f, "%.3f");
+-            ImGui::SliderFloat("Arrow length", &rs.lightGizmoArrowLength, 0.05f, 25.0f, "%.3f");
+-            ImGui::SliderFloat("Arrow thickness", &rs.lightGizmoArrowThickness, 0.001f, 2.0f, "%.3f");
+-            }
+-
+-        ImGui::Separator();
+-        if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen))
+-        {
+-            ImGui::Text("Count: %d", static_cast<int>(scene.lights.size()));
+-
+-            if (ImGui::Button("Add Directional"))
+-            {
+-                rendern::Light l{};
+-                l.type = rendern::LightType::Directional;
+-                ApplyDefaultsForType(l);
+-                scene.AddLight(l);
+-            }
+-            ImGui::SameLine();
+-            if (ImGui::Button("Add Point"))
+-            {
+-                rendern::Light l{};
+-                l.type = rendern::LightType::Point;
+-                ApplyDefaultsForType(l);
+-                scene.AddLight(l);
+-            }
+-            ImGui::SameLine();
+-            if (ImGui::Button("Add Spot"))
+-            {
+-                rendern::Light l{};
+-                l.type = rendern::LightType::Spot;
+-                ApplyDefaultsForType(l);
+-                scene.AddLight(l);
+-            }
+-
+-            ImGui::Spacing();
+-
+-            // Track previous intensities for a simple Enabled toggle.
+-            static std::vector<float> prevIntensity;
+-            if (prevIntensity.size() != scene.lights.size())
+-                prevIntensity.resize(scene.lights.size(), 1.0f);
+-
+-            for (std::size_t i = 0; i < scene.lights.size();)
+-            {
+-                auto& l = scene.lights[i];
+-
+-                ImGui::PushID(static_cast<int>(i));
+-
+-                const char* typeName = kLightTypeNames[ToIndex(l.type)];
+-                char header[64]{};
+-                std::snprintf(header, sizeof(header), "[%s] #%zu", typeName, i);
+-
+-                // Enabled state derived from intensity.
+-                bool enabled = (l.intensity > 0.00001f);
+-                bool doDelete = false;
+-
+-                const bool open = LightHeaderWithActions(header, true, enabled, doDelete);
+-
+-                // Apply "Enabled" change
+-                if (!enabled && l.intensity > 0.0f)
+-                {
+-                    prevIntensity[i] = std::max(prevIntensity[i], l.intensity);
+-                    l.intensity = 0.0f;
+-                }
+-                else if (enabled && l.intensity <= 0.00001f)
+-                {
+-                    l.intensity = (prevIntensity[i] > 0.0f) ? prevIntensity[i] : 1.0f;
+-                }
+-
+-                if (open)
+-                {
+-                    DrawOneLightEditor(l, i);
+-                    ImGui::TreePop();
+-                }
+-
+-                ImGui::PopID();
+-
+-                if (doDelete)
+-                {
+-                    scene.lights.erase(scene.lights.begin() + static_cast<std::ptrdiff_t>(i));
+-                    prevIntensity.erase(prevIntensity.begin() + static_cast<std::ptrdiff_t>(i));
+-                    continue;
+-                }
+-
+-                ++i;
+-            }
+-        }
+-
+-        ImGui::Separator();
+-        ImGui::Text("F1: toggle UI");
+-        ImGui::End();
+-    }
+-
+-    void DrawLevelEditorUI(
+-        rendern::LevelAsset& level,
+-        rendern::LevelInstance& levelInst, 
+-        AssetManager& assets, 
+-        rendern::Scene& scene,
+-        rendern::CameraController& camCtl)
+-    {
+-        ImGui::Begin("Level Editor");
+-
+-        ImGui::Text("Nodes: %d   DrawItems: %d", static_cast<int>(level.nodes.size()), static_cast<int>(scene.drawItems.size()));
+-        ImGui::Separator();
+-
+-        // Persistent UI state
+-        static int selectedNode = -1;
+-        static int prevSelectedNode = -2;
+-        static bool addAsChildOfSelection = false;
+-
+-        static char nameBuf[128]{};
+-        static char importPathBuf[512]{};
+-
+-        // Save state
+-        static char savePathBuf[512]{};
+-        static char saveStatusBuf[512]{};
+-        static std::string cachedSourcePath;
+-        static bool saveStatusIsError = false;
+-
+-        static bool haveRay = false;
+-        static Ray lastRay{};
+-        static float lastRayLen = 5.0f;
+-        static bool lastRayHit = false;
+-
+-        // Keep save path input synced with loaded sourcePath (unless user edits it).
+-        if (cachedSourcePath != level.sourcePath)
+-        {
+-            cachedSourcePath = level.sourcePath;
+-            const std::string fallback = cachedSourcePath.empty() ? std::string("levels/edited.level.json") : cachedSourcePath;
+-            std::snprintf(savePathBuf, sizeof(savePathBuf), "%s", fallback.c_str());
+-        }
+-
+-        // ------------------------------------------------------------
+-        // Mouse picking (click in viewport selects a node)
+-        // ------------------------------------------------------------
+-        {
+-            const ImGuiIO& io = ImGui::GetIO();
+-            static ImVec2 mousePos{};
+-            static ImVec2 displaySize{};
+-
+-            if (ImGui::IsMouseClicked(ImGuiMouseButton_Left) && !io.WantCaptureMouse)
+-            {
+-                mousePos = io.MousePos;
+-                displaySize = io.DisplaySize;
+-
+-                if (mousePos.x >= 0.0f && mousePos.y >= 0.0f && mousePos.x <= displaySize.x && mousePos.y <= displaySize.y)
+-                {
+-                    float bestT = 0.0f;
+-                    Ray ray{};
+-
+-                    const int picked = PickNodeUnderMouse(scene, levelInst, mousePos, displaySize, camCtl, bestT, ray);
+-
+-                    haveRay = true;
+-                    lastRay = ray;
+-
+-                    lastRayHit = (picked >= 0) && std::isfinite(bestT);
+-                    lastRayLen = lastRayHit ? bestT : scene.camera.farZ;
+-
+-                    if (picked >= 0 && picked < static_cast<int>(level.nodes.size()) &&
+-                        level.nodes[static_cast<std::size_t>(picked)].alive)
+-                    {
+-                        selectedNode = picked;
+-                    }
+-                    else
+-                    {
+-                        selectedNode = -1;
+-                    }
+-                }
+-            }
+-
+-            // Expose pick ray to main-view debug draw.
+-
+-            scene.debugPickRay.enabled = haveRay;
+-
+-            if (haveRay)
+-
+-            {
+-
+-            	scene.debugPickRay.origin = lastRay.origin;
+-
+-            	scene.debugPickRay.direction = lastRay.dir;
+-
+-            	scene.debugPickRay.length = lastRayLen;
+-
+-            	scene.debugPickRay.hit = lastRayHit;
+-
+-            }
+-        }
+-
+-        // ------------------------------------------------------------
+-        // File
+-        // ------------------------------------------------------------
+-        if (ImGui::CollapsingHeader("File", ImGuiTreeNodeFlags_DefaultOpen))
+-        {
+-            ImGui::InputText("Level path", savePathBuf, sizeof(savePathBuf));
+-
+-            auto doSaveToPath = [&](const std::string& path)
+-            {
+-                try
+-                {
+-                    // Persist camera/lights from the current scene into the level asset.
+-                    level.camera = scene.camera;
+-                    level.lights = scene.lights;
+-
+-                    rendern::SaveLevelAssetToJson(path, level);
+-                    level.sourcePath = path;
+-                    cachedSourcePath = path;
+-                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Saved: %s", path.c_str());
+-                    saveStatusIsError = false;
+-                }
+-                catch (const std::exception& e)
+-                {
+-                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: %s", e.what());
+-                    saveStatusIsError = true;
+-                }
+-            };
+-
+-            const bool canHotkey = !ImGui::GetIO().WantTextInput;
+-            const bool ctrlS = canHotkey && ImGui::IsKeyDown(ImGuiKey_ModCtrl) && ImGui::IsKeyPressed(ImGuiKey_S);
+-
+-            const std::string pathStr = std::string(savePathBuf);
+-            bool clickedSave = ImGui::Button("Save (Ctrl+S)");
+-            ImGui::SameLine();
+-            bool clickedSaveAs = ImGui::Button("Save As");
+-
+-            if (ctrlS || clickedSave)
+-            {
+-                const std::string usePath = !level.sourcePath.empty() ? level.sourcePath : pathStr;
+-                if (!usePath.empty())
+-                {
+-                    doSaveToPath(usePath);
+-                }
+-                else
+-                {
+-                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
+-                    saveStatusIsError = true;
+-                }
+-            }
+-            else if (clickedSaveAs)
+-            {
+-                if (!pathStr.empty())
+-                {
+-                    doSaveToPath(pathStr);
+-                }
+-                else
+-                {
+-                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
+-                    saveStatusIsError = true;
+-                }
+-            }
+-
+-            if (saveStatusBuf[0] != '\0')
+-            {
+-                if (saveStatusIsError)
+-                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", saveStatusBuf);
+-                else
+-                    ImGui::Text("%s", saveStatusBuf);
+-            }
+-        }
+-
+-        // Build children adjacency (alive only)
+-        const std::size_t ncount = level.nodes.size();
+-        std::vector<std::vector<int>> children;
+-        children.resize(ncount);
+-
+-        auto nodeAlive = [&](int idx) -> bool
+-        {
+-            if (idx < 0) 
+-            {
+-                return false;
+-            }
+-            const std::size_t i = static_cast<std::size_t>(idx);
+-            if (i >= ncount) 
+-            {
+-                return false;
+-            }
+-            return level.nodes[i].alive;
+-        };
+-
+-        for (std::size_t i = 0; i < ncount; ++i)
+-        {
+-            const auto& n = level.nodes[i];
+-            if (!n.alive) continue;
+-            if (n.parent < 0) continue;
+-            if (!nodeAlive(n.parent)) continue;
+-            children[static_cast<std::size_t>(n.parent)].push_back(static_cast<int>(i));
+-        }
+-
+-        // Roots
+-        std::vector<int> roots;
+-        roots.reserve(ncount);
+-        for (std::size_t i = 0; i < ncount; ++i)
+-        {
+-            const auto& n = level.nodes[i];
+-            if (!n.alive) continue;
+-            if (n.parent < 0 || !nodeAlive(n.parent))
+-                roots.push_back(static_cast<int>(i));
+-        }
+-
+-        // Mesh/material id lists (sorted)
+-        std::vector<std::string> meshIds;
+-        meshIds.reserve(level.meshes.size());
+-        for (const auto& [id, _] : level.meshes) meshIds.push_back(id);
+-        std::sort(meshIds.begin(), meshIds.end());
+-
+-        std::vector<std::string> materialIds;
+-        materialIds.reserve(level.materials.size());
+-        for (const auto& [id, _] : level.materials) materialIds.push_back(id);
+-        std::sort(materialIds.begin(), materialIds.end());
+-
+-        // Layout: hierarchy + inspector
+-        ImGui::BeginChild("##Hierarchy", ImVec2(280.0f, 0.0f), true);
+-
+-        auto drawNode = [&](auto&& self, int idx) -> void
+-        {
+-            const auto& n = level.nodes[static_cast<std::size_t>(idx)];
+-
+-            ImGuiTreeNodeFlags flags =
+-                ImGuiTreeNodeFlags_OpenOnArrow |
+-                ImGuiTreeNodeFlags_SpanFullWidth;
+-
+-            if (children[static_cast<std::size_t>(idx)].empty())
+-                flags |= ImGuiTreeNodeFlags_Leaf;
+-
+-            if (idx == selectedNode)
+-                flags |= ImGuiTreeNodeFlags_Selected;
+-
+-            char label[256]{};
+-            const char* name = n.name.empty() ? "<unnamed>" : n.name.c_str();
+-            if (!n.mesh.empty())
+-                std::snprintf(label, sizeof(label), "%d: %s  [mesh=%s]", idx, name, n.mesh.c_str());
+-            else
+-                std::snprintf(label, sizeof(label), "%d: %s", idx, name);
+-
+-            const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::intptr_t>(idx)), flags, "%s", label);
+-
+-            if (ImGui::IsItemClicked())
+-            {
+-                selectedNode = idx;
+-            }
+-
+-            if (open)
+-            {
+-                for (int ch : children[static_cast<std::size_t>(idx)])
+-                    self(self, ch);
+-                ImGui::TreePop();
+-            }
+-        };
+-
+-        for (int r : roots)
+-        {
+-            drawNode(drawNode, r);
+-        }
+-
+-        ImGui::EndChild();
+-        ImGui::SameLine();
+-        ImGui::BeginChild("##Inspector", ImVec2(0.0f, 0.0f), true);
+-
+-        // Add / import controls
+-        ImGui::Text("Create / Import");
+-        ImGui::Checkbox("Add as child of selected", &addAsChildOfSelection);
+-
+-        auto ensureDefaultMesh = [&](std::string_view id, std::string_view relPath)
+-        {
+-            if (!level.meshes.contains(std::string(id)))
+-            {
+-                rendern::LevelMeshDef def{};
+-                def.path = std::string(relPath);
+-                def.debugName = std::string(id);
+-                level.meshes.emplace(std::string(id), std::move(def));
+-            }
+-        };
+-
+-        auto computeSpawnTransform = [&]() -> rendern::Transform
+-        {
+-            rendern::Transform t{};
+-            t.position = scene.camera.position + camCtl.Forward() * 5.0f;
+-            t.rotationDegrees = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+-            t.scale = mathUtils::Vec3(1.0f, 1.0f, 1.0f);
+-            return t;
+-        };
+-
+-        const int parentForNew =
+-            (addAsChildOfSelection && nodeAlive(selectedNode)) ? selectedNode : -1;
+-
+-        if (ImGui::Button("Add Cube"))
+-        {
+-            ensureDefaultMesh("cube", "models/cube.obj");
+-            const int newIdx = levelInst.AddNode(level, scene, assets, "cube", "", parentForNew, computeSpawnTransform(), "Cube");
+-            selectedNode = newIdx;
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Button("Add Quad"))
+-        {
+-            ensureDefaultMesh("quad", "models/quad.obj");
+-            rendern::Transform t = computeSpawnTransform();
+-            t.scale = mathUtils::Vec3(3.0f, 1.0f, 3.0f);
+-            const int newIdx = levelInst.AddNode(level, scene, assets, "quad", "", parentForNew, t, "Quad");
+-            selectedNode = newIdx;
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Button("Add Empty"))
+-        {
+-            const int newIdx = levelInst.AddNode(level, scene, assets, "", "", parentForNew, computeSpawnTransform(), "Empty");
+-            selectedNode = newIdx;
+-        }
+-
+-        ImGui::Spacing();
+-        ImGui::InputText("OBJ path", importPathBuf, sizeof(importPathBuf));
+-
+-        auto sanitizeId = [](std::string s) -> std::string
+-        {
+-            if (s.empty())
+-                s = "mesh";
+-
+-            for (char& c : s)
+-            {
+-                const unsigned char uc = static_cast<unsigned char>(c);
+-                if (!(std::isalnum(uc) || c == '_' || c == '-'))
+-                    c = '_';
+-            }
+-            return s;
+-        };
+-
+-        auto makeUniqueMeshId = [&](std::string base) -> std::string
+-        {
+-            std::string id = sanitizeId(std::move(base));
+-            if (id.empty())
+-                id = "mesh";
+-
+-            if (!level.meshes.contains(id))
+-                return id;
+-
+-            for (int suffix = 2; suffix < 10000; ++suffix)
+-            {
+-                std::string tryId = id + "_" + std::to_string(suffix);
+-                if (!level.meshes.contains(tryId))
+-                    return tryId;
+-            }
+-            return id + "_x";
+-        };
+-
+-        if (ImGui::Button("Import mesh into library"))
+-        {
+-            const std::string pathStr = std::string(importPathBuf);
+-            if (!pathStr.empty())
+-            {
+-                std::string base = std::filesystem::path(pathStr).stem().string();
+-                if (base.empty())
+-                    base = "mesh";
+-
+-                const std::string meshId = makeUniqueMeshId(base);
+-
+-                rendern::LevelMeshDef def{};
+-                def.path = pathStr;
+-                def.debugName = meshId;
+-                level.meshes.emplace(meshId, std::move(def));
+-
+-                // Kick async load (optional)
+-                try
+-                {
+-                    rendern::MeshProperties p{};
+-                    p.filePath = pathStr;
+-                    p.debugName = meshId;
+-                    assets.LoadMeshAsync(meshId, std::move(p));
+-                }
+-                catch (...)
+-                {
+-                    // Leave it - the actual load error will be visible in logs.
+-                }
+-            }
+-        }
+-        ImGui::SameLine();
+-        if (ImGui::Button("Create object from path"))
+-        {
+-            const std::string pathStr = std::string(importPathBuf);
+-            if (!pathStr.empty())
+-            {
+-                std::string base = std::filesystem::path(pathStr).stem().string();
+-                if (base.empty())
+-                    base = "mesh";
+-
+-                const std::string meshId = makeUniqueMeshId(base);
+-
+-                if (!level.meshes.contains(meshId))
+-                {
+-                    rendern::LevelMeshDef def{};
+-                    def.path = pathStr;
+-                    def.debugName = meshId;
+-                    level.meshes.emplace(meshId, std::move(def));
+-                }
+-
+-                const int newIdx = levelInst.AddNode(level, scene, assets, meshId, "", parentForNew, computeSpawnTransform(), meshId);
+-                selectedNode = newIdx;
+-            }
+-        }
+-
+-        ImGui::Separator();
+-        ImGui::Text("Selection");
+-
+-        // Selection validity
+-        if (selectedNode >= 0 && (!nodeAlive(selectedNode)))
+-        {
+-            selectedNode = -1;
+-        }
+-
+-        if (selectedNode >= 0 && nodeAlive(selectedNode))
+-        {
+-            rendern::LevelNode& node = level.nodes[static_cast<std::size_t>(selectedNode)];
+-
+-            if (prevSelectedNode != selectedNode)
+-            {
+-                // Refresh name buffer on selection change.
+-                std::snprintf(nameBuf, sizeof(nameBuf), "%s", node.name.c_str());
+-                prevSelectedNode = selectedNode;
+-            }
+-
+-            ImGui::Text("Node #%d", selectedNode);
+-
+-            if (ImGui::InputText("Name", nameBuf, sizeof(nameBuf)))
+-            {
+-                node.name = std::string(nameBuf);
+-            }
+-
+-            bool vis = node.visible;
+-            if (ImGui::Checkbox("Visible", &vis))
+-            {
+-                levelInst.SetNodeVisible(level, scene, assets, selectedNode, vis);
+-            }
+-
+-            // Mesh combo
+-            {
+-                std::vector<std::string> items;
+-                items.reserve(meshIds.size() + 2);
+-                items.push_back("(none)");
+-                for (const auto& id : meshIds) items.push_back(id);
+-
+-                // Ensure missing mesh id is still selectable (shows as last item)
+-                if (!node.mesh.empty() && !level.meshes.contains(node.mesh))
+-                    items.push_back(std::string("<missing> ") + node.mesh);
+-
+-                int current = 0;
+-                if (!node.mesh.empty())
+-                {
+-                    for (std::size_t i = 1; i < items.size(); ++i)
+-                    {
+-                        if (items[i] == node.mesh)
+-                        {
+-                            current = static_cast<int>(i);
+-                            break;
+-                        }
+-                    }
+-                }
+-
+-                std::vector<const char*> citems;
+-                citems.reserve(items.size());
+-                for (auto& s : items) citems.push_back(s.c_str());
+-
+-                if (ImGui::Combo("Mesh", &current, citems.data(), static_cast<int>(citems.size())))
+-                {
+-                    if (current == 0)
+-                        levelInst.SetNodeMesh(level, scene, assets, selectedNode, "");
+-                    else
+-                        levelInst.SetNodeMesh(level, scene, assets, selectedNode, items[static_cast<std::size_t>(current)]);
+-                }
+-            }
+-
+-            // Material combo
+-            {
+-                std::vector<std::string> items;
+-                items.reserve(materialIds.size() + 2);
+-                items.push_back("(none)");
+-                for (const auto& id : materialIds) items.push_back(id);
+-
+-                if (!node.material.empty() && !level.materials.contains(node.material))
+-                    items.push_back(std::string("<missing> ") + node.material);
+-
+-                int current = 0;
+-                if (!node.material.empty())
+-                {
+-                    for (std::size_t i = 1; i < items.size(); ++i)
+-                    {
+-                        if (items[i] == node.material)
+-                        {
+-                            current = static_cast<int>(i);
+-                            break;
+-                        }
+-                    }
+-                }
+-
+-                std::vector<const char*> citems;
+-                citems.reserve(items.size());
+-                for (auto& s : items) citems.push_back(s.c_str());
+-
+-                if (ImGui::Combo("Material", &current, citems.data(), static_cast<int>(citems.size())))
+-                {
+-                    if (current == 0)
+-                        levelInst.SetNodeMaterial(level, scene, selectedNode, "");
+-                    else
+-                        levelInst.SetNodeMaterial(level, scene, selectedNode, items[static_cast<std::size_t>(current)]);
+-                }
+-            }
+-
+-            // Transform
+-            bool changed = false;
+-            changed |= DragVec3("Position", node.transform.position, 0.05f);
+-            changed |= DragVec3("Rotation (deg)", node.transform.rotationDegrees, 0.2f);
+-
+-            mathUtils::Vec3 scale = node.transform.scale;
+-            if (DragVec3("Scale", scale, 0.02f))
+-            {
+-                scale.x = std::max(scale.x, 0.001f);
+-                scale.y = std::max(scale.y, 0.001f);
+-                scale.z = std::max(scale.z, 0.001f);
+-                node.transform.scale = scale;
+-                changed = true;
+-            }
+-
+-            if (changed)
+-            {
+-                levelInst.MarkTransformsDirty();
+-            }
+-
+-            ImGui::Spacing();
+-
+-            // Actions
+-            if (ImGui::Button("Duplicate"))
+-            {
+-                rendern::Transform t = node.transform;
+-                t.position.x += 1.0f;
+-
+-                const int newIdx = levelInst.AddNode(level, scene, assets, node.mesh, node.material, node.parent, t, node.name);
+-                selectedNode = newIdx;
+-            }
+-            ImGui::SameLine();
+-            bool doDelete = ImGui::Button("Delete (recursive)");
+-            if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+-            {
+-                doDelete = true;
+-            }
+-
+-            if (doDelete)
+-            {
+-                const int parent = node.parent;
+-                levelInst.DeleteSubtree(level, scene, selectedNode);
+-
+-                if (nodeAlive(parent))
+-                {    
+-                    selectedNode = parent;
+-                }
+-                else
+-                {
+-                    selectedNode = -1;
+-                }
+-            }
+-        }
+-        else
+-        {
+-            ImGui::TextDisabled("No node selected.");
+-            prevSelectedNode = -2;
+-        }
+-
+-        ImGui::EndChild();
+-
+-        // Push transforms to Scene if needed
+-        levelInst.SyncTransformsIfDirty(level, scene);
+-
+-        ImGui::End();
+-    }
+-
+-}
++module;
++
++#include <cstdio>
++#include <cstring>
++#include <cctype>
++#include <limits>
++#include <algorithm>
++#include <cmath>
++
++#if defined(CORE_USE_DX12)
++#include <imgui.h>
++#endif
++
++// Debug UI panels implemented with Dear ImGui.
++// NOTE: This module is built only for DX12 backend.
++
++export module core:imgui_debug_ui;
++
++import std;
++
++import :scene;
++import :renderer_settings;
++import :camera_controller;
++import :math_utils;
++import :level;
++import :asset_manager;
++
++export namespace rendern::ui
++{
++    void DrawRendererDebugUI(rendern::RendererSettings& rs, rendern::Scene& scene, rendern::CameraController& camCtl);
++
++    // Minimal Level Editor:
++    // - add/remove objects (recursive delete)
++    // - choose mesh/material
++    // - edit transform (position/rotation/scale)
++    void DrawLevelEditorUI(rendern::LevelAsset& level, rendern::LevelInstance& levelInst, AssetManager& assets, rendern::Scene& scene, rendern::CameraController& camCtl);
++}
++
++namespace rendern::ui
++{
++    namespace
++    {
++        constexpr const char* kLightTypeNames[] = { "Directional", "Point", "Spot" };
++
++        static int ToIndex(rendern::LightType t)
++        {
++            switch (t)
++            {
++            case rendern::LightType::Directional: return 0;
++            case rendern::LightType::Point:       return 1;
++            case rendern::LightType::Spot:        return 2;
++            default:                             return 0;
++            }
++        }
++
++        static rendern::LightType FromIndex(int i)
++        {
++            switch (i)
++            {
++            case 0: return rendern::LightType::Directional;
++            case 1: return rendern::LightType::Point;
++            case 2: return rendern::LightType::Spot;
++            default: return rendern::LightType::Directional;
++            }
++        }
++
++        static void EnsureNormalized(mathUtils::Vec3& v)
++        {
++            const float len2 = v.x * v.x + v.y * v.y + v.z * v.z;
++            if (len2 > 1e-12f)
++            {
++                v = mathUtils::Normalize(v);
++            }
++            else
++            {
++                v = { 0.0f, -1.0f, 0.0f };
++            }
++        }
++
++        static bool DragVec3(const char* label, mathUtils::Vec3& v, float speed = 0.05f, float minv = 0.0f, float maxv = 0.0f)
++        {
++            float a[3] = { v.x, v.y, v.z };
++            const bool changed = ImGui::DragFloat3(label, a, speed, minv, maxv, "%.3f");
++            if (changed)
++            {
++                v.x = a[0];
++                v.y = a[1];
++                v.z = a[2];
++            }
++            return changed;
++        }
++
++        static bool Color3(const char* label, mathUtils::Vec3& v)
++        {
++            float a[3] = { v.x, v.y, v.z };
++            const bool changed = ImGui::ColorEdit3(label, a);
++            if (changed)
++            {
++                v.x = a[0];
++                v.y = a[1];
++                v.z = a[2];
++            }
++            return changed;
++        }
++
++        static mathUtils::Mat4 GetViewProj(const ImVec2& displaySize, Camera camera)
++        {
++            const float aspect = (displaySize.y > 0.0f) ? (displaySize.x / displaySize.y) : 1.0f;
++
++            const mathUtils::Mat4 projection =
++                mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(camera.fovYDeg), aspect, camera.nearZ, camera.farZ);
++
++            const mathUtils::Mat4 view =
++                mathUtils::LookAt(camera.position, camera.target, camera.up);
++
++            return projection * view;
++        }
++
++        static void ApplyDefaultsForType(rendern::Light& l)
++        {
++            if (l.type == rendern::LightType::Directional)
++            {
++                l.position = { 0.0f, 0.0f, 0.0f };
++                l.direction = { -0.4f, -1.0f, -0.3f };
++                EnsureNormalized(l.direction);
++                l.color = { 1.0f, 1.0f, 1.0f };
++                l.intensity = 0.5f;
++            }
++            else if (l.type == rendern::LightType::Point)
++            {
++                l.position = { 0.0f, 5.0f, 0.0f };
++                l.direction = { 0.0f, -1.0f, 0.0f };
++                l.color = { 1.0f, 1.0f, 1.0f };
++                l.intensity = 1.0f;
++                l.range = 30.0f;
++                l.attConstant = 1.0f;
++                l.attLinear = 0.09f;
++                l.attQuadratic = 0.032f;
++            }
++            else // Spot
++            {
++                l.position = { 2.0f, 4.0f, 2.0f };
++                l.direction = { -1.0f, -2.0f, -1.0f };
++                EnsureNormalized(l.direction);
++                l.color = { 1.0f, 1.0f, 1.0f };
++                l.intensity = 5.0f;
++                l.range = 50.0f;
++                l.innerHalfAngleDeg = 20.0f;
++                l.outerHalfAngleDeg = 35.0f;
++                l.attConstant = 1.0f;
++                l.attLinear = 0.09f;
++                l.attQuadratic = 0.032f;
++            }
++        }
++
++        static void DrawOneLightEditor(rendern::Light& l, std::size_t idx)
++        {
++            ImGui::PushID(static_cast<int>(idx));
++
++            int typeIdx = ToIndex(l.type);
++            if (ImGui::Combo("Type", &typeIdx, kLightTypeNames, 3))
++            {
++                l.type = FromIndex(typeIdx);
++                ApplyDefaultsForType(l);
++            }
++
++            Color3("Color", l.color);
++            ImGui::DragFloat("Intensity", &l.intensity, 0.01f, 0.0f, 200.0f, "%.3f");
++
++            ImGui::Separator();
++
++            switch (l.type)
++            {
++            case rendern::LightType::Directional:
++                DragVec3("Direction", l.direction, 0.02f, -1.0f, 1.0f);
++                if (ImGui::Button("Normalize direction"))
++                    EnsureNormalized(l.direction);
++                break;
++
++            case rendern::LightType::Point:
++                DragVec3("Position", l.position, 0.05f);
++                ImGui::DragFloat("Range", &l.range, 0.1f, 0.1f, 500.0f, "%.2f");
++                ImGui::DragFloat("Att const", &l.attConstant, 0.01f, 0.0f, 10.0f, "%.3f");
++                ImGui::DragFloat("Att linear", &l.attLinear, 0.001f, 0.0f, 10.0f, "%.4f");
++                ImGui::DragFloat("Att quad", &l.attQuadratic, 0.001f, 0.0f, 10.0f, "%.5f");
++                break;
++
++            case rendern::LightType::Spot:
++                DragVec3("Position", l.position, 0.05f);
++                DragVec3("Direction", l.direction, 0.02f, -1.0f, 1.0f);
++                if (ImGui::Button("Normalize direction"))
++                    EnsureNormalized(l.direction);
++                ImGui::DragFloat("Range", &l.range, 0.1f, 0.1f, 500.0f, "%.2f");
++                ImGui::DragFloat("Inner half angle", &l.innerHalfAngleDeg, 0.1f, 0.0f, 89.0f, "%.2f deg");
++                ImGui::DragFloat("Outer half angle", &l.outerHalfAngleDeg, 0.1f, 0.0f, 89.0f, "%.2f deg");
++                if (l.innerHalfAngleDeg > l.outerHalfAngleDeg)
++                    l.innerHalfAngleDeg = l.outerHalfAngleDeg;
++                ImGui::DragFloat("Att const", &l.attConstant, 0.01f, 0.0f, 10.0f, "%.3f");
++                ImGui::DragFloat("Att linear", &l.attLinear, 0.001f, 0.0f, 10.0f, "%.4f");
++                ImGui::DragFloat("Att quad", &l.attQuadratic, 0.001f, 0.0f, 10.0f, "%.5f");
++                break;
++            }
++
++            ImGui::PopID();
++        }
++        struct Ray
++        {
++            mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
++            mathUtils::Vec3 dir{ 0.0f, 0.0f, 1.0f }; // normalized
++        };
++
++        static mathUtils::Vec3 MinVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
++        {
++            return { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) };
++        }
++
++        static mathUtils::Vec3 MaxVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
++        {
++            return { std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z) };
++        }
++
++        static mathUtils::Vec3 TransformPoint(const mathUtils::Mat4& m, const mathUtils::Vec3& p) noexcept
++        {
++            const mathUtils::Vec4 w = m * mathUtils::Vec4(p, 1.0f);
++            return { w.x, w.y, w.z };
++        }
++
++        static void TransformAABB(const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, const mathUtils::Mat4& m,
++            mathUtils::Vec3& outMin, mathUtils::Vec3& outMax) noexcept
++        {
++            const mathUtils::Vec3 c[8] =
++            {
++                { bmin.x, bmin.y, bmin.z }, { bmax.x, bmin.y, bmin.z }, { bmin.x, bmax.y, bmin.z }, { bmax.x, bmax.y, bmin.z },
++                { bmin.x, bmin.y, bmax.z }, { bmax.x, bmin.y, bmax.z }, { bmin.x, bmax.y, bmax.z }, { bmax.x, bmax.y, bmax.z },
++            };
++
++            mathUtils::Vec3 wmin{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
++            mathUtils::Vec3 wmax{ -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() };
++
++            for (const auto& p : c)
++            {
++                const mathUtils::Vec3 wp = TransformPoint(m, p);
++                wmin = MinVec3(wmin, wp);
++                wmax = MaxVec3(wmax, wp);
++            }
++
++            outMin = wmin;
++            outMax = wmax;
++        }
++        static bool IntersectRayAABB(const Ray& ray, const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, float& outT) noexcept
++        {
++            float tmin = 0.0f;
++            float tmax = std::numeric_limits<float>::infinity();
++
++            const float o[3] = { ray.origin.x, ray.origin.y, ray.origin.z };
++            const float d[3] = { ray.dir.x, ray.dir.y, ray.dir.z };
++            const float mn[3] = { bmin.x, bmin.y, bmin.z };
++            const float mx[3] = { bmax.x, bmax.y, bmax.z };
++
++            for (int axis = 0; axis < 3; ++axis)
++            {
++                const float dir = d[axis];
++                const float ori = o[axis];
++
++                if (std::abs(dir) < 1e-8f)
++                {
++                    if (ori < mn[axis] || ori > mx[axis])
++                    {
++                        return false;
++                    }
++                    continue;
++                }
++
++                const float invD = 1.0f / dir;
++                float t1 = (mn[axis] - ori) * invD;
++                float t2 = (mx[axis] - ori) * invD;
++                if (t1 > t2)
++                {
++                    std::swap(t1, t2);
++                }
++
++                tmin = std::max(tmin, t1);
++                tmax = std::min(tmax, t2);
++                if (tmin > tmax)
++                {
++                    return false;
++                }
++            }
++
++            outT = tmin;
++            return true;
++        }
++
++        static Ray BuildMouseRay(
++            const rendern::Scene& scene, 
++            const rendern::CameraController& camCtl,
++            const ImVec2& mousePos, 
++            const ImVec2& displaySize) noexcept
++        {
++            const float width = (displaySize.x > 1.0f) ? displaySize.x : 1.0f;
++            const float height = (displaySize.y > 1.0f) ? displaySize.y : 1.0f;
++
++            // NDC in [-1..1], with +Y up.
++            const float ndcX = (mousePos.x / width) * 2.0f - 1.0f;
++            const float ndcY = 1.0f - (mousePos.y / height) * 2.0f;
++
++            const float aspect = width / height;
++            const float tanHalfFov = std::tan(mathUtils::DegToRad(scene.camera.fovYDeg) * 0.5f);
++
++            const mathUtils::Vec3 forward = mathUtils::Normalize(scene.camera.target - scene.camera.position);
++            const mathUtils::Vec3 right = mathUtils::Normalize(mathUtils::Cross(forward, scene.camera.up));
++            const mathUtils::Vec3 up = mathUtils::Normalize(mathUtils::Cross(right, forward));
++
++            mathUtils::Vec3 dir = forward;
++            dir = dir + right * (ndcX * aspect * tanHalfFov);
++            dir = dir + up * (ndcY * tanHalfFov);
++            dir = mathUtils::Normalize(dir);
++
++            Ray ray;
++            ray.origin = scene.camera.position;
++            ray.dir = dir;
++            return ray;
++        }
++
++        static int PickNodeUnderMouse(
++            const rendern::Scene& scene, 
++            const rendern::LevelInstance& levelInst,
++            const ImVec2& mousePos, 
++            const ImVec2& displaySize, 
++            const rendern::CameraController& camCtl,
++            float& outBestT,
++            Ray& outRay)
++        {
++            outRay = BuildMouseRay(scene, camCtl, mousePos, displaySize);
++
++            float bestT = std::numeric_limits<float>::infinity();
++            int bestNode = -1;
++
++            for (int di = 0; di < static_cast<int>(scene.drawItems.size()); ++di)
++            {
++                const int nodeIndex = levelInst.GetNodeIndexFromDrawIndex(di);
++                if (nodeIndex < 0)
++                {
++                    continue;
++                }
++
++                const rendern::DrawItem& item = scene.drawItems[static_cast<std::size_t>(di)];
++                if (!item.mesh)
++                {
++                    continue;
++                }
++
++                const auto& meshBounds = item.mesh->GetBounds();
++                mathUtils::Vec3 wmin{}, wmax{};
++                TransformAABB(meshBounds.aabbMin, meshBounds.aabbMax, item.transform.ToMatrix(), wmin, wmax);
++
++                float t = 0.0f;
++                if (IntersectRayAABB(outRay, wmin, wmax, t))
++                {
++                    if (t < bestT)
++                    {
++                        bestT = t;
++                        bestNode = nodeIndex;
++                    }
++                }
++            }
++
++            outBestT = bestT;
++            return bestNode;
++        }
++        // ------------------------------------------------------------
++        // Light header row with actions on the right (clickable)
++        // ------------------------------------------------------------
++        static bool LightHeaderWithActions(const char* headerText,
++            bool defaultOpen,
++            bool& enabled,
++            bool& doDelete)
++        {
++            doDelete = false;
++
++            ImGuiTreeNodeFlags flags =
++                ImGuiTreeNodeFlags_Framed |
++                ImGuiTreeNodeFlags_SpanAvailWidth |
++                ImGuiTreeNodeFlags_AllowOverlap |
++                ImGuiTreeNodeFlags_FramePadding;
++
++            if (defaultOpen)
++                flags |= ImGuiTreeNodeFlags_DefaultOpen;
++
++            // Tree node label is hidden; we render text via format string to keep ID stable.
++            const bool open = ImGui::TreeNodeEx("##light_node", flags, "%s", headerText);
++
++            // The last item is the header frame; place our controls on top-right of it.
++            const ImVec2 rmin = ImGui::GetItemRectMin();
++            const ImVec2 rmax = ImGui::GetItemRectMax();
++
++            // Reserve width for controls (tweakable).
++            const float deleteW = 62.0f; // typical "Delete" button width
++            const float spacing = ImGui::GetStyle().ItemInnerSpacing.x;
++            const float checkW = ImGui::GetFrameHeight(); // checkbox square
++            const float totalW = checkW + spacing + deleteW;
++
++            // Align to the center vertically.
++            const float y = rmin.y + (rmax.y - rmin.y - ImGui::GetFrameHeight()) * 0.5f;
++
++            // Start X a bit before the right edge.
++            const float x = rmax.x - totalW - spacing;
++
++            // Draw controls on the same line, but overlayed.
++            ImGui::SetCursorScreenPos(ImVec2(x, y));
++            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2.0f, 2.0f));
++
++            // Checkbox (no label text to stay compact)
++            ImGui::Checkbox("##Enabled", &enabled);
++            ImGui::SameLine();
++            doDelete = ImGui::Button("Delete");
++
++            ImGui::PopStyleVar();
++
++            return open;
++        }
++    }
++
++    void DrawRendererDebugUI(rendern::RendererSettings& rs, rendern::Scene& scene, rendern::CameraController& camCtl)
++    {
++        ImGui::Begin("Renderer / Shadows");
++
++        ImGui::Checkbox("Depth prepass", &rs.enableDepthPrepass);
++        ImGui::Checkbox("Frustum culling", &rs.enableFrustumCulling);
++        ImGui::Checkbox("Debug print draw calls", &rs.debugPrintDrawCalls);
++
++        // ------------------------------------------------------------
++        // Camera
++        // ------------------------------------------------------------
++        if (ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
++        {
++            rendern::Camera& cam = scene.camera;
++
++            if (DragVec3("Position", cam.position, 0.05f))
++            {
++                cam.target = cam.position + camCtl.Forward();
++            }
++            if (DragVec3("Target", cam.target, 0.05f))
++            {
++                camCtl.ResetFromCamera(cam);
++            }
++
++            constexpr float kRadToDeg = 57.29577951308232f;
++            constexpr float kDegToRad = 0.017453292519943295f;
++
++            float yawDeg = camCtl.YawRad() * kRadToDeg;
++            float pitchDeg = camCtl.PitchRad() * kRadToDeg;
++
++            bool changedAngles = false;
++            changedAngles |= ImGui::SliderFloat("Yaw (deg)", &yawDeg, -180.0f, 180.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
++            changedAngles |= ImGui::SliderFloat("Pitch (deg)", &pitchDeg, -89.0f, 89.0f, "%.1f", ImGuiSliderFlags_AlwaysClamp);
++
++            if (changedAngles)
++            {
++                camCtl.SetYawPitchRad(yawDeg * kDegToRad, pitchDeg * kDegToRad, cam);
++            }
++
++            ImGui::SliderFloat("FOV Y (deg)", &cam.fovYDeg, 20.0f, 120.0f);
++            ImGui::InputFloat("Near Z", &cam.nearZ, 0.01f, 0.1f, "%.4f");
++            ImGui::InputFloat("Far Z", &cam.farZ, 1.0f, 10.0f, "%.1f");
++
++            auto& s = camCtl.Settings();
++
++            bool enabledCtl = camCtl.Enabled();
++            if (ImGui::Checkbox("Enable controller", &enabledCtl))
++            {
++                camCtl.SetEnabled(enabledCtl);
++            }
++            ImGui::Checkbox("Invert Y", &s.invertY);
++            ImGui::SliderFloat("Move speed", &s.moveSpeed, 0.1f, 50.0f);
++            ImGui::SliderFloat("Sprint multiplier", &s.sprintMultiplier, 1.0f, 12.0f);
++            ImGui::SliderFloat("Mouse sensitivity", &s.mouseSensitivity, 0.0005f, 0.01f, "%.4f", ImGuiSliderFlags_Logarithmic);
++
++            if (ImGui::Button("Reset view"))
++            {
++                cam.position = mathUtils::Vec3(5.0f, 10.0f, 10.0f);
++                cam.target = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
++                cam.up = mathUtils::Vec3(0.0f, 1.0f, 0.0f);
++                cam.fovYDeg = 60.0f;
++                cam.nearZ = 0.01f;
++                cam.farZ = 200.0f;
++                camCtl.ResetFromCamera(cam);
++            }
++
++            ImGui::TextDisabled("Controls: hold RMB to look, WASD move, QE up/down, Shift sprint");
++            ImGui::Separator();
++        }
++
++        ImGui::Separator();
++        ImGui::Text("Shadow bias (texels)");
++        ImGui::SliderFloat("Dir base", &rs.dirShadowBaseBiasTexels, 0.0f, 5.0f, "%.3f");
++        ImGui::SliderFloat("Spot base", &rs.spotShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
++        ImGui::SliderFloat("Point base", &rs.pointShadowBaseBiasTexels, 0.0f, 10.0f, "%.3f");
++        ImGui::SliderFloat("Slope scale", &rs.shadowSlopeScaleTexels, 0.0f, 10.0f, "%.3f");
++
++        ImGui::Separator();
++        ImGui::Text("Debug draw");
++        ImGui::Checkbox("Light gizmos (3D)", &rs.drawLightGizmos);
++        ImGui::Checkbox("Depth test (gizmos)", &rs.debugDrawDepthTest);
++        if (rs.drawLightGizmos)
++        {
++            ImGui::SliderFloat("Gizmo half-size", &rs.lightGizmoHalfSize, 0.01f, 2.0f, "%.3f");
++            ImGui::SliderFloat("Arrow length", &rs.lightGizmoArrowLength, 0.05f, 25.0f, "%.3f");
++            ImGui::SliderFloat("Arrow thickness", &rs.lightGizmoArrowThickness, 0.001f, 2.0f, "%.3f");
++            }
++
++        ImGui::Separator();
++        if (ImGui::CollapsingHeader("Lights", ImGuiTreeNodeFlags_DefaultOpen))
++        {
++            ImGui::Text("Count: %d", static_cast<int>(scene.lights.size()));
++
++            if (ImGui::Button("Add Directional"))
++            {
++                rendern::Light l{};
++                l.type = rendern::LightType::Directional;
++                ApplyDefaultsForType(l);
++                scene.AddLight(l);
++            }
++            ImGui::SameLine();
++            if (ImGui::Button("Add Point"))
++            {
++                rendern::Light l{};
++                l.type = rendern::LightType::Point;
++                ApplyDefaultsForType(l);
++                scene.AddLight(l);
++            }
++            ImGui::SameLine();
++            if (ImGui::Button("Add Spot"))
++            {
++                rendern::Light l{};
++                l.type = rendern::LightType::Spot;
++                ApplyDefaultsForType(l);
++                scene.AddLight(l);
++            }
++
++            ImGui::Spacing();
++
++            // Track previous intensities for a simple Enabled toggle.
++            static std::vector<float> prevIntensity;
++            if (prevIntensity.size() != scene.lights.size())
++                prevIntensity.resize(scene.lights.size(), 1.0f);
++
++            for (std::size_t i = 0; i < scene.lights.size();)
++            {
++                auto& l = scene.lights[i];
++
++                ImGui::PushID(static_cast<int>(i));
++
++                const char* typeName = kLightTypeNames[ToIndex(l.type)];
++                char header[64]{};
++                std::snprintf(header, sizeof(header), "[%s] #%zu", typeName, i);
++
++                // Enabled state derived from intensity.
++                bool enabled = (l.intensity > 0.00001f);
++                bool doDelete = false;
++
++                const bool open = LightHeaderWithActions(header, true, enabled, doDelete);
++
++                // Apply "Enabled" change
++                if (!enabled && l.intensity > 0.0f)
++                {
++                    prevIntensity[i] = std::max(prevIntensity[i], l.intensity);
++                    l.intensity = 0.0f;
++                }
++                else if (enabled && l.intensity <= 0.00001f)
++                {
++                    l.intensity = (prevIntensity[i] > 0.0f) ? prevIntensity[i] : 1.0f;
++                }
++
++                if (open)
++                {
++                    DrawOneLightEditor(l, i);
++                    ImGui::TreePop();
++                }
++
++                ImGui::PopID();
++
++                if (doDelete)
++                {
++                    scene.lights.erase(scene.lights.begin() + static_cast<std::ptrdiff_t>(i));
++                    prevIntensity.erase(prevIntensity.begin() + static_cast<std::ptrdiff_t>(i));
++                    continue;
++                }
++
++                ++i;
++            }
++        }
++
++        ImGui::Separator();
++        ImGui::Text("F1: toggle UI");
++        ImGui::End();
++    }
++
++    void DrawLevelEditorUI(
++        rendern::LevelAsset& level,
++        rendern::LevelInstance& levelInst, 
++        AssetManager& assets, 
++        rendern::Scene& scene,
++        rendern::CameraController& camCtl)
++    {
++        ImGui::Begin("Level Editor");
++
++        ImGui::Text("Nodes: %d   DrawItems: %d", static_cast<int>(level.nodes.size()), static_cast<int>(scene.drawItems.size()));
++        ImGui::Separator();
++
++        // Persistent UI state
++        static int selectedNode = -1;
++        static int prevSelectedNode = -2;
++        static bool addAsChildOfSelection = false;
++
++        static char nameBuf[128]{};
++        static char importPathBuf[512]{};
++
++        // Selection is driven by the main viewport (mouse picking) or by this UI.
++        if (scene.editorSelectedNode != selectedNode)
++        {
++            selectedNode = scene.editorSelectedNode;
++        }
++
++        // Save state
++        static char savePathBuf[512]{};
++        static char saveStatusBuf[512]{};
++        static std::string cachedSourcePath;
++        static bool saveStatusIsError = false;
++
++        // Keep save path input synced with loaded sourcePath (unless user edits it).
++        if (cachedSourcePath != level.sourcePath)
++        {
++            cachedSourcePath = level.sourcePath;
++            const std::string fallback = cachedSourcePath.empty() ? std::string("levels/edited.level.json") : cachedSourcePath;
++            std::snprintf(savePathBuf, sizeof(savePathBuf), "%s", fallback.c_str());
++        }
++
++        // ------------------------------------------------------------
++        // File
++        // ------------------------------------------------------------
++        if (ImGui::CollapsingHeader("File", ImGuiTreeNodeFlags_DefaultOpen))
++        {
++            ImGui::InputText("Level path", savePathBuf, sizeof(savePathBuf));
++
++            auto doSaveToPath = [&](const std::string& path)
++            {
++                try
++                {
++                    // Persist camera/lights from the current scene into the level asset.
++                    level.camera = scene.camera;
++                    level.lights = scene.lights;
++
++                    rendern::SaveLevelAssetToJson(path, level);
++                    level.sourcePath = path;
++                    cachedSourcePath = path;
++                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Saved: %s", path.c_str());
++                    saveStatusIsError = false;
++                }
++                catch (const std::exception& e)
++                {
++                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: %s", e.what());
++                    saveStatusIsError = true;
++                }
++            };
++
++            const bool canHotkey = !ImGui::GetIO().WantTextInput;
++            const bool ctrlS = canHotkey && ImGui::IsKeyDown(ImGuiKey_ModCtrl) && ImGui::IsKeyPressed(ImGuiKey_S);
++
++            const std::string pathStr = std::string(savePathBuf);
++            bool clickedSave = ImGui::Button("Save (Ctrl+S)");
++            ImGui::SameLine();
++            bool clickedSaveAs = ImGui::Button("Save As");
++
++            if (ctrlS || clickedSave)
++            {
++                const std::string usePath = !level.sourcePath.empty() ? level.sourcePath : pathStr;
++                if (!usePath.empty())
++                {
++                    doSaveToPath(usePath);
++                }
++                else
++                {
++                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
++                    saveStatusIsError = true;
++                }
++            }
++            else if (clickedSaveAs)
++            {
++                if (!pathStr.empty())
++                {
++                    doSaveToPath(pathStr);
++                }
++                else
++                {
++                    std::snprintf(saveStatusBuf, sizeof(saveStatusBuf), "Save failed: empty path");
++                    saveStatusIsError = true;
++                }
++            }
++
++            if (saveStatusBuf[0] != '\0')
++            {
++                if (saveStatusIsError)
++                    ImGui::TextColored(ImVec4(1, 0.4f, 0.4f, 1), "%s", saveStatusBuf);
++                else
++                    ImGui::Text("%s", saveStatusBuf);
++            }
++        }
++
++        // Build children adjacency (alive only)
++        const std::size_t ncount = level.nodes.size();
++        std::vector<std::vector<int>> children;
++        children.resize(ncount);
++
++        auto nodeAlive = [&](int idx) -> bool
++        {
++            if (idx < 0) 
++            {
++                return false;
++            }
++            const std::size_t i = static_cast<std::size_t>(idx);
++            if (i >= ncount) 
++            {
++                return false;
++            }
++            return level.nodes[i].alive;
++        };
++
++        for (std::size_t i = 0; i < ncount; ++i)
++        {
++            const auto& n = level.nodes[i];
++            if (!n.alive) continue;
++            if (n.parent < 0) continue;
++            if (!nodeAlive(n.parent)) continue;
++            children[static_cast<std::size_t>(n.parent)].push_back(static_cast<int>(i));
++        }
++
++        // Roots
++        std::vector<int> roots;
++        roots.reserve(ncount);
++        for (std::size_t i = 0; i < ncount; ++i)
++        {
++            const auto& n = level.nodes[i];
++            if (!n.alive) continue;
++            if (n.parent < 0 || !nodeAlive(n.parent))
++                roots.push_back(static_cast<int>(i));
++        }
++
++        // Mesh/material id lists (sorted)
++        std::vector<std::string> meshIds;
++        meshIds.reserve(level.meshes.size());
++        for (const auto& [id, _] : level.meshes) meshIds.push_back(id);
++        std::sort(meshIds.begin(), meshIds.end());
++
++        std::vector<std::string> materialIds;
++        materialIds.reserve(level.materials.size());
++        for (const auto& [id, _] : level.materials) materialIds.push_back(id);
++        std::sort(materialIds.begin(), materialIds.end());
++
++        // Layout: hierarchy + inspector
++        ImGui::BeginChild("##Hierarchy", ImVec2(280.0f, 0.0f), true);
++
++        auto drawNode = [&](auto&& self, int idx) -> void
++        {
++            const auto& n = level.nodes[static_cast<std::size_t>(idx)];
++
++            ImGuiTreeNodeFlags flags =
++                ImGuiTreeNodeFlags_OpenOnArrow |
++                ImGuiTreeNodeFlags_SpanFullWidth;
++
++            if (children[static_cast<std::size_t>(idx)].empty())
++                flags |= ImGuiTreeNodeFlags_Leaf;
++
++            if (idx == selectedNode)
++                flags |= ImGuiTreeNodeFlags_Selected;
++
++            char label[256]{};
++            const char* name = n.name.empty() ? "<unnamed>" : n.name.c_str();
++            if (!n.mesh.empty())
++                std::snprintf(label, sizeof(label), "%d: %s  [mesh=%s]", idx, name, n.mesh.c_str());
++            else
++                std::snprintf(label, sizeof(label), "%d: %s", idx, name);
++
++            const bool open = ImGui::TreeNodeEx(reinterpret_cast<void*>(static_cast<std::intptr_t>(idx)), flags, "%s", label);
++
++            if (ImGui::IsItemClicked())
++            {
++                selectedNode = idx;
++            }
++
++            if (open)
++            {
++                for (int ch : children[static_cast<std::size_t>(idx)])
++                    self(self, ch);
++                ImGui::TreePop();
++            }
++        };
++
++        for (int r : roots)
++        {
++            drawNode(drawNode, r);
++        }
++
++        ImGui::EndChild();
++        ImGui::SameLine();
++        ImGui::BeginChild("##Inspector", ImVec2(0.0f, 0.0f), true);
++
++        // Add / import controls
++        ImGui::Text("Create / Import");
++        ImGui::Checkbox("Add as child of selected", &addAsChildOfSelection);
++
++        auto ensureDefaultMesh = [&](std::string_view id, std::string_view relPath)
++        {
++            if (!level.meshes.contains(std::string(id)))
++            {
++                rendern::LevelMeshDef def{};
++                def.path = std::string(relPath);
++                def.debugName = std::string(id);
++                level.meshes.emplace(std::string(id), std::move(def));
++            }
++        };
++
++        auto computeSpawnTransform = [&]() -> rendern::Transform
++        {
++            rendern::Transform t{};
++            t.position = scene.camera.position + camCtl.Forward() * 5.0f;
++            t.rotationDegrees = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
++            t.scale = mathUtils::Vec3(1.0f, 1.0f, 1.0f);
++            return t;
++        };
++
++        const int parentForNew =
++            (addAsChildOfSelection && nodeAlive(selectedNode)) ? selectedNode : -1;
++
++        if (ImGui::Button("Add Cube"))
++        {
++            ensureDefaultMesh("cube", "models/cube.obj");
++            const int newIdx = levelInst.AddNode(level, scene, assets, "cube", "", parentForNew, computeSpawnTransform(), "Cube");
++            selectedNode = newIdx;
++        }
++        ImGui::SameLine();
++        if (ImGui::Button("Add Quad"))
++        {
++            ensureDefaultMesh("quad", "models/quad.obj");
++            rendern::Transform t = computeSpawnTransform();
++            t.scale = mathUtils::Vec3(3.0f, 1.0f, 3.0f);
++            const int newIdx = levelInst.AddNode(level, scene, assets, "quad", "", parentForNew, t, "Quad");
++            selectedNode = newIdx;
++        }
++        ImGui::SameLine();
++        if (ImGui::Button("Add Empty"))
++        {
++            const int newIdx = levelInst.AddNode(level, scene, assets, "", "", parentForNew, computeSpawnTransform(), "Empty");
++            selectedNode = newIdx;
++        }
++
++        ImGui::Spacing();
++        ImGui::InputText("OBJ path", importPathBuf, sizeof(importPathBuf));
++
++        auto sanitizeId = [](std::string s) -> std::string
++        {
++            if (s.empty())
++                s = "mesh";
++
++            for (char& c : s)
++            {
++                const unsigned char uc = static_cast<unsigned char>(c);
++                if (!(std::isalnum(uc) || c == '_' || c == '-'))
++                    c = '_';
++            }
++            return s;
++        };
++
++        auto makeUniqueMeshId = [&](std::string base) -> std::string
++        {
++            std::string id = sanitizeId(std::move(base));
++            if (id.empty())
++                id = "mesh";
++
++            if (!level.meshes.contains(id))
++                return id;
++
++            for (int suffix = 2; suffix < 10000; ++suffix)
++            {
++                std::string tryId = id + "_" + std::to_string(suffix);
++                if (!level.meshes.contains(tryId))
++                    return tryId;
++            }
++            return id + "_x";
++        };
++
++        if (ImGui::Button("Import mesh into library"))
++        {
++            const std::string pathStr = std::string(importPathBuf);
++            if (!pathStr.empty())
++            {
++                std::string base = std::filesystem::path(pathStr).stem().string();
++                if (base.empty())
++                    base = "mesh";
++
++                const std::string meshId = makeUniqueMeshId(base);
++
++                rendern::LevelMeshDef def{};
++                def.path = pathStr;
++                def.debugName = meshId;
++                level.meshes.emplace(meshId, std::move(def));
++
++                // Kick async load (optional)
++                try
++                {
++                    rendern::MeshProperties p{};
++                    p.filePath = pathStr;
++                    p.debugName = meshId;
++                    assets.LoadMeshAsync(meshId, std::move(p));
++                }
++                catch (...)
++                {
++                    // Leave it - the actual load error will be visible in logs.
++                }
++            }
++        }
++        ImGui::SameLine();
++        if (ImGui::Button("Create object from path"))
++        {
++            const std::string pathStr = std::string(importPathBuf);
++            if (!pathStr.empty())
++            {
++                std::string base = std::filesystem::path(pathStr).stem().string();
++                if (base.empty())
++                    base = "mesh";
++
++                const std::string meshId = makeUniqueMeshId(base);
++
++                if (!level.meshes.contains(meshId))
++                {
++                    rendern::LevelMeshDef def{};
++                    def.path = pathStr;
++                    def.debugName = meshId;
++                    level.meshes.emplace(meshId, std::move(def));
++                }
++
++                const int newIdx = levelInst.AddNode(level, scene, assets, meshId, "", parentForNew, computeSpawnTransform(), meshId);
++                selectedNode = newIdx;
++            }
++        }
++
++        ImGui::Separator();
++        ImGui::Text("Selection");
++
++        // Selection validity
++        if (selectedNode >= 0 && (!nodeAlive(selectedNode)))
++        {
++            selectedNode = -1;
++        }
++
++        if (selectedNode >= 0 && nodeAlive(selectedNode))
++        {
++            rendern::LevelNode& node = level.nodes[static_cast<std::size_t>(selectedNode)];
++
++            if (prevSelectedNode != selectedNode)
++            {
++                // Refresh name buffer on selection change.
++                std::snprintf(nameBuf, sizeof(nameBuf), "%s", node.name.c_str());
++                prevSelectedNode = selectedNode;
++            }
++
++            ImGui::Text("Node #%d", selectedNode);
++
++            if (ImGui::InputText("Name", nameBuf, sizeof(nameBuf)))
++            {
++                node.name = std::string(nameBuf);
++            }
++
++            bool vis = node.visible;
++            if (ImGui::Checkbox("Visible", &vis))
++            {
++                levelInst.SetNodeVisible(level, scene, assets, selectedNode, vis);
++            }
++
++            // Mesh combo
++            {
++                std::vector<std::string> items;
++                items.reserve(meshIds.size() + 2);
++                items.push_back("(none)");
++                for (const auto& id : meshIds) items.push_back(id);
++
++                // Ensure missing mesh id is still selectable (shows as last item)
++                if (!node.mesh.empty() && !level.meshes.contains(node.mesh))
++                    items.push_back(std::string("<missing> ") + node.mesh);
++
++                int current = 0;
++                if (!node.mesh.empty())
++                {
++                    for (std::size_t i = 1; i < items.size(); ++i)
++                    {
++                        if (items[i] == node.mesh)
++                        {
++                            current = static_cast<int>(i);
++                            break;
++                        }
++                    }
++                }
++
++                std::vector<const char*> citems;
++                citems.reserve(items.size());
++                for (auto& s : items) citems.push_back(s.c_str());
++
++                if (ImGui::Combo("Mesh", &current, citems.data(), static_cast<int>(citems.size())))
++                {
++                    if (current == 0)
++                        levelInst.SetNodeMesh(level, scene, assets, selectedNode, "");
++                    else
++                        levelInst.SetNodeMesh(level, scene, assets, selectedNode, items[static_cast<std::size_t>(current)]);
++                }
++            }
++
++            // Material combo
++            {
++                std::vector<std::string> items;
++                items.reserve(materialIds.size() + 2);
++                items.push_back("(none)");
++                for (const auto& id : materialIds) items.push_back(id);
++
++                if (!node.material.empty() && !level.materials.contains(node.material))
++                    items.push_back(std::string("<missing> ") + node.material);
++
++                int current = 0;
++                if (!node.material.empty())
++                {
++                    for (std::size_t i = 1; i < items.size(); ++i)
++                    {
++                        if (items[i] == node.material)
++                        {
++                            current = static_cast<int>(i);
++                            break;
++                        }
++                    }
++                }
++
++                std::vector<const char*> citems;
++                citems.reserve(items.size());
++                for (auto& s : items) citems.push_back(s.c_str());
++
++                if (ImGui::Combo("Material", &current, citems.data(), static_cast<int>(citems.size())))
++                {
++                    if (current == 0)
++                        levelInst.SetNodeMaterial(level, scene, selectedNode, "");
++                    else
++                        levelInst.SetNodeMaterial(level, scene, selectedNode, items[static_cast<std::size_t>(current)]);
++                }
++            }
++
++            // Transform
++            bool changed = false;
++            changed |= DragVec3("Position", node.transform.position, 0.05f);
++            changed |= DragVec3("Rotation (deg)", node.transform.rotationDegrees, 0.2f);
++
++            mathUtils::Vec3 scale = node.transform.scale;
++            if (DragVec3("Scale", scale, 0.02f))
++            {
++                scale.x = std::max(scale.x, 0.001f);
++                scale.y = std::max(scale.y, 0.001f);
++                scale.z = std::max(scale.z, 0.001f);
++                node.transform.scale = scale;
++                changed = true;
++            }
++
++            if (changed)
++            {
++                levelInst.MarkTransformsDirty();
++            }
++
++            ImGui::Spacing();
++
++            // Actions
++            if (ImGui::Button("Duplicate"))
++            {
++                rendern::Transform t = node.transform;
++                t.position.x += 1.0f;
++
++                const int newIdx = levelInst.AddNode(level, scene, assets, node.mesh, node.material, node.parent, t, node.name);
++                selectedNode = newIdx;
++            }
++            ImGui::SameLine();
++            bool doDelete = ImGui::Button("Delete (recursive)");
++            if (ImGui::IsKeyPressed(ImGuiKey_Delete))
++            {
++                doDelete = true;
++            }
++
++            if (doDelete)
++            {
++                const int parent = node.parent;
++                levelInst.DeleteSubtree(level, scene, selectedNode);
++
++                if (nodeAlive(parent))
++                {    
++                    selectedNode = parent;
++                }
++                else
++                {
++                    selectedNode = -1;
++                }
++            }
++        }
++        else
++        {
++            ImGui::TextDisabled("No node selected.");
++            prevSelectedNode = -2;
++        }
++
++        ImGui::EndChild();
++
++        // Expose selection to the rest of the app (main viewport already writes here too).
++        scene.editorSelectedNode = selectedNode;
++
++        // Push transforms to Scene if needed
++        levelInst.SyncTransformsIfDirty(level, scene);
++
++        ImGui::End();
++    }
++
++}
+diff -ruN v1_orig/src/Render/Render.ixx v1_mod/src/Render/Render.ixx
+--- v1_orig/src/Render/Render.ixx	2026-02-09 21:48:55.000000000 +0000
++++ v1_mod/src/Render/Render.ixx	2026-02-16 10:25:50.114296901 +0000
+@@ -8,6 +8,7 @@
+ export import :render_renderer;
+ export import :scene;
+ export import :level;
++export import :picking;
+ export import :camera_controller;
+ export import :scene_bridge;
+ export import :shader_system;
+diff -ruN v1_orig/src/Render/Scene/Picking.cppm v1_mod/src/Render/Scene/Picking.cppm
+--- v1_orig/src/Render/Scene/Picking.cppm	1970-01-01 00:00:00.000000000 +0000
++++ v1_mod/src/Render/Scene/Picking.cppm	2026-02-16 10:25:17.513356753 +0000
+@@ -0,0 +1,193 @@
++module;
++
++#include <algorithm>
++#include <cmath>
++#include <limits>
++#include <utility>
++
++export module core:picking;
++
++import :scene;
++import :level;
++import :math_utils;
++
++namespace
++{
++    struct Ray
++    {
++        mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
++        mathUtils::Vec3 dir{ 0.0f, 0.0f, 1.0f }; // normalized
++    };
++
++    static mathUtils::Vec3 MinVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
++    {
++        return { std::min(a.x, b.x), std::min(a.y, b.y), std::min(a.z, b.z) };
++    }
++
++    static mathUtils::Vec3 MaxVec3(const mathUtils::Vec3& a, const mathUtils::Vec3& b) noexcept
++    {
++        return { std::max(a.x, b.x), std::max(a.y, b.y), std::max(a.z, b.z) };
++    }
++
++    static mathUtils::Vec3 TransformPoint(const mathUtils::Mat4& m, const mathUtils::Vec3& p) noexcept
++    {
++        const mathUtils::Vec4 w = m * mathUtils::Vec4(p, 1.0f);
++        return { w.x, w.y, w.z };
++    }
++
++    static void TransformAABB(const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, const mathUtils::Mat4& m,
++        mathUtils::Vec3& outMin, mathUtils::Vec3& outMax) noexcept
++    {
++        const mathUtils::Vec3 c[8] =
++        {
++            { bmin.x, bmin.y, bmin.z }, { bmax.x, bmin.y, bmin.z }, { bmin.x, bmax.y, bmin.z }, { bmax.x, bmax.y, bmin.z },
++            { bmin.x, bmin.y, bmax.z }, { bmax.x, bmin.y, bmax.z }, { bmin.x, bmax.y, bmax.z }, { bmax.x, bmax.y, bmax.z },
++        };
++
++        mathUtils::Vec3 wmin{ std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity() };
++        mathUtils::Vec3 wmax{ -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity() };
++
++        for (const auto& p : c)
++        {
++            const mathUtils::Vec3 wp = TransformPoint(m, p);
++            wmin = MinVec3(wmin, wp);
++            wmax = MaxVec3(wmax, wp);
++        }
++
++        outMin = wmin;
++        outMax = wmax;
++    }
++
++    static bool IntersectRayAABB(const Ray& ray, const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, float& outT) noexcept
++    {
++        float tmin = 0.0f;
++        float tmax = std::numeric_limits<float>::infinity();
++
++        const float o[3] = { ray.origin.x, ray.origin.y, ray.origin.z };
++        const float d[3] = { ray.dir.x, ray.dir.y, ray.dir.z };
++        const float mn[3] = { bmin.x, bmin.y, bmin.z };
++        const float mx[3] = { bmax.x, bmax.y, bmax.z };
++
++        for (int axis = 0; axis < 3; ++axis)
++        {
++            const float dir = d[axis];
++            const float ori = o[axis];
++
++            if (std::abs(dir) < 1e-8f)
++            {
++                if (ori < mn[axis] || ori > mx[axis])
++                {
++                    return false;
++                }
++                continue;
++            }
++
++            const float invD = 1.0f / dir;
++            float t1 = (mn[axis] - ori) * invD;
++            float t2 = (mx[axis] - ori) * invD;
++            if (t1 > t2)
++            {
++                std::swap(t1, t2);
++            }
++
++            tmin = std::max(tmin, t1);
++            tmax = std::min(tmax, t2);
++            if (tmin > tmax)
++            {
++                return false;
++            }
++        }
++
++        outT = tmin;
++        return true;
++    }
++
++    static Ray BuildMouseRay(const rendern::Scene& scene, float mouseX, float mouseY, float viewportW, float viewportH) noexcept
++    {
++        const float width = (viewportW > 1.0f) ? viewportW : 1.0f;
++        const float height = (viewportH > 1.0f) ? viewportH : 1.0f;
++
++        // NDC in [-1..1], with +Y up.
++        const float ndcX = (mouseX / width) * 2.0f - 1.0f;
++        const float ndcY = 1.0f - (mouseY / height) * 2.0f;
++
++        const float aspect = width / height;
++        const float tanHalfFov = std::tan(mathUtils::DegToRad(scene.camera.fovYDeg) * 0.5f);
++
++        const mathUtils::Vec3 forward = mathUtils::Normalize(scene.camera.target - scene.camera.position);
++        const mathUtils::Vec3 right = mathUtils::Normalize(mathUtils::Cross(forward, scene.camera.up));
++        const mathUtils::Vec3 up = mathUtils::Normalize(mathUtils::Cross(right, forward));
++
++        mathUtils::Vec3 dir = forward;
++        dir = dir + right * (ndcX * aspect * tanHalfFov);
++        dir = dir + up * (ndcY * tanHalfFov);
++        dir = mathUtils::Normalize(dir);
++
++        Ray ray;
++        ray.origin = scene.camera.position;
++        ray.dir = dir;
++        return ray;
++    }
++}
++
++export namespace rendern
++{
++    struct PickResult
++    {
++        int nodeIndex{ -1 };
++        float t{ std::numeric_limits<float>::infinity() };
++        mathUtils::Vec3 rayOrigin{ 0.0f, 0.0f, 0.0f };
++        mathUtils::Vec3 rayDir{ 0.0f, 0.0f, 1.0f }; // normalized
++    };
++
++    PickResult PickNodeUnderScreenPoint(
++        const rendern::Scene& scene,
++        const rendern::LevelInstance& levelInst,
++        float mouseX,
++        float mouseY,
++        float viewportW,
++        float viewportH) noexcept
++    {
++        PickResult out{};
++
++        const Ray ray = BuildMouseRay(scene, mouseX, mouseY, viewportW, viewportH);
++        out.rayOrigin = ray.origin;
++        out.rayDir = ray.dir;
++
++        float bestT = std::numeric_limits<float>::infinity();
++        int bestNode = -1;
++
++        for (int di = 0; di < static_cast<int>(scene.drawItems.size()); ++di)
++        {
++            const int nodeIndex = levelInst.GetNodeIndexFromDrawIndex(di);
++            if (nodeIndex < 0)
++            {
++                continue;
++            }
++
++            const rendern::DrawItem& item = scene.drawItems[static_cast<std::size_t>(di)];
++            if (!item.mesh)
++            {
++                continue;
++            }
++
++            const auto& meshBounds = item.mesh->GetBounds();
++            mathUtils::Vec3 wmin{}, wmax{};
++            TransformAABB(meshBounds.aabbMin, meshBounds.aabbMax, item.transform.ToMatrix(), wmin, wmax);
++
++            float t = 0.0f;
++            if (IntersectRayAABB(ray, wmin, wmax, t))
++            {
++                if (t < bestT)
++                {
++                    bestT = t;
++                    bestNode = nodeIndex;
++                }
++            }
++        }
++
++        out.nodeIndex = bestNode;
++        out.t = bestT;
++        return out;
++    }
++}
+diff -ruN v1_orig/src/Render/Scene/Scene.cppm v1_mod/src/Render/Scene/Scene.cppm
+--- v1_orig/src/Render/Scene/Scene.cppm	2026-02-14 15:27:24.000000000 +0000
++++ v1_mod/src/Render/Scene/Scene.cppm	2026-02-16 10:23:22.404656716 +0000
+@@ -1,252 +1,256 @@
+-module;
+-
+-#include <cstdint>
+-#include <vector>
+-#include <span>
+-#include <stdexcept>
+-#include <memory>
+-
+-export module core:scene;
+-
+-import :rhi;
+-import :resource_manager_mesh;
+-import :math_utils;
+-
+-export namespace rendern
+-{
+-	// High-level transform used by the CPU side.
+-	// Convention: rotationDegrees is applied as Z * Y * X after translation.
+-	struct Transform
+-	{
+-		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+-		mathUtils::Vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
+-		mathUtils::Vec3 scale{ 1.0f, 1.0f, 1.0f };
+-
+-		// Optional: allow importing transforms directly as a matrix (e.g. from DCC tools).
+-		// Matrix is COLUMN-major and follows the same convention as mathUtils::Mat4 (m[col][row]).
+-		bool useMatrix{ false };
+-		mathUtils::Mat4 matrix{ 1.0f };
+-
+-		mathUtils::Mat4 ToMatrix() const
+-		{
+-			if (useMatrix)
+-			{
+-				return matrix;
+-			}
+-			mathUtils::Mat4 m{ 1.0f };
+-			m = mathUtils::Translate(m, position);
+-			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.z), mathUtils::Vec3(0, 0, 1));
+-			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.y), mathUtils::Vec3(0, 1, 0));
+-			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.x), mathUtils::Vec3(1, 0, 0));
+-			m = mathUtils::Scale(m, scale);
+-			return m;
+-		}
+-	};
+-
+-	struct Camera
+-	{
+-		mathUtils::Vec3 position{ 2.2f, 1.6f, 2.2f };
+-		mathUtils::Vec3 target{ 0.0f, 0.0f, 0.0f };
+-		mathUtils::Vec3 up{ 0.0f, 1.0f, 0.0f };
+-
+-		float fovYDeg{ 60.0f };
+-		float nearZ{ 0.01f };
+-		float farZ{ 200.0f };
+-	};
+-	enum class LightType : std::uint32_t
+-	{
+-		Directional = 0,
+-		Point = 1,
+-		Spot = 2
+-	};
+-
+-	// CPU-side light description.
+-	// direction is "FROM light towards the scene" for Directional and Spot.
+-	struct Light
+-	{
+-		LightType type{ LightType::Directional };
+-
+-		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+-		mathUtils::Vec3 direction{ 0.0f, -1.0f, 0.0f };
+-
+-		mathUtils::Vec3 color{ 1.0f, 1.0f, 1.0f };
+-		float intensity{ 1.0f };
+-
+-		float range{ 10.0f };
+-		float innerHalfAngleDeg{ 12.0f };
+-		float outerHalfAngleDeg{ 20.0f };
+-
+-		float attConstant{ 1.0f };
+-		float attLinear{ 0.12f };
+-		float attQuadratic{ 0.04f };
+-	};
+-
+-	// Debug visualization data (runtime-only).
+-	struct DebugRay
+-	{
+-		bool enabled{ false };
+-		mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
+-		mathUtils::Vec3 direction{ 0.0f, 0.0f, 1.0f }; // should be normalized
+-		float length{ 0.0f };
+-		bool hit{ false };
+-	};
+-
+-	struct MaterialParams
+-	{
+-		mathUtils::Vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
+-
+-		// Legacy Phong params (still used by OpenGL path).
+-		float shininess{ 64.0f };
+-		float specStrength{ 0.5f };
+-
+-		// Shadow bias in "texels" (added to the global bias computed in shader).
+-		float shadowBias{ 0.0f };
+-
+-		// --- PBR params (DX12 path) ---
+-		// Defaults are chosen to look reasonable even when only albedo is provided.
+-		float metallic{ 0.0f };   // 0..1
+-		float roughness{ 0.75f }; // 0..1
+-		float ao{ 1.0f };         // 0..1
+-		float emissiveStrength{ 1.0f };
+-
+-		// Cross-backend binding: if non-zero, renderer binds this descriptor at slot t0.
+-		rhi::TextureDescIndex albedoDescIndex{ 0 };
+-
+-		// DX12 PBR maps (bound as separate SRV slots in the main shader):
+-		//  t12 normal, t13 metalness, t14 roughness, t15 ao, t16 emissive
+-		rhi::TextureDescIndex normalDescIndex{ 0 };
+-		rhi::TextureDescIndex metalnessDescIndex{ 0 };
+-		rhi::TextureDescIndex roughnessDescIndex{ 0 };
+-		rhi::TextureDescIndex aoDescIndex{ 0 };
+-		rhi::TextureDescIndex emissiveDescIndex{ 0 };
+-	};
+-
+-	enum class MaterialPerm : std::uint32_t
+-	{
+-		None		= 0,
+-		UseTex		= 1u << 0,
+-		UseShadow	= 1u << 1,
+-		Skinning	= 1u << 2,
+-		Transparent = 1u << 3
+-	};
+-
+-	constexpr MaterialPerm operator|(MaterialPerm a, MaterialPerm b) noexcept
+-	{
+-		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
+-	}
+-	constexpr MaterialPerm operator&(MaterialPerm a, MaterialPerm b) noexcept
+-	{
+-		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
+-	}
+-	constexpr MaterialPerm& operator|=(MaterialPerm& a, MaterialPerm b) noexcept
+-	{
+-		a = a | b;
+-		return a;
+-	}
+-	constexpr bool HasFlag(MaterialPerm a, MaterialPerm b) noexcept
+-	{
+-		return static_cast<std::uint32_t>(a & b) != 0;
+-	}
+-
+-	struct MaterialTag {};
+-	using MaterialHandle = rhi::Handle<MaterialTag>;
+-	using MeshHandle = std::shared_ptr<MeshResource>;
+-	// Material = "how we draw": parameters + textures + permutation flags.
+-	// NOTE: UseTex is inferred automatically if albedoDescIndex != 0.
+-	struct Material
+-	{
+-		MaterialParams params{};
+-		MaterialPerm permFlags{ MaterialPerm::UseShadow };
+-	};
+-
+-	inline MaterialPerm EffectivePerm(const Material& material) noexcept
+-	{
+-		MaterialPerm maetrialPerm = material.permFlags;
+-		// a < 1 => transparent even if flag isn't set.
+-		if (material.params.baseColor.w < 0.999f)
+-		{
+-			maetrialPerm |= MaterialPerm::Transparent;
+-		}
+-		if (material.params.albedoDescIndex != 0)
+-		{
+-			maetrialPerm |= MaterialPerm::UseTex;
+-		}
+-		return maetrialPerm;
+-	}
+-
+-	struct DrawItem
+-	{
+-		// Scene owns only a handle. Upload/Destroy are driven by Asset/ResourceManager.
+-		// Renderer will skip items whose mesh hasn't finished loading / uploading.
+-		MeshHandle mesh{};
+-		Transform transform{};
+-		MaterialHandle material{};
+-	};
+-
+-	class Scene
+-	{
+-	public:
+-		rendern::Camera camera{};
+-		std::vector<Material> materials; // persistent "assets" owned by Scene
+-		std::vector<DrawItem> drawItems;
+-		std::vector<Light> lights;
+-
+-		rhi::TextureDescIndex skyboxDescIndex{ 0 };
+-
+-		DebugRay debugPickRay{};
+-
+-		void Clear()
+-		{
+-			drawItems.clear();
+-			lights.clear();
+-			skyboxDescIndex = 0;
+-			debugPickRay = {};
+-
+-		}
+-
+-		MaterialHandle CreateMaterial(const Material& m)
+-		{
+-			materials.push_back(m);
+-			return MaterialHandle{ static_cast<std::uint32_t>(materials.size()) }; // id is 1-based
+-		}
+-
+-		const Material& GetMaterial(MaterialHandle h) const
+-		{
+-			if (h.id == 0 || h.id > materials.size())
+-			{
+-				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
+-			}
+-			return materials[h.id - 1];
+-		}
+-
+-		Material& GetMaterial(MaterialHandle h)
+-		{
+-			if (h.id == 0 || h.id > materials.size())
+-			{
+-				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
+-			}
+-			return materials[h.id - 1];
+-		}
+-
+-		DrawItem& AddDraw(const DrawItem& item)
+-		{
+-			drawItems.push_back(item);
+-			return drawItems.back();
+-		}
+-
+-		Light& AddLight(const Light& l)
+-		{
+-			lights.push_back(l);
+-			return lights.back();
+-		}
+-
+-		std::span<const Material> GetMaterials() const { return materials; }
+-		std::span<Material> GetMaterials() { return materials; }
+-
+-		std::span<const DrawItem> GetDrawItems() const { return drawItems; }
+-		std::span<DrawItem> GetDrawItems() { return drawItems; }
+-
+-		std::span<const Light> GetLights() const { return lights; }
+-		std::span<Light> GetLights() { return lights; }
+-	};
+-} // namespace rendern
++module;
++
++#include <cstdint>
++#include <vector>
++#include <span>
++#include <stdexcept>
++#include <memory>
++
++export module core:scene;
++
++import :rhi;
++import :resource_manager_mesh;
++import :math_utils;
++
++export namespace rendern
++{
++	// High-level transform used by the CPU side.
++	// Convention: rotationDegrees is applied as Z * Y * X after translation.
++	struct Transform
++	{
++		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
++		mathUtils::Vec3 rotationDegrees{ 0.0f, 0.0f, 0.0f };
++		mathUtils::Vec3 scale{ 1.0f, 1.0f, 1.0f };
++
++		// Optional: allow importing transforms directly as a matrix (e.g. from DCC tools).
++		// Matrix is COLUMN-major and follows the same convention as mathUtils::Mat4 (m[col][row]).
++		bool useMatrix{ false };
++		mathUtils::Mat4 matrix{ 1.0f };
++
++		mathUtils::Mat4 ToMatrix() const
++		{
++			if (useMatrix)
++			{
++				return matrix;
++			}
++			mathUtils::Mat4 m{ 1.0f };
++			m = mathUtils::Translate(m, position);
++			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.z), mathUtils::Vec3(0, 0, 1));
++			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.y), mathUtils::Vec3(0, 1, 0));
++			m = mathUtils::Rotate(m, mathUtils::DegToRad(rotationDegrees.x), mathUtils::Vec3(1, 0, 0));
++			m = mathUtils::Scale(m, scale);
++			return m;
++		}
++	};
++
++	struct Camera
++	{
++		mathUtils::Vec3 position{ 2.2f, 1.6f, 2.2f };
++		mathUtils::Vec3 target{ 0.0f, 0.0f, 0.0f };
++		mathUtils::Vec3 up{ 0.0f, 1.0f, 0.0f };
++
++		float fovYDeg{ 60.0f };
++		float nearZ{ 0.01f };
++		float farZ{ 200.0f };
++	};
++	enum class LightType : std::uint32_t
++	{
++		Directional = 0,
++		Point = 1,
++		Spot = 2
++	};
++
++	// CPU-side light description.
++	// direction is "FROM light towards the scene" for Directional and Spot.
++	struct Light
++	{
++		LightType type{ LightType::Directional };
++
++		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
++		mathUtils::Vec3 direction{ 0.0f, -1.0f, 0.0f };
++
++		mathUtils::Vec3 color{ 1.0f, 1.0f, 1.0f };
++		float intensity{ 1.0f };
++
++		float range{ 10.0f };
++		float innerHalfAngleDeg{ 12.0f };
++		float outerHalfAngleDeg{ 20.0f };
++
++		float attConstant{ 1.0f };
++		float attLinear{ 0.12f };
++		float attQuadratic{ 0.04f };
++	};
++
++	// Debug visualization data (runtime-only).
++	struct DebugRay
++	{
++		bool enabled{ false };
++		mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
++		mathUtils::Vec3 direction{ 0.0f, 0.0f, 1.0f }; // should be normalized
++		float length{ 0.0f };
++		bool hit{ false };
++	};
++
++	struct MaterialParams
++	{
++		mathUtils::Vec4 baseColor{ 1.0f, 1.0f, 1.0f, 1.0f };
++
++		// Legacy Phong params (still used by OpenGL path).
++		float shininess{ 64.0f };
++		float specStrength{ 0.5f };
++
++		// Shadow bias in "texels" (added to the global bias computed in shader).
++		float shadowBias{ 0.0f };
++
++		// --- PBR params (DX12 path) ---
++		// Defaults are chosen to look reasonable even when only albedo is provided.
++		float metallic{ 0.0f };   // 0..1
++		float roughness{ 0.75f }; // 0..1
++		float ao{ 1.0f };         // 0..1
++		float emissiveStrength{ 1.0f };
++
++		// Cross-backend binding: if non-zero, renderer binds this descriptor at slot t0.
++		rhi::TextureDescIndex albedoDescIndex{ 0 };
++
++		// DX12 PBR maps (bound as separate SRV slots in the main shader):
++		//  t12 normal, t13 metalness, t14 roughness, t15 ao, t16 emissive
++		rhi::TextureDescIndex normalDescIndex{ 0 };
++		rhi::TextureDescIndex metalnessDescIndex{ 0 };
++		rhi::TextureDescIndex roughnessDescIndex{ 0 };
++		rhi::TextureDescIndex aoDescIndex{ 0 };
++		rhi::TextureDescIndex emissiveDescIndex{ 0 };
++	};
++
++	enum class MaterialPerm : std::uint32_t
++	{
++		None		= 0,
++		UseTex		= 1u << 0,
++		UseShadow	= 1u << 1,
++		Skinning	= 1u << 2,
++		Transparent = 1u << 3
++	};
++
++	constexpr MaterialPerm operator|(MaterialPerm a, MaterialPerm b) noexcept
++	{
++		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) | static_cast<std::uint32_t>(b));
++	}
++	constexpr MaterialPerm operator&(MaterialPerm a, MaterialPerm b) noexcept
++	{
++		return static_cast<MaterialPerm>(static_cast<std::uint32_t>(a) & static_cast<std::uint32_t>(b));
++	}
++	constexpr MaterialPerm& operator|=(MaterialPerm& a, MaterialPerm b) noexcept
++	{
++		a = a | b;
++		return a;
++	}
++	constexpr bool HasFlag(MaterialPerm a, MaterialPerm b) noexcept
++	{
++		return static_cast<std::uint32_t>(a & b) != 0;
++	}
++
++	struct MaterialTag {};
++	using MaterialHandle = rhi::Handle<MaterialTag>;
++	using MeshHandle = std::shared_ptr<MeshResource>;
++	// Material = "how we draw": parameters + textures + permutation flags.
++	// NOTE: UseTex is inferred automatically if albedoDescIndex != 0.
++	struct Material
++	{
++		MaterialParams params{};
++		MaterialPerm permFlags{ MaterialPerm::UseShadow };
++	};
++
++	inline MaterialPerm EffectivePerm(const Material& material) noexcept
++	{
++		MaterialPerm maetrialPerm = material.permFlags;
++		// a < 1 => transparent even if flag isn't set.
++		if (material.params.baseColor.w < 0.999f)
++		{
++			maetrialPerm |= MaterialPerm::Transparent;
++		}
++		if (material.params.albedoDescIndex != 0)
++		{
++			maetrialPerm |= MaterialPerm::UseTex;
++		}
++		return maetrialPerm;
++	}
++
++	struct DrawItem
++	{
++		// Scene owns only a handle. Upload/Destroy are driven by Asset/ResourceManager.
++		// Renderer will skip items whose mesh hasn't finished loading / uploading.
++		MeshHandle mesh{};
++		Transform transform{};
++		MaterialHandle material{};
++	};
++
++	class Scene
++	{
++	public:
++		rendern::Camera camera{};
++		std::vector<Material> materials; // persistent "assets" owned by Scene
++		std::vector<DrawItem> drawItems;
++		std::vector<Light> lights;
++
++		rhi::TextureDescIndex skyboxDescIndex{ 0 };
++
++		DebugRay debugPickRay{};
++
++		// Editor selection (runtime-only). Index into LevelAsset::nodes.
++		int editorSelectedNode{ -1 };
++
++		void Clear()
++		{
++			drawItems.clear();
++			lights.clear();
++			skyboxDescIndex = 0;
++			debugPickRay = {};
++			editorSelectedNode = -1;
++
++		}
++
++		MaterialHandle CreateMaterial(const Material& m)
++		{
++			materials.push_back(m);
++			return MaterialHandle{ static_cast<std::uint32_t>(materials.size()) }; // id is 1-based
++		}
++
++		const Material& GetMaterial(MaterialHandle h) const
++		{
++			if (h.id == 0 || h.id > materials.size())
++			{
++				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
++			}
++			return materials[h.id - 1];
++		}
++
++		Material& GetMaterial(MaterialHandle h)
++		{
++			if (h.id == 0 || h.id > materials.size())
++			{
++				throw std::runtime_error("Scene::GetMaterial: invalid MaterialHandle");
++			}
++			return materials[h.id - 1];
++		}
++
++		DrawItem& AddDraw(const DrawItem& item)
++		{
++			drawItems.push_back(item);
++			return drawItems.back();
++		}
++
++		Light& AddLight(const Light& l)
++		{
++			lights.push_back(l);
++			return lights.back();
++		}
++
++		std::span<const Material> GetMaterials() const { return materials; }
++		std::span<Material> GetMaterials() { return materials; }
++
++		std::span<const DrawItem> GetDrawItems() const { return drawItems; }
++		std::span<DrawItem> GetDrawItems() { return drawItems; }
++
++		std::span<const Light> GetLights() const { return lights; }
++		std::span<Light> GetLights() { return lights; }
++	};
++} // namespace rendern
+diff -ruN v1_orig/src/main.cpp v1_mod/src/main.cpp
+--- v1_orig/src/main.cpp	2026-02-14 17:55:58.000000000 +0000
++++ v1_mod/src/main.cpp	2026-02-16 10:27:16.972204551 +0000
+@@ -1,798 +1,841 @@
+-import core;
+-import std;
+-
+-#if defined(_WIN32)
+-#ifndef NOMINMAX
+-#define NOMINMAX
+-#endif
+-#define WIN32_LEAN_AND_MEAN
+-#include <windows.h>
+-#endif
+-
+-#if defined(CORE_USE_DX12)
+-#include <imgui.h>
+-#include <backends/imgui_impl_win32.h>
+-// NOTE: Recent Dear ImGui versions intentionally do NOT expose the WndProc handler prototype
+-// in the header (see comments inside imgui_impl_win32.h). Declare it explicitly.
+-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+-#endif
+-
+-// ------------------------------------------------------------
+-// Win32 window (no GLFW)
+-// ------------------------------------------------------------
+-namespace
+-{
+-    struct Win32Window
+-    {
+-        HWND hwnd{};
+-        int width{};
+-        int height{};
+-        bool pendingResize{ false };
+-        int pendingWidth{};
+-        int pendingHeight{};
+-        bool minimized{ false };
+-        bool running{ true };
+-    };
+-
+-    // Global pointers used by Win32 WndProc (kept minimal and explicit)
+-    Win32Window* g_window = nullptr; // main window
+-    rendern::Win32Input* g_input = nullptr;
+-
+-#if defined(CORE_USE_DX12)
+-    Win32Window* g_debugWindow = nullptr;
+-    bool g_showDebugWindow = true;
+-    bool g_imguiInitialized = false;
+-#endif
+-
+-    LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+-    {
+-        if (g_input && g_window && hwnd == g_window->hwnd)
+-        {
+-            g_input->OnWndProc(hwnd, msg, wParam, lParam);
+-        }
+-
+-#if defined(CORE_USE_DX12)
+-        if (g_imguiInitialized && g_debugWindow && hwnd == g_debugWindow->hwnd)
+-        {
+-            if (msg != WM_SIZE && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
+-            {
+-                return 1;
+-            }
+-        }
+-#endif
+-
+-        switch (msg)
+-        {
+-        case WM_CLOSE:
+-            #if defined(CORE_USE_DX12)
+-            if (g_debugWindow && hwnd == g_debugWindow->hwnd)
+-            {
+-                ShowWindow(hwnd, SW_HIDE);
+-                g_showDebugWindow = false;
+-                return 0;
+-            }
+-            #endif
+-
+-            DestroyWindow(hwnd);
+-            return 0;
+-
+-        case WM_DESTROY:
+-            if (g_window && hwnd == g_window->hwnd)
+-            {
+-                g_window->running = false;
+-                PostQuitMessage(0);
+-            }
+-            return 0;
+-
+-        case WM_SIZE:
+-        {
+-            Win32Window* win = nullptr;
+-            if (g_window && hwnd == g_window->hwnd)
+-            {
+-                win = g_window;
+-            }
+-#if defined(CORE_USE_DX12)
+-            else if (g_debugWindow && hwnd == g_debugWindow->hwnd)
+-            {
+-                win = g_debugWindow;
+-            }
+-#endif
+-            if (win)
+-            {
+-                const int newW = static_cast<int>(LOWORD(lParam));
+-                const int newH = static_cast<int>(HIWORD(lParam));
+-                win->width = newW;
+-                win->height = newH;
+-                win->pendingWidth = newW;
+-                win->pendingHeight = newH;
+-                win->pendingResize = true;
+-                win->minimized = (wParam == SIZE_MINIMIZED) || (newW == 0) || (newH == 0);
+-                return 0;
+-            }
+-            break;
+-        }
+-
+-        case WM_KEYDOWN:
+-            if (wParam == VK_ESCAPE)
+-            {
+-                if (g_window && hwnd == g_window->hwnd)
+-                {
+-                    DestroyWindow(hwnd);
+-                    return 0;
+-                }
+-            }
+-#if defined(CORE_USE_DX12)
+-            if (wParam == VK_F1)
+-            {
+-                const bool wasDown = (lParam & (1 << 30)) != 0;
+-                if (!wasDown)
+-                {
+-                    g_showDebugWindow = !g_showDebugWindow;
+-                    if (g_debugWindow && g_debugWindow->hwnd)
+-                    {
+-                        ShowWindow(g_debugWindow->hwnd, g_showDebugWindow ? SW_SHOW : SW_HIDE);
+-                        if (g_showDebugWindow)
+-                        {
+-                            SetForegroundWindow(g_debugWindow->hwnd);
+-                        }
+-                    }
+-                }
+-                return 0;
+-            }
+-#endif
+-            break;
+-
+-        default:
+-            break;
+-        }
+-
+-        return DefWindowProcW(hwnd, msg, wParam, lParam);
+-    }
+-
+-    Win32Window CreateWindowWin32(int width, int height, const std::wstring& title, bool show = true)
+-    {
+-        Win32Window window{};
+-        window.width = width;
+-        window.height = height;
+-
+-        const HINSTANCE instanceHandle = GetModuleHandleW(nullptr);
+-        const wchar_t* className = L"CoreEngineModuleWindowClass";
+-
+-        WNDCLASSEXW windowClass{};
+-        windowClass.cbSize = sizeof(windowClass);
+-        windowClass.style = CS_HREDRAW | CS_VREDRAW;
+-        windowClass.lpfnWndProc = WndProc;
+-        windowClass.hInstance = instanceHandle;
+-        windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
+-        windowClass.lpszClassName = className;
+-
+-        // If already registered, RegisterClassExW fails with ERROR_CLASS_ALREADY_EXISTS – that's fine.
+-        if (!RegisterClassExW(&windowClass))
+-        {
+-            const DWORD errorCode = GetLastError();
+-            if (errorCode != ERROR_CLASS_ALREADY_EXISTS)
+-            {
+-                throw std::runtime_error("RegisterClassExW failed");
+-            }
+-        }
+-
+-        const DWORD style = WS_OVERLAPPEDWINDOW;
+-
+-        RECT rect{ 0, 0, width, height };
+-        AdjustWindowRect(&rect, style, FALSE);
+-
+-        window.hwnd = CreateWindowExW(
+-            0,
+-            className,
+-            title.c_str(),
+-            style,
+-            CW_USEDEFAULT,
+-            CW_USEDEFAULT,
+-            rect.right - rect.left,
+-            rect.bottom - rect.top,
+-            nullptr,
+-            nullptr,
+-            instanceHandle,
+-            nullptr);
+-
+-        if (!window.hwnd)
+-        {
+-            throw std::runtime_error("CreateWindowExW failed");
+-        }
+-
+-        ShowWindow(window.hwnd, show ? SW_SHOW : SW_HIDE);
+-        UpdateWindow(window.hwnd);
+-        return window;
+-    }
+-
+-    void PumpMessages(Win32Window& window)
+-    {
+-        MSG msg{};
+-        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
+-        {
+-            if (msg.message == WM_QUIT)
+-            {
+-                window.running = false;
+-                break;
+-            }
+-            TranslateMessage(&msg);
+-            DispatchMessageW(&msg);
+-        }
+-    }
+-
+-    void TinySleep()
+-    {
+-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+-    }
+-
+-    rhi::Backend ParseBackendFromArgs(int argc, char** argv)
+-    {
+-        for (int argIndex = 1; argIndex < argc; ++argIndex)
+-        {
+-            const std::string_view argValue = argv[argIndex];
+-            if (argValue == "--null")
+-            {
+-                return rhi::Backend::Null;
+-            }
+-        }
+-        return rhi::Backend::DirectX12;
+-    }
+-
+-    void CreateDeviceAndSwapChain(
+-        rhi::Backend backend,
+-        HWND hwnd,
+-        int initialWidth,
+-        int initialHeight,
+-        std::unique_ptr<rhi::IRHIDevice>& outDevice,
+-        std::unique_ptr<rhi::IRHISwapChain>& outSwapChain)
+-    {
+-        if (backend == rhi::Backend::DirectX12)
+-        {
+-#if defined(CORE_USE_DX12)
+-            outDevice = rhi::CreateDX12Device();
+-
+-            rhi::DX12SwapChainDesc swapChainDesc{};
+-            swapChainDesc.hwnd = hwnd;
+-            swapChainDesc.bufferCount = 2;
+-            swapChainDesc.base.extent = rhi::Extent2D{
+-                static_cast<std::uint32_t>(initialWidth),
+-                static_cast<std::uint32_t>(initialHeight)
+-            };
+-            swapChainDesc.base.backbufferFormat = rhi::Format::BGRA8_UNORM;
+-            swapChainDesc.base.vsync = false;
+-
+-            outSwapChain = rhi::CreateDX12SwapChain(*outDevice, swapChainDesc);
+-#else
+-            outDevice = rhi::CreateNullDevice();
+-            rhi::SwapChainDesc swapChainDesc{};
+-            swapChainDesc.extent = rhi::Extent2D{
+-                static_cast<std::uint32_t>(initialWidth),
+-                static_cast<std::uint32_t>(initialHeight)
+-            };
+-            outSwapChain = rhi::CreateNullSwapChain(*outDevice, swapChainDesc);
+-#endif
+-            return;
+-        }
+-
+-        // Null backend
+-        outDevice = rhi::CreateNullDevice();
+-        rhi::SwapChainDesc swapChainDesc{};
+-        swapChainDesc.extent = rhi::Extent2D{
+-            static_cast<std::uint32_t>(initialWidth),
+-            static_cast<std::uint32_t>(initialHeight)
+-        };
+-        outSwapChain = rhi::CreateNullSwapChain(*outDevice, swapChainDesc);
+-    }
+-
+-    static std::unique_ptr<ITextureUploader> CreateTextureUploader(rhi::Backend backend, rhi::IRHIDevice& device)
+-    {
+-        switch (backend)
+-        {
+-        case rhi::Backend::DirectX12:
+-#if defined(CORE_USE_DX12)
+-            return std::make_unique<rendern::DX12TextureUploader>(device);
+-#else
+-            return std::make_unique<rendern::NullTextureUploader>(device);
+-#endif
+-        default:
+-            return std::make_unique<rendern::NullTextureUploader>(device);
+-        }
+-    }
+-
+-    // ------------------------------------------------------------
+-    // App helpers / structs
+-    // ------------------------------------------------------------
+-    struct AppConfig
+-    {
+-        int windowWidth = 1280;
+-        int windowHeight = 1024;
+-        std::wstring windowTitle = L"CoreEngineModule (DX12)";
+-
+-        // Upload budgets per frame (tune if needed)
+-        int maxTextureUploadsPerFrame = 8;
+-        int maxMeshUploadsPerFrame = 32;
+-        int maxTextureDeletesPerFrame = 2;
+-        int maxMeshDeletesPerFrame = 32;
+-    };
+-
+-    // NOTE: The demo now loads its content from assets/levels/demo.level.json
+-    // via core:level (LevelAsset + LevelInstance).
+-
+-#if defined(CORE_USE_DX12)
+-    void InitializeImGui(HWND hwnd, rhi::IRHIDevice& device, rhi::Format backbufferFormat, int backbufferCount)
+-    {
+-        IMGUI_CHECKVERSION();
+-        ImGui::CreateContext();
+-        ImGui::StyleColorsDark();
+-        ImGui_ImplWin32_Init(hwnd);
+-        device.InitImGui(hwnd, backbufferCount, backbufferFormat);
+-        g_imguiInitialized = true;
+-    }
+-
+-    void ShutdownImGui(rhi::IRHIDevice& device)
+-    {
+-        if (!g_imguiInitialized)
+-        {
+-            return;
+-        }
+-
+-        device.ShutdownImGui();
+-        ImGui_ImplWin32_Shutdown();
+-        ImGui::DestroyContext();
+-        g_imguiInitialized = false;
+-    }
+-
+-    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice& device, rendern::RendererSettings& settings, rendern::Scene& scene, rendern::CameraController& cameraController, rendern::LevelAsset& levelAsset, rendern::LevelInstance& levelInstance, AssetManager& assets)
+-    {
+-        if (!g_imguiInitialized || !g_showDebugWindow || !g_debugWindow || !g_debugWindow->hwnd)
+-        {
+-            return nullptr;
+-        }
+-
+-        if (!IsWindowVisible(g_debugWindow->hwnd))
+-        {
+-            return nullptr;
+-        }
+-
+-        device.ImGuiNewFrame();
+-        ImGui_ImplWin32_NewFrame();
+-        ImGui::NewFrame();
+-
+-        rendern::ui::DrawRendererDebugUI(settings, scene, cameraController);
+-        rendern::ui::DrawLevelEditorUI(levelAsset, levelInstance, assets, scene, cameraController);
+-
+-        ImGui::Render();
+-
+-        return static_cast<const void*>(ImGui::GetDrawData());
+-    }
+-
+-    rendern::InputCapture GetInputCaptureForImGui()
+-    {
+-        rendern::InputCapture capture{};
+-        if (g_imguiInitialized && g_showDebugWindow && g_debugWindow && g_debugWindow->hwnd)
+-        {
+-            if (IsWindowVisible(g_debugWindow->hwnd) && GetForegroundWindow() == g_debugWindow->hwnd)
+-            {
+-                const ImGuiIO& io = ImGui::GetIO();
+-                capture.captureKeyboard = io.WantCaptureKeyboard;
+-                capture.captureMouse = io.WantCaptureMouse;
+-            }
+-        }
+-        return capture;
+-    }
+-
+-    void RenderImGuiToSwapChainIfEnabled(rhi::IRHIDevice& device, rhi::IRHISwapChain& swapChain, const void* imguiDrawData)
+-    {
+-        if (!imguiDrawData || !g_imguiInitialized || !g_showDebugWindow || !g_debugWindow || !g_debugWindow->hwnd)
+-        {
+-            return;
+-        }
+-        if (!IsWindowVisible(g_debugWindow->hwnd))
+-        {
+-            return;
+-        }
+-
+-        const rhi::Extent2D extent = swapChain.GetDesc().extent;
+-
+-        rhi::CommandList cmd{};
+-
+-        rhi::BeginPassDesc begin{};
+-        begin.frameBuffer = swapChain.GetCurrentBackBuffer();
+-        begin.extent = extent;
+-        begin.swapChain = &swapChain;
+-        begin.clearDesc.clearColor = true;
+-        begin.clearDesc.clearDepth = false;
+-        begin.clearDesc.color = { 0.08f, 0.08f, 0.08f, 1.0f };
+-
+-        cmd.BeginPass(begin);
+-        cmd.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
+-        cmd.DX12ImGuiRender(imguiDrawData);
+-        cmd.EndPass();
+-
+-        device.SubmitCommandList(std::move(cmd));
+-        swapChain.Present();
+-    }
+-#else
+-    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice&, rendern::RendererSettings&, rendern::Scene&, rendern::CameraController&, rendern::LevelAsset&, rendern::LevelInstance&, AssetManager&)
+-    {
+-        return nullptr;
+-    }
+-    rendern::InputCapture GetInputCaptureForImGui()
+-    {
+-        return {};
+-    }
+-#endif
+-
+-    struct SceneHandles
+-    {
+-        rendern::MeshHandle cubeMesh{};
+-        rendern::MeshHandle groundMesh{};
+-        rendern::MeshHandle quadMesh{};
+-
+-        rendern::MaterialHandle groundMaterial{};
+-        rendern::MaterialHandle cubeMaterial{};
+-        rendern::MaterialHandle glassMaterial{};
+-    };
+-
+-    // Old hardcoded demo scene builders are kept in this file for reference, but the
+-    // main loop below uses LevelAsset/LevelInstance instead.
+-
+-    void ConfigureDefaultCamera(rendern::Scene& scene)
+-    {
+-        scene.camera.position = { 5.0f, 10.0f, 10.0f };
+-        scene.camera.target = { 0.0f, 0.0f, 0.0f };
+-        scene.camera.up = { 0.0f, 1.0f, 0.0f };
+-        scene.camera.fovYDeg = 60.0f;
+-        scene.camera.nearZ = 0.01f;
+-        scene.camera.farZ = 200.0f;
+-    }
+-
+-    void AddDefaultLights(rendern::Scene& scene)
+-    {
+-        // Directional
+-        {
+-            rendern::Light light{};
+-            light.type = rendern::LightType::Directional;
+-            light.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
+-            light.color = { 1.0f, 0.2f, 1.0f };
+-            light.intensity = 0.2f;
+-            scene.AddLight(light);
+-        }
+-
+-        // Point
+-        {
+-            rendern::Light light{};
+-            light.type = rendern::LightType::Point;
+-            light.position = { -1.35f, 7.0f, -1.35f };
+-            light.color = { 0.2f, 1.0f, 0.2f };
+-            light.range = 120.0f;
+-            light.intensity = 0.1f;
+-            light.attConstant = 1.0f;
+-            light.attLinear = 0.02f;
+-            light.attQuadratic = 0.004f;
+-            scene.AddLight(light);
+-        }
+-
+-        // Spot
+-        {
+-            rendern::Light light{};
+-            light.type = rendern::LightType::Spot;
+-            light.position = { 2.0f, 4.0f, 2.0f };
+-            light.direction = mathUtils::Normalize(mathUtils::Vec3(-2.0f, -5.0f, 0.0f)); // FROM light
+-            light.color = { 0.2f, 0.2f, 1.0f };
+-            light.range = 100.0f;
+-            light.intensity = 8.0f;
+-            light.innerHalfAngleDeg = 22.0f;
+-            light.outerHalfAngleDeg = 35.0f;
+-            light.attLinear = 0.09f;
+-            light.attQuadratic = 0.032f;
+-            scene.AddLight(light);
+-        }
+-    }
+-
+-    SceneHandles CreateDefaultMaterials(rendern::Scene& scene)
+-    {
+-        SceneHandles handles{};
+-
+-        // Ground material (no texture)
+-        rendern::Material groundMaterial{};
+-        groundMaterial.params.baseColor = { 0.8f, 0.8f, 0.8f, 1.0f };
+-        groundMaterial.params.albedoDescIndex = 0;
+-        groundMaterial.params.shininess = 16.0f;
+-        groundMaterial.params.specStrength = 0.5f;
+-        groundMaterial.params.shadowBias = 0.0f;
+-        groundMaterial.params.metallic = 0.0f;
+-        groundMaterial.params.roughness = 0.9f;
+-        groundMaterial.params.ao = 1.0f;
+-        groundMaterial.params.emissiveStrength = 1.0f;
+-        groundMaterial.permFlags = rendern::MaterialPerm::UseShadow;
+-
+-        // Cube material (texture desc will be assigned once available)
+-        rendern::Material cubeMaterial{};
+-        cubeMaterial.params.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
+-        cubeMaterial.params.albedoDescIndex = 0;
+-        cubeMaterial.params.shininess = 64.0f;
+-        cubeMaterial.params.specStrength = 0.5f;
+-        cubeMaterial.params.shadowBias = 0.0015f;
+-        cubeMaterial.params.metallic = 0.0f;
+-        cubeMaterial.params.roughness = 0.75f;
+-        cubeMaterial.params.ao = 1.0f;
+-        cubeMaterial.params.emissiveStrength = 1.0f;
+-        cubeMaterial.permFlags = rendern::MaterialPerm::UseShadow;
+-
+-        // Glass material (transparent)
+-        rendern::Material glassMaterial{};
+-        glassMaterial.params.baseColor = { 0.2f, 0.6f, 1.0f, 0.35f };
+-        glassMaterial.params.albedoDescIndex = 0;
+-        glassMaterial.params.shininess = 128.0f;
+-        glassMaterial.params.specStrength = 0.9f;
+-        glassMaterial.params.shadowBias = 0.0f;
+-        glassMaterial.params.metallic = 0.0f;
+-        glassMaterial.params.roughness = 0.08f;
+-        glassMaterial.params.ao = 1.0f;
+-        glassMaterial.params.emissiveStrength = 1.0f;
+-        glassMaterial.permFlags = rendern::MaterialPerm::UseShadow | rendern::MaterialPerm::Transparent;
+-
+-        handles.groundMaterial = scene.CreateMaterial(groundMaterial);
+-        handles.cubeMaterial = scene.CreateMaterial(cubeMaterial);
+-        handles.glassMaterial = scene.CreateMaterial(glassMaterial);
+-
+-        return handles;
+-    }
+-
+-    void AddGround(rendern::Scene& scene, const rendern::MeshHandle groundMesh, const rendern::MaterialHandle groundMaterial)
+-    {
+-        rendern::DrawItem groundItem{};
+-        groundItem.mesh = groundMesh;
+-        groundItem.transform.position = { 0.0f, -0.6f, 0.0f };
+-        groundItem.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
+-        groundItem.transform.scale = { 8.0f, 8.0f, 8.0f };
+-        groundItem.material = groundMaterial;
+-        scene.AddDraw(groundItem);
+-    }
+-
+-    void AddGlassPane(rendern::Scene& scene, const rendern::MeshHandle quadMesh, const rendern::MaterialHandle glassMaterial)
+-    {
+-        rendern::DrawItem glassItem{};
+-        glassItem.mesh = quadMesh; // quad.obj (XY plane)
+-        glassItem.transform.position = { 0.0f, 2.3f, 2.6f };
+-        glassItem.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
+-        glassItem.transform.scale = { 4.0f, 4.0f, 4.0f };
+-        glassItem.material = glassMaterial;
+-        scene.AddDraw(glassItem);
+-    }
+-
+-    void AddCubeGrid(rendern::Scene& scene, const rendern::MeshHandle cubeMesh, const rendern::MaterialHandle cubeMaterial)
+-    {
+-        constexpr int gridDim = 10;
+-        constexpr float spacing = 1.35f;
+-
+-        for (int gridZ = 0; gridZ < gridDim; ++gridZ)
+-        {
+-            for (int gridX = 0; gridX < gridDim; ++gridX)
+-            {
+-                const float posX = (gridX - (gridDim / 2)) * spacing;
+-                const float posZ = (gridZ - (gridDim / 2)) * spacing;
+-
+-                rendern::DrawItem cubeItem{};
+-                cubeItem.mesh = cubeMesh;
+-                cubeItem.transform.position = { posX, 2.3f, posZ };
+-                cubeItem.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
+-                cubeItem.transform.scale = { 1.0f, 1.0f, 1.0f };
+-                cubeItem.material = cubeMaterial;
+-                scene.AddDraw(cubeItem);
+-            }
+-        }
+-    }
+-
+-    // Descriptor management moved to rendern::LevelInstance.
+-
+-} // namespace
+-
+-int main(int argc, char** argv)
+-{
+-    try
+-    {
+-        const AppConfig config{};
+-        const rhi::Backend requestedBackend = ParseBackendFromArgs(argc, argv);
+-
+-        Win32Window window = CreateWindowWin32(config.windowWidth, config.windowHeight, config.windowTitle);
+-        g_window = &window;
+-
+-#if defined(CORE_USE_DX12)
+-        Win32Window debugWindow{};
+-        std::unique_ptr<rhi::IRHISwapChain> debugSwapChain;
+-        if (requestedBackend == rhi::Backend::DirectX12)
+-        {
+-            debugWindow = CreateWindowWin32(900, 900, L"CoreEngineModule - Debug UI", /*show=*/true);
+-            g_debugWindow = &debugWindow;
+-        }
+-#endif
+-
+-        rendern::Win32Input win32Input{};
+-        g_input = &win32Input;
+-
+-        std::unique_ptr<rhi::IRHIDevice> device;
+-        std::unique_ptr<rhi::IRHISwapChain> swapChain;
+-        CreateDeviceAndSwapChain(requestedBackend, window.hwnd, config.windowWidth, config.windowHeight, device, swapChain);
+-
+-#if defined(CORE_USE_DX12)
+-        if (requestedBackend == rhi::Backend::DirectX12)
+-        {
+-            rhi::DX12SwapChainDesc debugSwapChainDesc{};
+-            debugSwapChainDesc.hwnd = debugWindow.hwnd;
+-            debugSwapChainDesc.bufferCount = 2;
+-            debugSwapChainDesc.base.extent = rhi::Extent2D{ 900u, 900u };
+-            debugSwapChainDesc.base.backbufferFormat = rhi::Format::BGRA8_UNORM;
+-            debugSwapChainDesc.base.vsync = false;
+-
+-            debugSwapChain = rhi::CreateDX12SwapChain(*device, debugSwapChainDesc);
+-        }
+-#endif
+-
+-        // Asset/Resource system: CPU decode on job system, GPU upload on render queue.
+-        StbTextureDecoder textureDecoder{};
+-        rendern::JobSystemThreadPool jobSystem{ 1 };
+-        rendern::RenderQueueImmediate renderQueue{};
+-        std::unique_ptr<ITextureUploader> textureUploader = CreateTextureUploader(device->GetBackend(), *device);
+-
+-        TextureIO textureIO{ textureDecoder, *textureUploader, jobSystem, renderQueue };
+-        rendern::MeshIO meshIO{ *device, jobSystem, renderQueue };
+-
+-        AssetManager assets{ textureIO, meshIO };
+-        ResourceManager& resourceManager = assets.GetResourceManager();
+-
+-        // Level asset (JSON)
+-        rendern::LevelAsset levelAsset = rendern::LoadLevelAssetFromJson("levels/demo.level.json");
+-
+-        // Renderer (facade) - Stage1 expects Scene
+-        rendern::RendererSettings rendererSettings{};
+-        rendererSettings.drawLightGizmos = true;
+-        rendern::Renderer renderer{ *device, rendererSettings };
+-
+-#if defined(CORE_USE_DX12)
+-        if (requestedBackend == rhi::Backend::DirectX12 && debugSwapChain && debugWindow.hwnd)
+-        {
+-            InitializeImGui(debugWindow.hwnd, *device, debugSwapChain->GetDesc().backbufferFormat, /*backbufferCount=*/2);
+-        }
+-#endif
+-
+-        // Scene
+-        rendern::Scene scene{};
+-        scene.Clear();
+-
+-        // Level instantiation requests meshes/textures and fills Scene (draws/materials/lights/camera).
+-        rendern::BindlessTable bindless{ *device };
+-        rendern::LevelInstance levelInstance = rendern::InstantiateLevel(
+-            scene,
+-            assets,
+-            bindless,
+-            levelAsset,
+-            mathUtils::Mat4(1.0f));
+-
+-        rendern::CameraController cameraController{};
+-        cameraController.ResetFromCamera(scene.camera);
+-
+-        // Timer
+-        GameTimer frameTimer{};
+-        frameTimer.SetMaxDelta(0.05);
+-        frameTimer.Reset();
+-
+-        while (window.running)
+-        {
+-            PumpMessages(window);
+-            if (!window.running)
+-            {
+-                break;
+-            }
+-
+-            // Apply pending window resizes (recreate swapchain buffers)
+-            if (swapChain && window.pendingResize)
+-            {
+-                window.pendingResize = false;
+-                if (window.pendingWidth > 0 && window.pendingHeight > 0)
+-                {
+-                    swapChain->Resize(rhi::Extent2D{
+-                        static_cast<std::uint32_t>(window.pendingWidth),
+-                        static_cast<std::uint32_t>(window.pendingHeight)
+-                    });
+-                }
+-            }
+-
+-#if defined(CORE_USE_DX12)
+-            if (debugSwapChain && debugWindow.hwnd && debugWindow.pendingResize)
+-            {
+-                debugWindow.pendingResize = false;
+-                if (debugWindow.pendingWidth > 0 && debugWindow.pendingHeight > 0)
+-                {
+-                    debugSwapChain->Resize(rhi::Extent2D{
+-                        static_cast<std::uint32_t>(debugWindow.pendingWidth),
+-                        static_cast<std::uint32_t>(debugWindow.pendingHeight)
+-                    });
+-                }
+-            }
+-#endif
+-
+-            // If main window is minimized, skip rendering/presenting to avoid DXGI issues.
+-            if (window.minimized || window.width <= 0 || window.height <= 0)
+-            {
+-                TinySleep();
+-                continue;
+-            }
+-
+-            // Drive uploads/destruction
+-            assets.ProcessUploads(
+-                config.maxTextureUploadsPerFrame,
+-                config.maxTextureDeletesPerFrame,
+-                config.maxMeshUploadsPerFrame,
+-                config.maxMeshDeletesPerFrame);
+-
+-            // As GPU textures become available, allocate/update descriptor indices.
+-            levelInstance.ResolveTextureBindings(assets, bindless, scene);
+-
+-            // Delta time
+-            frameTimer.Tick();
+-            const float deltaSeconds = static_cast<float>(frameTimer.GetDeltaTime());
+-
+-            // Input + camera controller
+-            win32Input.SetCaptureMode(GetInputCaptureForImGui());
+-            win32Input.NewFrame(window.hwnd);
+-            cameraController.Update(deltaSeconds, win32Input.State(), scene.camera);
+-
+-            // ImGui (optional) - rendered into a separate debug window swapchain
+-            const void* imguiDrawData = BuildImGuiFrameIfEnabled(*device, rendererSettings, scene, cameraController, levelAsset, levelInstance, assets);
+-
+-            // Render main scene (no UI overlay)
+-            renderer.SetSettings(rendererSettings);
+-            renderer.RenderFrame(*swapChain, scene, /*imguiDrawData=*/nullptr);
+-
+-#if defined(CORE_USE_DX12)
+-            if (debugSwapChain && debugWindow.hwnd && !debugWindow.minimized && debugWindow.width > 0 && debugWindow.height > 0)
+-            {
+-                RenderImGuiToSwapChainIfEnabled(*device, *debugSwapChain, imguiDrawData);
+-            }
+-#endif
+-
+-            TinySleep();
+-        }
+-
+-#if defined(CORE_USE_DX12)
+-        ShutdownImGui(*device);
+-#endif
+-
+-        renderer.Shutdown();
+-
+-        // Descriptors cleanup
+-        levelInstance.FreeDescriptors(bindless);
+-
+-        // Cleanup resources (destroy queues are driven by ProcessUploads).
+-        jobSystem.WaitIdle();
+-        assets.ClearAll();
+-        assets.ProcessUploads(64, 256, 64, 256);
+-
+-        if (window.hwnd)
+-        {
+-            DestroyWindow(window.hwnd);
+-            window.hwnd = nullptr;
+-        }
+-
+-#if defined(CORE_USE_DX12)
+-        if (debugWindow.hwnd)
+-        {
+-            DestroyWindow(debugWindow.hwnd);
+-            debugWindow.hwnd = nullptr;
+-        }
+-        g_debugWindow = nullptr;
+-#endif
+-
+-        g_window = nullptr;
+-        g_input = nullptr;
+-
+-        return 0;
+-    }
+-    catch (const std::exception& exception)
+-    {
+-        std::cerr << "Fatal: " << exception.what() << "\n";
+-        return 2;
+-    }
+-}
++import core;
++import std;
++
++#if defined(_WIN32)
++#ifndef NOMINMAX
++#define NOMINMAX
++#endif
++#define WIN32_LEAN_AND_MEAN
++#include <windows.h>
++#endif
++
++#if defined(CORE_USE_DX12)
++#include <imgui.h>
++#include <backends/imgui_impl_win32.h>
++// NOTE: Recent Dear ImGui versions intentionally do NOT expose the WndProc handler prototype
++// in the header (see comments inside imgui_impl_win32.h). Declare it explicitly.
++extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
++#endif
++
++// ------------------------------------------------------------
++// Win32 window (no GLFW)
++// ------------------------------------------------------------
++namespace
++{
++    struct Win32Window
++    {
++        HWND hwnd{};
++        int width{};
++        int height{};
++        bool pendingResize{ false };
++        int pendingWidth{};
++        int pendingHeight{};
++        bool minimized{ false };
++        bool running{ true };
++    };
++
++    // Global pointers used by Win32 WndProc (kept minimal and explicit)
++    Win32Window* g_window = nullptr; // main window
++    rendern::Win32Input* g_input = nullptr;
++
++#if defined(CORE_USE_DX12)
++    Win32Window* g_debugWindow = nullptr;
++    bool g_showDebugWindow = true;
++    bool g_imguiInitialized = false;
++#endif
++
++    LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
++    {
++        if (g_input && g_window && hwnd == g_window->hwnd)
++        {
++            g_input->OnWndProc(hwnd, msg, wParam, lParam);
++        }
++
++#if defined(CORE_USE_DX12)
++        if (g_imguiInitialized && g_debugWindow && hwnd == g_debugWindow->hwnd)
++        {
++            if (msg != WM_SIZE && ImGui_ImplWin32_WndProcHandler(hwnd, msg, wParam, lParam))
++            {
++                return 1;
++            }
++        }
++#endif
++
++        switch (msg)
++        {
++        case WM_CLOSE:
++            #if defined(CORE_USE_DX12)
++            if (g_debugWindow && hwnd == g_debugWindow->hwnd)
++            {
++                ShowWindow(hwnd, SW_HIDE);
++                g_showDebugWindow = false;
++                return 0;
++            }
++            #endif
++
++            DestroyWindow(hwnd);
++            return 0;
++
++        case WM_DESTROY:
++            if (g_window && hwnd == g_window->hwnd)
++            {
++                g_window->running = false;
++                PostQuitMessage(0);
++            }
++            return 0;
++
++        case WM_SIZE:
++        {
++            Win32Window* win = nullptr;
++            if (g_window && hwnd == g_window->hwnd)
++            {
++                win = g_window;
++            }
++#if defined(CORE_USE_DX12)
++            else if (g_debugWindow && hwnd == g_debugWindow->hwnd)
++            {
++                win = g_debugWindow;
++            }
++#endif
++            if (win)
++            {
++                const int newW = static_cast<int>(LOWORD(lParam));
++                const int newH = static_cast<int>(HIWORD(lParam));
++                win->width = newW;
++                win->height = newH;
++                win->pendingWidth = newW;
++                win->pendingHeight = newH;
++                win->pendingResize = true;
++                win->minimized = (wParam == SIZE_MINIMIZED) || (newW == 0) || (newH == 0);
++                return 0;
++            }
++            break;
++        }
++
++        case WM_KEYDOWN:
++            if (wParam == VK_ESCAPE)
++            {
++                if (g_window && hwnd == g_window->hwnd)
++                {
++                    DestroyWindow(hwnd);
++                    return 0;
++                }
++            }
++#if defined(CORE_USE_DX12)
++            if (wParam == VK_F1)
++            {
++                const bool wasDown = (lParam & (1 << 30)) != 0;
++                if (!wasDown)
++                {
++                    g_showDebugWindow = !g_showDebugWindow;
++                    if (g_debugWindow && g_debugWindow->hwnd)
++                    {
++                        ShowWindow(g_debugWindow->hwnd, g_showDebugWindow ? SW_SHOW : SW_HIDE);
++                        if (g_showDebugWindow)
++                        {
++                            SetForegroundWindow(g_debugWindow->hwnd);
++                        }
++                    }
++                }
++                return 0;
++            }
++#endif
++            break;
++
++        default:
++            break;
++        }
++
++        return DefWindowProcW(hwnd, msg, wParam, lParam);
++    }
++
++    Win32Window CreateWindowWin32(int width, int height, const std::wstring& title, bool show = true)
++    {
++        Win32Window window{};
++        window.width = width;
++        window.height = height;
++
++        const HINSTANCE instanceHandle = GetModuleHandleW(nullptr);
++        const wchar_t* className = L"CoreEngineModuleWindowClass";
++
++        WNDCLASSEXW windowClass{};
++        windowClass.cbSize = sizeof(windowClass);
++        windowClass.style = CS_HREDRAW | CS_VREDRAW;
++        windowClass.lpfnWndProc = WndProc;
++        windowClass.hInstance = instanceHandle;
++        windowClass.hCursor = LoadCursor(nullptr, IDC_ARROW);
++        windowClass.lpszClassName = className;
++
++        // If already registered, RegisterClassExW fails with ERROR_CLASS_ALREADY_EXISTS – that's fine.
++        if (!RegisterClassExW(&windowClass))
++        {
++            const DWORD errorCode = GetLastError();
++            if (errorCode != ERROR_CLASS_ALREADY_EXISTS)
++            {
++                throw std::runtime_error("RegisterClassExW failed");
++            }
++        }
++
++        const DWORD style = WS_OVERLAPPEDWINDOW;
++
++        RECT rect{ 0, 0, width, height };
++        AdjustWindowRect(&rect, style, FALSE);
++
++        window.hwnd = CreateWindowExW(
++            0,
++            className,
++            title.c_str(),
++            style,
++            CW_USEDEFAULT,
++            CW_USEDEFAULT,
++            rect.right - rect.left,
++            rect.bottom - rect.top,
++            nullptr,
++            nullptr,
++            instanceHandle,
++            nullptr);
++
++        if (!window.hwnd)
++        {
++            throw std::runtime_error("CreateWindowExW failed");
++        }
++
++        ShowWindow(window.hwnd, show ? SW_SHOW : SW_HIDE);
++        UpdateWindow(window.hwnd);
++        return window;
++    }
++
++    void PumpMessages(Win32Window& window)
++    {
++        MSG msg{};
++        while (PeekMessageW(&msg, nullptr, 0, 0, PM_REMOVE))
++        {
++            if (msg.message == WM_QUIT)
++            {
++                window.running = false;
++                break;
++            }
++            TranslateMessage(&msg);
++            DispatchMessageW(&msg);
++        }
++    }
++
++    void TinySleep()
++    {
++        std::this_thread::sleep_for(std::chrono::milliseconds(1));
++    }
++
++    rhi::Backend ParseBackendFromArgs(int argc, char** argv)
++    {
++        for (int argIndex = 1; argIndex < argc; ++argIndex)
++        {
++            const std::string_view argValue = argv[argIndex];
++            if (argValue == "--null")
++            {
++                return rhi::Backend::Null;
++            }
++        }
++        return rhi::Backend::DirectX12;
++    }
++
++    void CreateDeviceAndSwapChain(
++        rhi::Backend backend,
++        HWND hwnd,
++        int initialWidth,
++        int initialHeight,
++        std::unique_ptr<rhi::IRHIDevice>& outDevice,
++        std::unique_ptr<rhi::IRHISwapChain>& outSwapChain)
++    {
++        if (backend == rhi::Backend::DirectX12)
++        {
++#if defined(CORE_USE_DX12)
++            outDevice = rhi::CreateDX12Device();
++
++            rhi::DX12SwapChainDesc swapChainDesc{};
++            swapChainDesc.hwnd = hwnd;
++            swapChainDesc.bufferCount = 2;
++            swapChainDesc.base.extent = rhi::Extent2D{
++                static_cast<std::uint32_t>(initialWidth),
++                static_cast<std::uint32_t>(initialHeight)
++            };
++            swapChainDesc.base.backbufferFormat = rhi::Format::BGRA8_UNORM;
++            swapChainDesc.base.vsync = false;
++
++            outSwapChain = rhi::CreateDX12SwapChain(*outDevice, swapChainDesc);
++#else
++            outDevice = rhi::CreateNullDevice();
++            rhi::SwapChainDesc swapChainDesc{};
++            swapChainDesc.extent = rhi::Extent2D{
++                static_cast<std::uint32_t>(initialWidth),
++                static_cast<std::uint32_t>(initialHeight)
++            };
++            outSwapChain = rhi::CreateNullSwapChain(*outDevice, swapChainDesc);
++#endif
++            return;
++        }
++
++        // Null backend
++        outDevice = rhi::CreateNullDevice();
++        rhi::SwapChainDesc swapChainDesc{};
++        swapChainDesc.extent = rhi::Extent2D{
++            static_cast<std::uint32_t>(initialWidth),
++            static_cast<std::uint32_t>(initialHeight)
++        };
++        outSwapChain = rhi::CreateNullSwapChain(*outDevice, swapChainDesc);
++    }
++
++    static std::unique_ptr<ITextureUploader> CreateTextureUploader(rhi::Backend backend, rhi::IRHIDevice& device)
++    {
++        switch (backend)
++        {
++        case rhi::Backend::DirectX12:
++#if defined(CORE_USE_DX12)
++            return std::make_unique<rendern::DX12TextureUploader>(device);
++#else
++            return std::make_unique<rendern::NullTextureUploader>(device);
++#endif
++        default:
++            return std::make_unique<rendern::NullTextureUploader>(device);
++        }
++    }
++
++    // ------------------------------------------------------------
++    // App helpers / structs
++    // ------------------------------------------------------------
++    struct AppConfig
++    {
++        int windowWidth = 1280;
++        int windowHeight = 1024;
++        std::wstring windowTitle = L"CoreEngineModule (DX12)";
++
++        // Upload budgets per frame (tune if needed)
++        int maxTextureUploadsPerFrame = 8;
++        int maxMeshUploadsPerFrame = 32;
++        int maxTextureDeletesPerFrame = 2;
++        int maxMeshDeletesPerFrame = 32;
++    };
++
++    // NOTE: The demo now loads its content from assets/levels/demo.level.json
++    // via core:level (LevelAsset + LevelInstance).
++
++#if defined(CORE_USE_DX12)
++    void InitializeImGui(HWND hwnd, rhi::IRHIDevice& device, rhi::Format backbufferFormat, int backbufferCount)
++    {
++        IMGUI_CHECKVERSION();
++        ImGui::CreateContext();
++        ImGui::StyleColorsDark();
++        ImGui_ImplWin32_Init(hwnd);
++        device.InitImGui(hwnd, backbufferCount, backbufferFormat);
++        g_imguiInitialized = true;
++    }
++
++    void ShutdownImGui(rhi::IRHIDevice& device)
++    {
++        if (!g_imguiInitialized)
++        {
++            return;
++        }
++
++        device.ShutdownImGui();
++        ImGui_ImplWin32_Shutdown();
++        ImGui::DestroyContext();
++        g_imguiInitialized = false;
++    }
++
++    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice& device, rendern::RendererSettings& settings, rendern::Scene& scene, rendern::CameraController& cameraController, rendern::LevelAsset& levelAsset, rendern::LevelInstance& levelInstance, AssetManager& assets)
++    {
++        if (!g_imguiInitialized || !g_showDebugWindow || !g_debugWindow || !g_debugWindow->hwnd)
++        {
++            return nullptr;
++        }
++
++        if (!IsWindowVisible(g_debugWindow->hwnd))
++        {
++            return nullptr;
++        }
++
++        device.ImGuiNewFrame();
++        ImGui_ImplWin32_NewFrame();
++        ImGui::NewFrame();
++
++        rendern::ui::DrawRendererDebugUI(settings, scene, cameraController);
++        rendern::ui::DrawLevelEditorUI(levelAsset, levelInstance, assets, scene, cameraController);
++
++        ImGui::Render();
++
++        return static_cast<const void*>(ImGui::GetDrawData());
++    }
++
++    rendern::InputCapture GetInputCaptureForImGui()
++    {
++        rendern::InputCapture capture{};
++        if (g_imguiInitialized && g_showDebugWindow && g_debugWindow && g_debugWindow->hwnd)
++        {
++            if (IsWindowVisible(g_debugWindow->hwnd) && GetForegroundWindow() == g_debugWindow->hwnd)
++            {
++                const ImGuiIO& io = ImGui::GetIO();
++                capture.captureKeyboard = io.WantCaptureKeyboard;
++                capture.captureMouse = io.WantCaptureMouse;
++            }
++        }
++        return capture;
++    }
++
++    void RenderImGuiToSwapChainIfEnabled(rhi::IRHIDevice& device, rhi::IRHISwapChain& swapChain, const void* imguiDrawData)
++    {
++        if (!imguiDrawData || !g_imguiInitialized || !g_showDebugWindow || !g_debugWindow || !g_debugWindow->hwnd)
++        {
++            return;
++        }
++        if (!IsWindowVisible(g_debugWindow->hwnd))
++        {
++            return;
++        }
++
++        const rhi::Extent2D extent = swapChain.GetDesc().extent;
++
++        rhi::CommandList cmd{};
++
++        rhi::BeginPassDesc begin{};
++        begin.frameBuffer = swapChain.GetCurrentBackBuffer();
++        begin.extent = extent;
++        begin.swapChain = &swapChain;
++        begin.clearDesc.clearColor = true;
++        begin.clearDesc.clearDepth = false;
++        begin.clearDesc.color = { 0.08f, 0.08f, 0.08f, 1.0f };
++
++        cmd.BeginPass(begin);
++        cmd.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
++        cmd.DX12ImGuiRender(imguiDrawData);
++        cmd.EndPass();
++
++        device.SubmitCommandList(std::move(cmd));
++        swapChain.Present();
++    }
++#else
++    const void* BuildImGuiFrameIfEnabled(rhi::IRHIDevice&, rendern::RendererSettings&, rendern::Scene&, rendern::CameraController&, rendern::LevelAsset&, rendern::LevelInstance&, AssetManager&)
++    {
++        return nullptr;
++    }
++    rendern::InputCapture GetInputCaptureForImGui()
++    {
++        return {};
++    }
++#endif
++
++    struct SceneHandles
++    {
++        rendern::MeshHandle cubeMesh{};
++        rendern::MeshHandle groundMesh{};
++        rendern::MeshHandle quadMesh{};
++
++        rendern::MaterialHandle groundMaterial{};
++        rendern::MaterialHandle cubeMaterial{};
++        rendern::MaterialHandle glassMaterial{};
++    };
++
++    // Old hardcoded demo scene builders are kept in this file for reference, but the
++    // main loop below uses LevelAsset/LevelInstance instead.
++
++    void ConfigureDefaultCamera(rendern::Scene& scene)
++    {
++        scene.camera.position = { 5.0f, 10.0f, 10.0f };
++        scene.camera.target = { 0.0f, 0.0f, 0.0f };
++        scene.camera.up = { 0.0f, 1.0f, 0.0f };
++        scene.camera.fovYDeg = 60.0f;
++        scene.camera.nearZ = 0.01f;
++        scene.camera.farZ = 200.0f;
++    }
++
++    void AddDefaultLights(rendern::Scene& scene)
++    {
++        // Directional
++        {
++            rendern::Light light{};
++            light.type = rendern::LightType::Directional;
++            light.direction = mathUtils::Normalize(mathUtils::Vec3(-0.4f, -1.0f, -0.3f)); // FROM light
++            light.color = { 1.0f, 0.2f, 1.0f };
++            light.intensity = 0.2f;
++            scene.AddLight(light);
++        }
++
++        // Point
++        {
++            rendern::Light light{};
++            light.type = rendern::LightType::Point;
++            light.position = { -1.35f, 7.0f, -1.35f };
++            light.color = { 0.2f, 1.0f, 0.2f };
++            light.range = 120.0f;
++            light.intensity = 0.1f;
++            light.attConstant = 1.0f;
++            light.attLinear = 0.02f;
++            light.attQuadratic = 0.004f;
++            scene.AddLight(light);
++        }
++
++        // Spot
++        {
++            rendern::Light light{};
++            light.type = rendern::LightType::Spot;
++            light.position = { 2.0f, 4.0f, 2.0f };
++            light.direction = mathUtils::Normalize(mathUtils::Vec3(-2.0f, -5.0f, 0.0f)); // FROM light
++            light.color = { 0.2f, 0.2f, 1.0f };
++            light.range = 100.0f;
++            light.intensity = 8.0f;
++            light.innerHalfAngleDeg = 22.0f;
++            light.outerHalfAngleDeg = 35.0f;
++            light.attLinear = 0.09f;
++            light.attQuadratic = 0.032f;
++            scene.AddLight(light);
++        }
++    }
++
++    SceneHandles CreateDefaultMaterials(rendern::Scene& scene)
++    {
++        SceneHandles handles{};
++
++        // Ground material (no texture)
++        rendern::Material groundMaterial{};
++        groundMaterial.params.baseColor = { 0.8f, 0.8f, 0.8f, 1.0f };
++        groundMaterial.params.albedoDescIndex = 0;
++        groundMaterial.params.shininess = 16.0f;
++        groundMaterial.params.specStrength = 0.5f;
++        groundMaterial.params.shadowBias = 0.0f;
++        groundMaterial.params.metallic = 0.0f;
++        groundMaterial.params.roughness = 0.9f;
++        groundMaterial.params.ao = 1.0f;
++        groundMaterial.params.emissiveStrength = 1.0f;
++        groundMaterial.permFlags = rendern::MaterialPerm::UseShadow;
++
++        // Cube material (texture desc will be assigned once available)
++        rendern::Material cubeMaterial{};
++        cubeMaterial.params.baseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
++        cubeMaterial.params.albedoDescIndex = 0;
++        cubeMaterial.params.shininess = 64.0f;
++        cubeMaterial.params.specStrength = 0.5f;
++        cubeMaterial.params.shadowBias = 0.0015f;
++        cubeMaterial.params.metallic = 0.0f;
++        cubeMaterial.params.roughness = 0.75f;
++        cubeMaterial.params.ao = 1.0f;
++        cubeMaterial.params.emissiveStrength = 1.0f;
++        cubeMaterial.permFlags = rendern::MaterialPerm::UseShadow;
++
++        // Glass material (transparent)
++        rendern::Material glassMaterial{};
++        glassMaterial.params.baseColor = { 0.2f, 0.6f, 1.0f, 0.35f };
++        glassMaterial.params.albedoDescIndex = 0;
++        glassMaterial.params.shininess = 128.0f;
++        glassMaterial.params.specStrength = 0.9f;
++        glassMaterial.params.shadowBias = 0.0f;
++        glassMaterial.params.metallic = 0.0f;
++        glassMaterial.params.roughness = 0.08f;
++        glassMaterial.params.ao = 1.0f;
++        glassMaterial.params.emissiveStrength = 1.0f;
++        glassMaterial.permFlags = rendern::MaterialPerm::UseShadow | rendern::MaterialPerm::Transparent;
++
++        handles.groundMaterial = scene.CreateMaterial(groundMaterial);
++        handles.cubeMaterial = scene.CreateMaterial(cubeMaterial);
++        handles.glassMaterial = scene.CreateMaterial(glassMaterial);
++
++        return handles;
++    }
++
++    void AddGround(rendern::Scene& scene, const rendern::MeshHandle groundMesh, const rendern::MaterialHandle groundMaterial)
++    {
++        rendern::DrawItem groundItem{};
++        groundItem.mesh = groundMesh;
++        groundItem.transform.position = { 0.0f, -0.6f, 0.0f };
++        groundItem.transform.rotationDegrees = { -90.0f, 0.0f, 0.0f }; // quad XY -> XZ
++        groundItem.transform.scale = { 8.0f, 8.0f, 8.0f };
++        groundItem.material = groundMaterial;
++        scene.AddDraw(groundItem);
++    }
++
++    void AddGlassPane(rendern::Scene& scene, const rendern::MeshHandle quadMesh, const rendern::MaterialHandle glassMaterial)
++    {
++        rendern::DrawItem glassItem{};
++        glassItem.mesh = quadMesh; // quad.obj (XY plane)
++        glassItem.transform.position = { 0.0f, 2.3f, 2.6f };
++        glassItem.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
++        glassItem.transform.scale = { 4.0f, 4.0f, 4.0f };
++        glassItem.material = glassMaterial;
++        scene.AddDraw(glassItem);
++    }
++
++    void AddCubeGrid(rendern::Scene& scene, const rendern::MeshHandle cubeMesh, const rendern::MaterialHandle cubeMaterial)
++    {
++        constexpr int gridDim = 10;
++        constexpr float spacing = 1.35f;
++
++        for (int gridZ = 0; gridZ < gridDim; ++gridZ)
++        {
++            for (int gridX = 0; gridX < gridDim; ++gridX)
++            {
++                const float posX = (gridX - (gridDim / 2)) * spacing;
++                const float posZ = (gridZ - (gridDim / 2)) * spacing;
++
++                rendern::DrawItem cubeItem{};
++                cubeItem.mesh = cubeMesh;
++                cubeItem.transform.position = { posX, 2.3f, posZ };
++                cubeItem.transform.rotationDegrees = { 0.0f, 0.0f, 0.0f };
++                cubeItem.transform.scale = { 1.0f, 1.0f, 1.0f };
++                cubeItem.material = cubeMaterial;
++                scene.AddDraw(cubeItem);
++            }
++        }
++    }
++
++    // Descriptor management moved to rendern::LevelInstance.
++
++} // namespace
++
++int main(int argc, char** argv)
++{
++    try
++    {
++        const AppConfig config{};
++        const rhi::Backend requestedBackend = ParseBackendFromArgs(argc, argv);
++
++        Win32Window window = CreateWindowWin32(config.windowWidth, config.windowHeight, config.windowTitle);
++        g_window = &window;
++
++#if defined(CORE_USE_DX12)
++        Win32Window debugWindow{};
++        std::unique_ptr<rhi::IRHISwapChain> debugSwapChain;
++        if (requestedBackend == rhi::Backend::DirectX12)
++        {
++            debugWindow = CreateWindowWin32(900, 900, L"CoreEngineModule - Debug UI", /*show=*/true);
++            g_debugWindow = &debugWindow;
++        }
++#endif
++
++        rendern::Win32Input win32Input{};
++        g_input = &win32Input;
++
++        std::unique_ptr<rhi::IRHIDevice> device;
++        std::unique_ptr<rhi::IRHISwapChain> swapChain;
++        CreateDeviceAndSwapChain(requestedBackend, window.hwnd, config.windowWidth, config.windowHeight, device, swapChain);
++
++#if defined(CORE_USE_DX12)
++        if (requestedBackend == rhi::Backend::DirectX12)
++        {
++            rhi::DX12SwapChainDesc debugSwapChainDesc{};
++            debugSwapChainDesc.hwnd = debugWindow.hwnd;
++            debugSwapChainDesc.bufferCount = 2;
++            debugSwapChainDesc.base.extent = rhi::Extent2D{ 900u, 900u };
++            debugSwapChainDesc.base.backbufferFormat = rhi::Format::BGRA8_UNORM;
++            debugSwapChainDesc.base.vsync = false;
++
++            debugSwapChain = rhi::CreateDX12SwapChain(*device, debugSwapChainDesc);
++        }
++#endif
++
++        // Asset/Resource system: CPU decode on job system, GPU upload on render queue.
++        StbTextureDecoder textureDecoder{};
++        rendern::JobSystemThreadPool jobSystem{ 1 };
++        rendern::RenderQueueImmediate renderQueue{};
++        std::unique_ptr<ITextureUploader> textureUploader = CreateTextureUploader(device->GetBackend(), *device);
++
++        TextureIO textureIO{ textureDecoder, *textureUploader, jobSystem, renderQueue };
++        rendern::MeshIO meshIO{ *device, jobSystem, renderQueue };
++
++        AssetManager assets{ textureIO, meshIO };
++        ResourceManager& resourceManager = assets.GetResourceManager();
++
++        // Level asset (JSON)
++        rendern::LevelAsset levelAsset = rendern::LoadLevelAssetFromJson("levels/demo.level.json");
++
++        // Renderer (facade) - Stage1 expects Scene
++        rendern::RendererSettings rendererSettings{};
++        rendererSettings.drawLightGizmos = true;
++        rendern::Renderer renderer{ *device, rendererSettings };
++
++#if defined(CORE_USE_DX12)
++        if (requestedBackend == rhi::Backend::DirectX12 && debugSwapChain && debugWindow.hwnd)
++        {
++            InitializeImGui(debugWindow.hwnd, *device, debugSwapChain->GetDesc().backbufferFormat, /*backbufferCount=*/2);
++        }
++#endif
++
++        // Scene
++        rendern::Scene scene{};
++        scene.Clear();
++
++        // Level instantiation requests meshes/textures and fills Scene (draws/materials/lights/camera).
++        rendern::BindlessTable bindless{ *device };
++        rendern::LevelInstance levelInstance = rendern::InstantiateLevel(
++            scene,
++            assets,
++            bindless,
++            levelAsset,
++            mathUtils::Mat4(1.0f));
++
++        rendern::CameraController cameraController{};
++        cameraController.ResetFromCamera(scene.camera);
++
++        // Timer
++        GameTimer frameTimer{};
++        frameTimer.SetMaxDelta(0.05);
++        frameTimer.Reset();
++
++        while (window.running)
++        {
++            PumpMessages(window);
++            if (!window.running)
++            {
++                break;
++            }
++
++            // Apply pending window resizes (recreate swapchain buffers)
++            if (swapChain && window.pendingResize)
++            {
++                window.pendingResize = false;
++                if (window.pendingWidth > 0 && window.pendingHeight > 0)
++                {
++                    swapChain->Resize(rhi::Extent2D{
++                        static_cast<std::uint32_t>(window.pendingWidth),
++                        static_cast<std::uint32_t>(window.pendingHeight)
++                    });
++                }
++            }
++
++#if defined(CORE_USE_DX12)
++            if (debugSwapChain && debugWindow.hwnd && debugWindow.pendingResize)
++            {
++                debugWindow.pendingResize = false;
++                if (debugWindow.pendingWidth > 0 && debugWindow.pendingHeight > 0)
++                {
++                    debugSwapChain->Resize(rhi::Extent2D{
++                        static_cast<std::uint32_t>(debugWindow.pendingWidth),
++                        static_cast<std::uint32_t>(debugWindow.pendingHeight)
++                    });
++                }
++            }
++#endif
++
++            // If main window is minimized, skip rendering/presenting to avoid DXGI issues.
++            if (window.minimized || window.width <= 0 || window.height <= 0)
++            {
++                TinySleep();
++                continue;
++            }
++
++            // Drive uploads/destruction
++            assets.ProcessUploads(
++                config.maxTextureUploadsPerFrame,
++                config.maxTextureDeletesPerFrame,
++                config.maxMeshUploadsPerFrame,
++                config.maxMeshDeletesPerFrame);
++
++            // As GPU textures become available, allocate/update descriptor indices.
++            levelInstance.ResolveTextureBindings(assets, bindless, scene);
++
++            // Delta time
++            frameTimer.Tick();
++            const float deltaSeconds = static_cast<float>(frameTimer.GetDeltaTime());
++
++            // Input + camera controller
++            win32Input.SetCaptureMode(GetInputCaptureForImGui());
++            win32Input.NewFrame(window.hwnd);
++            cameraController.Update(deltaSeconds, win32Input.State(), scene.camera);
++
++            // Keep draw item transforms in sync even when the debug UI is closed.
++            levelInstance.SyncTransformsIfDirty(levelAsset, scene);
++
++            // Mouse picking in MAIN viewport (LMB selects a node).
++            {
++                const rendern::InputState& in = win32Input.State();
++                if (in.hasFocus && in.KeyPressed(VK_LBUTTON) && !in.mouse.rmbDown && !in.capture.captureMouse)
++                {
++                    POINT pt{};
++                    if (GetCursorPos(&pt) && ScreenToClient(window.hwnd, &pt))
++                    {
++                        const int mx = pt.x;
++                        const int my = pt.y;
++
++                        if (mx >= 0 && my >= 0 && mx < window.width && my < window.height)
++                        {
++                            const rendern::PickResult pick = rendern::PickNodeUnderScreenPoint(
++                                scene,
++                                levelInstance,
++                                static_cast<float>(mx),
++                                static_cast<float>(my),
++                                static_cast<float>(window.width),
++                                static_cast<float>(window.height));
++
++                            scene.debugPickRay.enabled = true;
++                            scene.debugPickRay.origin = pick.rayOrigin;
++                            scene.debugPickRay.direction = pick.rayDir;
++                            scene.debugPickRay.hit = (pick.nodeIndex >= 0) && std::isfinite(pick.t);
++                            scene.debugPickRay.length = scene.debugPickRay.hit ? pick.t : scene.camera.farZ;
++
++                            if (scene.debugPickRay.hit && levelInstance.IsNodeAlive(levelAsset, pick.nodeIndex))
++                            {
++                                scene.editorSelectedNode = pick.nodeIndex;
++                            }
++                            else
++                            {
++                                scene.editorSelectedNode = -1;
++                            }
++                        }
++                    }
++                }
++            }
++
++            // ImGui (optional) - rendered into a separate debug window swapchain
++            const void* imguiDrawData = BuildImGuiFrameIfEnabled(*device, rendererSettings, scene, cameraController, levelAsset, levelInstance, assets);
++
++            // Render main scene (no UI overlay)
++            renderer.SetSettings(rendererSettings);
++            renderer.RenderFrame(*swapChain, scene, /*imguiDrawData=*/nullptr);
++
++#if defined(CORE_USE_DX12)
++            if (debugSwapChain && debugWindow.hwnd && !debugWindow.minimized && debugWindow.width > 0 && debugWindow.height > 0)
++            {
++                RenderImGuiToSwapChainIfEnabled(*device, *debugSwapChain, imguiDrawData);
++            }
++#endif
++
++            TinySleep();
++        }
++
++#if defined(CORE_USE_DX12)
++        ShutdownImGui(*device);
++#endif
++
++        renderer.Shutdown();
++
++        // Descriptors cleanup
++        levelInstance.FreeDescriptors(bindless);
++
++        // Cleanup resources (destroy queues are driven by ProcessUploads).
++        jobSystem.WaitIdle();
++        assets.ClearAll();
++        assets.ProcessUploads(64, 256, 64, 256);
++
++        if (window.hwnd)
++        {
++            DestroyWindow(window.hwnd);
++            window.hwnd = nullptr;
++        }
++
++#if defined(CORE_USE_DX12)
++        if (debugWindow.hwnd)
++        {
++            DestroyWindow(debugWindow.hwnd);
++            debugWindow.hwnd = nullptr;
++        }
++        g_debugWindow = nullptr;
++#endif
++
++        g_window = nullptr;
++        g_input = nullptr;
++
++        return 0;
++    }
++    catch (const std::exception& exception)
++    {
++        std::cerr << "Fatal: " << exception.what() << "\n";
++        return 2;
++    }
++}
