@@ -31,6 +31,7 @@
 			if (device_.GetBackend() == rhi::Backend::DirectX12)
 			{
 				const std::filesystem::path pointShadowVIPath = corefs::ResolveAsset("shaders\\ShadowPointVI_dx12.hlsl");
+				const std::filesystem::path pointShadowLayeredPath = corefs::ResolveAsset("shaders\\ShadowPointLayered_dx12.hlsl");
 
 				const auto vsPoint = shaderLibrary_.GetOrCreateShader(ShaderKey{
 					.stage = rhi::ShaderStage::Vertex,
@@ -85,6 +86,49 @@
 				{
 					// Failed to create (DXC/compile/PSO), stick to the 6-pass fallback for this run.
 					disablePointShadowVI_ = true;
+				}
+			}
+
+			// Optional Layered variant (single pass renders all 6 cubemap faces into a Texture2DArray).
+			// Uses SV_RenderTargetArrayIndex from VS, so it requires SM6.1 + DXC and
+			// D3D12_OPTIONS3.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer.
+			//
+			// Safety: if it fails once (DXC missing/compile error/PSO creation failure), we disable further attempts
+			// until restart to avoid repeated DXC/PSO work.
+			if (!disablePointShadowLayered_)
+			{
+				if (device_.SupportsShaderModel6() && device_.SupportsVPAndRTArrayIndexFromAnyShader())
+				{
+					const auto vsPointLayered = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Vertex,
+						.name = "VS_ShadowPointLayered",
+						.filePath = pointShadowLayeredPath.string(),
+						.defines = {},
+						.shaderModel = rhi::ShaderModel::SM6_1
+						});
+					const auto psPointLayered = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Pixel,
+						.name = "PS_ShadowPointLayered",
+						.filePath = pointShadowLayeredPath.string(),
+						.defines = {},
+						.shaderModel = rhi::ShaderModel::SM6_1
+						});
+					
+					if (vsPointLayered && psPointLayered)
+					{
+						psoPointShadowLayered_ = psoCache_.GetOrCreate("PSO_PointShadow_Layered", vsPointLayered, psPointLayered);
+					}
+				}
+				else
+				{
+					// Not supported on this device; avoid checking again.
+					disablePointShadowLayered_ = true;
+				}
+				
+				if (!psoPointShadowLayered_)
+				{
+					// Failed to create (DXC/compile/PSO), stick to the 6-pass fallback for this run.
+					disablePointShadowLayered_ = true;
 				}
 			}
 			pointShadowState_.depth.testEnable = true;

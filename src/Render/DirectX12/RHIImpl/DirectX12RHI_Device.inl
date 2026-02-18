@@ -283,6 +283,11 @@
             return supportsViewInstancing_;
         }
 
+        bool SupportsVPAndRTArrayIndexFromAnyShader() const override
+        {
+            return supportsVPAndRTArrayIndexFromAnyShader_;
+        }
+
         ShaderHandle CreateShaderEx(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode, ShaderModel shaderModel) override
         {
             if (shaderModel == ShaderModel::SM5_1)
@@ -2791,15 +2796,51 @@ else
             device2_.Reset();
             core_.device.As(&device2_);
 
-            // View Instancing tier (Options3).
-            D3D12_FEATURE_DATA_D3D12_OPTIONS3 options3{};
-            if (SUCCEEDED(NativeDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &options3, sizeof(options3))))
+            // D3D12 options3: View Instancing tier lives here.
+            D3D12_FEATURE_DATA_D3D12_OPTIONS3 opt3{};
+            if (SUCCEEDED(NativeDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS3, &opt3, sizeof(opt3))))
             {
-                viewInstancingTier_ = options3.ViewInstancingTier;
+                supportsViewInstancing_ = (opt3.ViewInstancingTier != D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED);
             }
             else
             {
-                viewInstancingTier_ = D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED;
+                supportsViewInstancing_ = false;
+            }
+
+            // Layered rendering (SV_RenderTargetArrayIndex / SV_ViewportArrayIndex) capability.
+            // NOTE: Field name differs across Windows SDK versions.
+            // Some SDKs expose:
+            //   VPAndRTArrayIndexFromAnyShaderFeedingRasterizer
+            // Others expose:
+            //   VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation
+            //
+            // We only enable layered point-shadow if it's supported without relying on GS emulation.
+            const auto ReadVPAndRTArrayIndexSupport = [](const D3D12_FEATURE_DATA_D3D12_OPTIONS& opt) -> bool
+                {
+                    if constexpr (requires { opt.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer; })
+                    {
+                        return opt.VPAndRTArrayIndexFromAnyShaderFeedingRasterizer ? true : false;
+                    }
+                    else if constexpr (requires { opt.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation; })
+                    {
+                        return opt.VPAndRTArrayIndexFromAnyShaderFeedingRasterizerSupportedWithoutGSEmulation ? true : false;
+                    }
+                    else
+                    {
+                        return false;
+                    }
+                };
+
+            // Layered rendering (SV_RenderTargetArrayIndex / SV_ViewportArrayIndex) capability is exposed in
+            // D3D12_FEATURE_D3D12_OPTIONS (NOT OPTIONS3). Some Windows SDK versions do not have this field in OPTIONS3.
+            D3D12_FEATURE_DATA_D3D12_OPTIONS opt{};
+            if (SUCCEEDED(NativeDevice()->CheckFeatureSupport(D3D12_FEATURE_D3D12_OPTIONS, &opt, sizeof(opt))))
+            {
+                supportsVPAndRTArrayIndexFromAnyShader_ = ReadVPAndRTArrayIndexSupport(opt);
+            }
+            else
+            {
+                supportsVPAndRTArrayIndexFromAnyShader_ = false;
             }
 
             supportsViewInstancing_ = (device2_ != nullptr) && (viewInstancingTier_ != D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED);
@@ -2995,6 +3036,7 @@ else
         D3D12_VIEW_INSTANCING_TIER viewInstancingTier_{ D3D12_VIEW_INSTANCING_TIER_NOT_SUPPORTED };
         D3D_SHADER_MODEL highestShaderModel_{ D3D_SHADER_MODEL_5_1 };
         bool supportsViewInstancing_{ false };
+        bool supportsVPAndRTArrayIndexFromAnyShader_{ false };
         bool supportsSM6_1_{ false };
 
 #if CORE_DX12_HAS_DXC

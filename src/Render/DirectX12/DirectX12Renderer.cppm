@@ -399,6 +399,8 @@ export namespace rendern
 
 		// Point shadow pass (R32_FLOAT distance cubemap)
 		rhi::PipelineHandle psoPointShadow_{};
+		rhi::PipelineHandle psoPointShadowLayered_{}; // SM6.1 + SV_RenderTargetArrayIndex layered rendering (single-pass cubemap)
+		bool disablePointShadowLayered_{ false };// do not try again after first failure (until restart)
 		rhi::PipelineHandle psoPointShadowVI_{}; // SM6.1 + SV_ViewID + view instancing (single-pass cubemap)
 		bool disablePointShadowVI_{ false };// do not try again after first failure (until restart)
 		rhi::GraphicsState pointShadowState_{};

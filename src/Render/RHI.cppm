@@ -530,6 +530,10 @@ export namespace rhi
 		virtual bool SupportsShaderModel6() const { return false; }
 		virtual bool SupportsViewInstancing() const { return false; }
 
+		// Whether the device can set SV_RenderTargetArrayIndex / SV_ViewportArrayIndex from any shader feeding rasterizer.
+		// This is required for "layered rendering" into Texture2DArray render targets from VS/DS/GS.
+		virtual bool SupportsVPAndRTArrayIndexFromAnyShader() const { return false; }
+
 		virtual ShaderHandle CreateShader(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode) = 0;
 		virtual ShaderHandle CreateShaderEx(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode, ShaderModel shaderModel)
 		{

@@ -82,6 +82,47 @@
 				}
 			}
 
+			// ---- Optional: layered point-shadow packing (duplicate instances x6 for cubemap slices) ----
+			// Layered point shadow renders into a Texture2DArray(6) in a single pass and uses
+			// SV_RenderTargetArrayIndex in VS. The shader assumes instance data is duplicated 6 times:
+			// for each original instance we emit faces 0..5 in order.
+			std::vector<InstanceData> shadowInstancesLayered;
+			std::vector<ShadowBatch> shadowBatchesLayered;
+			const bool buildLayeredPointShadow = (psoPointShadowLayered_ && !disablePointShadowLayered_) &&
+				device_.SupportsShaderModel6() && device_.SupportsVPAndRTArrayIndexFromAnyShader();
+			if (buildLayeredPointShadow && !shadowBatches.empty())
+			{
+				constexpr std::uint32_t kPointShadowFaces = 6u;
+				shadowInstancesLayered.reserve(static_cast<std::size_t>(shadowInstances.size()) * kPointShadowFaces);
+				shadowBatchesLayered.reserve(shadowBatches.size());
+
+				for (const ShadowBatch& sb : shadowBatches)
+				{
+					if (!sb.mesh || sb.instanceCount == 0)
+					{
+						continue;
+					}
+
+					ShadowBatch lb{};
+					lb.mesh = sb.mesh;
+					lb.instanceOffset = static_cast<std::uint32_t>(shadowInstancesLayered.size());
+					lb.instanceCount = sb.instanceCount * kPointShadowFaces;
+
+					const std::uint32_t begin = sb.instanceOffset;
+					const std::uint32_t end = begin + sb.instanceCount;
+					for (std::uint32_t i = begin; i < end; ++i)
+					{
+						const InstanceData& inst = shadowInstances[i];
+						for (std::uint32_t face = 0; face < kPointShadowFaces; ++face)
+						{
+							shadowInstancesLayered.push_back(inst);
+						}
+					}
+
+					shadowBatchesLayered.push_back(lb);
+				}
+			}
+
 			// ---- Main packing: opaque (batched) + transparent (sorted per-item) ----
 			std::unordered_map<BatchKey, BatchTemp, BatchKeyHash, BatchKeyEq> mainTmp;
 			mainTmp.reserve(scene.drawItems.size());
@@ -217,6 +258,7 @@
 			const std::uint32_t shadowBase = 0;
 			const std::uint32_t mainBase = static_cast<std::uint32_t>(shadowInstances.size());
 			const std::uint32_t transparentBase = static_cast<std::uint32_t>(shadowInstances.size() + mainInstances.size());
+			const std::uint32_t layeredShadowBase = transparentBase + static_cast<std::uint32_t>(transparentInstances.size());
 
 			for (auto& sbatch : shadowBatches)
 			{
@@ -225,6 +267,10 @@
 			for (auto& mbatch : mainBatches)
 			{
 				mbatch.instanceOffset += mainBase;
+			}
+			for (auto& lbatch : shadowBatchesLayered)
+			{
+				lbatch.instanceOffset += layeredShadowBase;
 			}
 
 			std::vector<TransparentDraw> transparentDraws;
@@ -247,10 +293,11 @@
 				});
 
 			std::vector<InstanceData> combinedInstances;
-			combinedInstances.reserve(shadowInstances.size() + mainInstances.size());
+			combinedInstances.reserve(shadowInstances.size() + mainInstances.size() + transparentInstances.size() + shadowInstancesLayered.size());
 			combinedInstances.insert(combinedInstances.end(), shadowInstances.begin(), shadowInstances.end());
 			combinedInstances.insert(combinedInstances.end(), mainInstances.begin(), mainInstances.end());
 			combinedInstances.insert(combinedInstances.end(), transparentInstances.begin(), transparentInstances.end());
+			combinedInstances.insert(combinedInstances.end(), shadowInstancesLayered.begin(), shadowInstancesLayered.end());
 
 			const std::uint32_t instStride = static_cast<std::uint32_t>(sizeof(InstanceData));
 

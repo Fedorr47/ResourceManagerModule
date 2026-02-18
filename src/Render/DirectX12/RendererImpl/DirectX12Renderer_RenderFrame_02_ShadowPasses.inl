@@ -125,8 +125,13 @@
 				else if (light.type == LightType::Point && pointShadows.size() < kMaxPointShadows)
 				{
 					// Point shadows use a cubemap R32_FLOAT distance map (color) + depth for rasterization.
-					// If VI pipeline is available, we render all 6 faces in a single pass (SV_ViewID + view instancing).
+					// Prefer layered one-pass (SV_RenderTargetArrayIndex). If unavailable, try VI (SV_ViewID).
 					// Otherwise we fall back to 6 separate passes (face-by-face).
+					const bool useLayered =
+						(!disablePointShadowLayered_) &&
+						static_cast<bool>(psoPointShadowLayered_) &&
+						device_.SupportsVPAndRTArrayIndexFromAnyShader();
+
 					const bool useVI = (!disablePointShadowVI_) && static_cast<bool>(psoPointShadowVI_);
 
 					const rhi::Extent2D cubeExtent{ 2048, 2048 };
@@ -140,7 +145,7 @@
 
 					// Depth: for VI we need a cubemap depth array (all faces). For fallback a temporary 2D depth buffer is enough.
 					renderGraph::RGTextureHandle depth{};
-					if (useVI)
+					if (useVI || useLayered)
 					{
 						depth = graph.CreateTexture(renderGraph::RGTextureDesc{
 							.extent = cubeExtent,
@@ -183,7 +188,60 @@
 
 					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(90.0f), 1.0f, 0.1f, rec.range);
 
-					if (useVI)
+					if (useLayered)
+					{
+						// One pass: render all faces using SV_RenderTargetArrayIndex (layered rendering).
+						rhi::ClearDesc clear{};
+						clear.clearColor = true;
+						clear.clearDepth = true;
+						clear.color = { 1.0f, 1.0f, 1.0f, 1.0f }; // far
+						clear.depth = 1.0f;
+
+						renderGraph::PassAttachments att{};
+						att.useSwapChainBackbuffer = false;
+						att.color = cube;
+						att.colorCubeAllFaces = true;
+						att.depth = depth;
+						att.clearDesc = clear;
+
+						const std::string passName =
+							"PointShadowPassLayered_" + std::to_string(static_cast<int>(pointShadows.size() - 1));
+
+						struct alignas(16) PointShadowLayeredConstants
+						{
+							// 6 matrices as ROWS (transposed on CPU).
+							std::array<float, 16 * 6> uFaceViewProj{};
+							std::array<float, 4>      uLightPosRange{}; // xyz + range
+							std::array<float, 4>      uMisc{};          // unused (bias is texel-based in main shader)
+						};
+
+						PointShadowLayeredConstants pointShadowConstants{};
+
+						for (int face = 0; face < 6; ++face)
+						{
+							const mathUtils::Mat4 faceViewProj = proj90 * FaceView(rec.pos, face);
+							const mathUtils::Mat4 faceViewProjTranspose = mathUtils::Transpose(faceViewProj);
+							std::memcpy(pointShadowConstants.uFaceViewProj.data() + (face * 16),
+								mathUtils::ValuePtr(faceViewProjTranspose), sizeof(float) * 16);
+						}
+
+						pointShadowConstants.uLightPosRange = { rec.pos.x, rec.pos.y, rec.pos.z, rec.range };
+						pointShadowConstants.uMisc = { 0, 0, 0, 0 };
+
+						graph.AddPass(passName, std::move(att),
+							[this, pointShadowConstants, shadowBatchesLayered, instStride](renderGraph::PassContext& ctx) mutable
+							{
+								ctx.commandList.SetViewport(0, 0,
+									static_cast<int>(ctx.passExtent.width),
+									static_cast<int>(ctx.passExtent.height));
+								ctx.commandList.SetState(pointShadowState_);
+								ctx.commandList.BindPipeline(psoPointShadowLayered_);
+								ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &pointShadowConstants, 1 }));
+								this->DrawInstancedShadowBatches(ctx.commandList, shadowBatchesLayered, instStride);
+							});
+
+					}
+					else if (useVI)
 					{
 						// One pass: render all faces using SV_ViewID.
 						rhi::ClearDesc clear{};
