@@ -21,9 +21,12 @@
 				MaterialParams params{};
 				envSource = 0u;
 				MaterialPerm perm = MaterialPerm::UseShadow;
+				std::uint32_t itemEnvSource = 0u;
+
 				if (item.material.id != 0)
 				{
 					const auto& mat = scene.GetMaterial(item.material);
+					itemEnvSource = static_cast<std::uint32_t>(mat.envSource);
 					params = mat.params;
 					perm = EffectivePerm(mat);
 					envSource = static_cast<std::uint32_t>(mat.envSource);
@@ -155,9 +158,11 @@
 
 				MaterialParams params{};
 				MaterialPerm perm = MaterialPerm::UseShadow;
+				std::uint32_t itemEnvSource = 0u;
 				if (item.material.id != 0)
 				{
 					const auto& mat = scene.GetMaterial(item.material);
+					itemEnvSource = static_cast<std::uint32_t>(mat.envSource);
 					params = mat.params;
 					perm = EffectivePerm(mat);
 				}
@@ -172,7 +177,7 @@
 				}
 
 				key.permBits = static_cast<std::uint32_t>(perm);
-				key.envSource = envSource;
+				key.envSource = itemEnvSource;
 
 				// IMPORTANT: BatchKey must include material parameters,
 				// otherwise different materials get incorrectly merged.
@@ -305,11 +310,20 @@
 			}
 
 			// ---- Combine and upload once ----
+			auto AlignUpU32 = [](std::uint32_t v, std::uint32_t a) -> std::uint32_t
+				{
+					return (v + (a - 1u)) / a * a;
+				};
 			const std::uint32_t shadowBase = 0;
 			const std::uint32_t mainBase = static_cast<std::uint32_t>(shadowInstances.size());
 			const std::uint32_t transparentBase = static_cast<std::uint32_t>(shadowInstances.size() + mainInstances.size());
-			const std::uint32_t layeredShadowBase = transparentBase + static_cast<std::uint32_t>(transparentInstances.size());
-			const std::uint32_t layeredReflectionBase = layeredShadowBase + static_cast<std::uint32_t>(shadowInstancesLayered.size());
+
+			const std::uint32_t transparentEnd =
+				transparentBase + static_cast<std::uint32_t>(transparentInstances.size());
+			const std::uint32_t layeredShadowBase = AlignUpU32(transparentEnd, 6u);
+			const std::uint32_t layeredReflectionBase =
+				AlignUpU32(layeredShadowBase + static_cast<std::uint32_t>(shadowInstancesLayered.size()), 6u);
+
 
 			for (auto& sbatch : shadowBatches)
 			{
@@ -348,19 +362,39 @@
 				});
 
 			std::vector<InstanceData> combinedInstances;
-			combinedInstances.reserve(
-				shadowInstances.size() +
-				mainInstances.size() +
-				transparentInstances.size() +
-				shadowInstancesLayered.size() +
-				reflectionInstancesLayered.size());
+			const std::uint32_t finalCount =
+				layeredReflectionBase + (std::uint32_t)reflectionInstancesLayered.size();
 
+			combinedInstances.clear();
+			combinedInstances.reserve(finalCount);
+
+			// 1) normal groups
 			combinedInstances.insert(combinedInstances.end(), shadowInstances.begin(), shadowInstances.end());
 			combinedInstances.insert(combinedInstances.end(), mainInstances.begin(), mainInstances.end());
 			combinedInstances.insert(combinedInstances.end(), transparentInstances.begin(), transparentInstances.end());
-			combinedInstances.insert(combinedInstances.end(), shadowInstancesLayered.begin(), shadowInstancesLayered.end());
-			combinedInstances.insert(combinedInstances.end(), reflectionInstancesLayered.begin(), reflectionInstancesLayered.end());
 
+			// 2) pad up to layeredShadowBase (between transparent and layered shadow)
+			if (combinedInstances.size() < layeredShadowBase)
+				combinedInstances.resize(layeredShadowBase);
+
+			// 3) layered shadow
+			combinedInstances.insert(combinedInstances.end(),
+				shadowInstancesLayered.begin(), shadowInstancesLayered.end());
+
+			// 4) pad up to layeredReflectionBase (between layered shadow and layered reflection)
+			if (combinedInstances.size() < layeredReflectionBase)
+				combinedInstances.resize(layeredReflectionBase);
+
+			// 5) layered reflection
+			combinedInstances.insert(combinedInstances.end(),
+				reflectionInstancesLayered.begin(), reflectionInstancesLayered.end());
+
+			assert(shadowBase == 0u);
+			assert(mainBase == shadowInstances.size());
+			assert(transparentBase == shadowInstances.size() + mainInstances.size());
+			assert(layeredShadowBase >= transparentBase + transparentInstances.size());
+			assert(layeredReflectionBase >= layeredShadowBase + shadowInstancesLayered.size());
+			assert(combinedInstances.size() == finalCount);
 
 			const std::uint32_t instStride = static_cast<std::uint32_t>(sizeof(InstanceData));
 

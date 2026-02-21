@@ -18,6 +18,7 @@ cbuffer PerDraw : register(b0)
 SamplerState gLinear : register(s0);
 // Cubemap bound at t0
 TextureCube<float4> gSkybox : register(t0);
+SamplerState gLinearClamp : register(s3);
 
 VSOut VS_Skybox(VSIn input)
 {
@@ -33,6 +34,6 @@ float4 PS_Skybox(VSOut input) : SV_Target
 {
 	float3 dir = normalize(input.dir);
 	dir = float3(dir.x, dir.y, -dir.z);
-	const float3 color = gSkybox.Sample(gLinear, dir).rgb;
+	const float3 color = gSkybox.Sample(gLinearClamp, dir).rgb;
 	return float4(color, 1.0);
 }

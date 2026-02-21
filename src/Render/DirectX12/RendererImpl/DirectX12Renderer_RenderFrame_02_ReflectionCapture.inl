@@ -5,24 +5,56 @@
 //  - VI:      SV_ViewID (requires ViewInstancing + PSO)
 //  - Fallback: 6 passes, one face at a time
 
+/*
 if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture_)
 {
 	// Decide capture position.
+	// We want the capture centered on the reflective object (probe anchor), not on the camera.
+	// Priority:
+	//  1) Follow editor selection (if enabled and valid)
+	//  2) Otherwise, auto-pick the closest draw item that uses EnvSource::ReflectionCapture (typically MirrorSphere)
+	//  3) Fallback to camera position if nothing matches
 	mathUtils::Vec3 capturePos = camPos;
+	int captureAnchorDrawItem = -1;
 
 	// Follow selected object (editor selection).
 	const int selectedDrawItem = scene.editorSelectedDrawItem;
 	if (settings_.reflectionCaptureFollowSelectedObject && selectedDrawItem >= 0
 		&& static_cast<std::size_t>(selectedDrawItem) < scene.drawItems.size())
 	{
+		captureAnchorDrawItem = selectedDrawItem;
 		const auto& it = scene.drawItems[static_cast<std::size_t>(selectedDrawItem)];
 		capturePos = it.transform.position;
 	}
-
-	// Dirty logic: selection change or movement.
-	if (selectedDrawItem != reflectionCaptureLastSelectedDrawItem_)
+	else
 	{
-		reflectionCaptureLastSelectedDrawItem_ = selectedDrawItem;
+		float bestDist2 = 3.402823466e+38f; // FLT_MAX
+
+		for (std::size_t i = 0; i < scene.drawItems.size(); ++i)
+		{
+			const auto& it = scene.drawItems[i];
+			if (it.material.id == 0)
+				continue;
+
+			const auto& mat = scene.GetMaterial(it.material);
+			if (mat.envSource != EnvSource::ReflectionCapture)
+				continue;
+
+			const mathUtils::Vec3 d = it.transform.position - camPos;
+			const float dist2 = mathUtils::Dot(d, d);
+			if (dist2 < bestDist2)
+			{
+				bestDist2 = dist2;
+				captureAnchorDrawItem = static_cast<int>(i);
+				capturePos = it.transform.position;
+			}
+		}
+	}
+
+	// Dirty logic: anchor change or movement.
+	if (captureAnchorDrawItem != reflectionCaptureLastSelectedDrawItem_)
+	{
+		reflectionCaptureLastSelectedDrawItem_ = captureAnchorDrawItem;
 		reflectionCaptureDirty_ = true;
 		reflectionCaptureHasLastPos_ = false;
 	}
@@ -61,25 +93,27 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 			});
 
 		// Capabilities / method choice.
-		const bool useLayered =
+		bool useLayered =
 			(!disableReflectionCaptureLayered_) &&
 			(psoReflectionCaptureLayered_) &&
 			device_.SupportsShaderModel6() &&
 			device_.SupportsVPAndRTArrayIndexFromAnyShader();
 
-		const bool useVI =
+		bool useVI =
 			(!useLayered) &&
 			(!disableReflectionCaptureVI_) &&
 			(psoReflectionCaptureVI_) &&
 			device_.SupportsShaderModel6() &&
-			device_.SupportsViewInstancing();
+			device_.SupportsViewInstancing();	
 
 		// Common face view helper for cubemap capture. Note: we keep it consistent with Skybox_dx12.hlsl (which flips Z when sampling the skybox cubemap).
 		auto FaceView = [](const mathUtils::Vec3& pos, int face) -> mathUtils::Mat4
 			{
+				// +X, -X, +Y, -Y, +Z, -Z
 				static const mathUtils::Vec3 dirs[6] = {
 					{ 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }
 				};
+
 				static const mathUtils::Vec3 ups[6] = {
 					{ 0, 1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { 0, 1, 0 }, { 0, 1, 0 }
 				};
@@ -115,13 +149,17 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 			.debugName = "ReflectionCaptureDepthTmp"
 			});
 
+		bool renderedSkybox = false;
+		
 		if (haveSkybox)
 		{
+			renderedSkybox = true;
 			for (int face = 0; face < 6; ++face)
 			{
 				renderGraph::PassAttachments att{};
 				att.useSwapChainBackbuffer = false;
 				att.colorCubeFace = static_cast<std::uint32_t>(face);
+				att.color = cubeRG;
 				att.depth = depthTmp;
 				att.clearDesc = clearColorDepth;
 
@@ -155,10 +193,37 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 		}
 
 		// For mesh passes: if we rendered skybox first, don't clear color again.
-		const rhi::ClearDesc meshClear = haveSkybox ? clearDepthOnly : clearColorDepth;
+		const rhi::ClearDesc meshClear = renderedSkybox ? clearDepthOnly : clearColorDepth;
+
+		// Avoid recursive self-capture:
+		// Do not render objects that themselves use EnvSource::ReflectionCapture into the capture cubemap.
+		auto ShouldSkipInCapture = [&scene](const Batch& b) -> bool
+			{
+				if (b.materialHandle.id == 0)
+					return false;
+
+				const auto& mat = scene.GetMaterial(b.materialHandle);
+				return (mat.envSource == EnvSource::ReflectionCapture);
+			};
+
+		std::vector<Batch> captureMainBatches;
+		captureMainBatches.reserve(mainBatches.size());
+		for (const Batch& b : mainBatches)
+		{
+			if (!ShouldSkipInCapture(b))
+				captureMainBatches.push_back(b);
+		}
+
+		std::vector<Batch> captureReflectionBatchesLayered;
+		captureReflectionBatchesLayered.reserve(reflectionBatchesLayered.size());
+		for (const Batch& b : reflectionBatchesLayered)
+		{
+			if (!ShouldSkipInCapture(b))
+				captureReflectionBatchesLayered.push_back(b);
+		}
 
 		// ---------------- Layered path (one pass, SV_RenderTargetArrayIndex) ----------------
-		if (useLayered && !reflectionBatchesLayered.empty())
+		if (useLayered && !captureReflectionBatchesLayered.empty())
 		{
 			renderGraph::PassAttachments att{};
 			att.useSwapChainBackbuffer = false;
@@ -181,17 +246,20 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 			base.uParams = { static_cast<float>(lightCount), 0.0f, 0.0f, 0.0f };
 
 			graph.AddPass("ReflectionCapture_Layered", std::move(att),
-				[this, base, lightCount, instStride, reflectionBatchesLayered](renderGraph::PassContext& ctx) mutable
+				[this, base, lightCount, instStride, captureReflectionBatchesLayered](renderGraph::PassContext& ctx) mutable
 				{
 					ctx.commandList.SetViewport(0, 0, (int)ctx.passExtent.width, (int)ctx.passExtent.height);
 					ctx.commandList.SetState(state_);
 					ctx.commandList.BindPipeline(psoReflectionCaptureLayered_);
 					ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-					for (const Batch& b : reflectionBatchesLayered)
+					for (const Batch& b : captureReflectionBatchesLayered)
 					{
 						if (!b.mesh || b.instanceCount == 0)
 							continue;
+
+						assert((b.instanceOffset % 6u) == 0u);
+						assert((b.instanceCount % 6u) == 0u);
 
 						// flags
 						std::uint32_t flags = 0u;
@@ -237,14 +305,14 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 			base.uParams = { static_cast<float>(lightCount), 0.0f, 0.0f, 0.0f };
 
 			graph.AddPass("ReflectionCapture_VI", std::move(att),
-				[this, base, lightCount, instStride, mainBatches](renderGraph::PassContext& ctx) mutable
+				[this, base, lightCount, instStride, captureMainBatches](renderGraph::PassContext& ctx) mutable
 				{
 					ctx.commandList.SetViewport(0, 0, (int)ctx.passExtent.width, (int)ctx.passExtent.height);
 					ctx.commandList.SetState(state_);
 					ctx.commandList.BindPipeline(psoReflectionCaptureVI_);
 					ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-					for (const Batch& b : mainBatches)
+					for (const Batch& b : captureMainBatches)
 					{
 						if (!b.mesh || b.instanceCount == 0)
 							continue;
@@ -273,8 +341,7 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 		else
 		{
 			// Fallback depth: RenderGraph cannot select cube DSV per-face (only all-faces),
-			// so we reuse the 2D temp depth texture created above (depthTmp).
-
+			// so we reuse the 2D temp depth texture created above (depthTmp)
 			for (int face = 0; face < 6; ++face)
 			{
 				renderGraph::PassAttachments att{};
@@ -295,14 +362,14 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 				const std::string passName = "ReflectionCapture_Face_" + std::to_string(face);
 
 				graph.AddPass(passName, std::move(att),
-					[this, base, lightCount, instStride, mainBatches](renderGraph::PassContext& ctx) mutable
+					[this, base, lightCount, instStride, captureMainBatches](renderGraph::PassContext& ctx) mutable
 					{
 						ctx.commandList.SetViewport(0, 0, (int)ctx.passExtent.width, (int)ctx.passExtent.height);
 						ctx.commandList.SetState(state_);
 						ctx.commandList.BindPipeline(psoReflectionCapture_);
 						ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-						for (const Batch& b : mainBatches)
+						for (const Batch& b : captureMainBatches)
 						{
 							if (!b.mesh || b.instanceCount == 0)
 								continue;
@@ -330,3 +397,4 @@ if (settings_.enableReflectionCapture && reflectionCube_ && psoReflectionCapture
 		}
 	}
 }
+*/

@@ -81,7 +81,7 @@
 					for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
 					{
 						const auto tex = ctx.resources.GetTexture(pointShadows[pointShadowIndex].cube);
-						ctx.commandList.BindTextureCube(7 + static_cast<std::uint32_t>(pointShadowIndex), tex);
+						ctx.commandList.BindTexture2DArray(7 + static_cast<std::uint32_t>(pointShadowIndex), tex);
 					}
 
 					// Bind shadow metadata SB at t11
@@ -98,6 +98,8 @@
 					constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
 					constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
 					constexpr std::uint32_t kFlagUseEnv = 1u << 7;
+					constexpr std::uint32_t kFlagEnvFlipZ = 1u << 8;
+					constexpr std::uint32_t kFlagEnvForceMip0 = 1u << 9;
 
 					for (const Batch& batch : mainBatches)
 					{
@@ -173,7 +175,17 @@
 						if (envDescIndex != 0)
 						{
 							flags |= kFlagUseEnv;
+							if (envDescIndex == scene.skyboxDescIndex)
+							{
+								flags |= kFlagEnvFlipZ;
+							}
 						}
+						if (settings_.enableReflectionCapture && (reflectionCubeDescIndex_ != 0) && (envDescIndex == reflectionCubeDescIndex_))
+						{
+							// Dynamic reflection capture cubemap: render mip0 only -> force mip0 sampling in shader.
+							flags |= kFlagEnvForceMip0;
+						}
+
 						PerBatchConstants constants{};
 						const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
 						const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
@@ -291,6 +303,16 @@
 							if (envDescIndex != 0)
 							{
 								flags |= kFlagUseEnv;
+								if (envDescIndex == scene.skyboxDescIndex)
+								{
+									flags |= kFlagEnvFlipZ;
+								}
+								// Dynamic reflection captures update only mip0. Force mip0 sampling in the shader to
+								// avoid seams/garbage when the cube texture was created with a full mip chain.
+								if (settings_.enableReflectionCapture && (reflectionCubeDescIndex_ != 0) && (envDescIndex == reflectionCubeDescIndex_))
+								{
+									flags |= kFlagEnvForceMip0;
+								}
 							}
 
 							PerBatchConstants constants{};

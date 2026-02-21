@@ -14,7 +14,7 @@
     "Ship_Metalness": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship_metalness.jpg", "srgb": false, "mips": true, "flipY": false},
     "Ship_Normal": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship_nmap_2_Tris.jpg", "srgb": false, "mips": true, "flipY": false},
     "Ship_Roughness": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship_rough.jpg", "srgb": false, "mips": true, "flipY": false},
-    "Skybox": {"kind": "cube", "source": "cross", "cross": "textures/skybox/Cubemap_Sky_03-512x512.png", "srgb": true, "mips": true, "flipY": false},
+    "Skybox": {"kind": "cube", "source": "cross", "cross": "textures/skybox/Cubemap_Sky_04-512x512.png", "srgb": true, "mips": true, "flipY": false},
     "brick": {"kind": "tex2d", "path": "textures/brick.png", "srgb": true, "mips": true, "flipY": false},
     "watermelon_albedo": {"kind": "tex2d", "path": "textures/watermelon_albedo.jpg", "srgb": true, "mips": true, "flipY": false},
     "watermelon_normal": {"kind": "tex2d", "path": "textures/watermelon_normal.jpg", "srgb": true, "mips": true, "flipY": false},
@@ -26,7 +26,7 @@
     }},
     "glass": {"baseColor": [0.200000,0.600000,1.000000,0.350000], "shininess": 128.000000, "specStrength": 0.900000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.080000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow", "transparent"], "textures": {}},
     "ground": {"baseColor": [0.800000,0.800000,0.800000,1.000000], "shininess": 16.000000, "specStrength": 0.500000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.900000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow"], "textures": {}},
-    "mirror": {"envSource": "reflectionCapture", "baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 256.000000, "specStrength": 1.000000, "shadowBias": 0.000000, "metallic": 1.000000, "roughness": 0.020000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow"], "textures": {}},
+    "mirror": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 256.000000, "specStrength": 1.000000, "shadowBias": 0.000000, "metallic": 1.000000, "roughness": 0.020000, "ao": 1.000000, "emissiveStrength": 1.000000, "envSource": "reflectionCapture", "flags": ["useShadow"], "textures": {}},
     "ship": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 64.000000, "specStrength": 0.500000, "shadowBias": 0.001500, "metallic": 1.000000, "roughness": 1.000000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow"], "textures": {
       "albedo": "Ship_Albedo",
       "ao": "Ship_AO",
@@ -41,19 +41,18 @@
       "roughness": "watermelon_roughness"
     }}
   },
-  "camera": {"position": [5.000000,10.000000,10.000000], "target": [4.666667,9.333333,9.333333], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
+  "camera": {"position": [-0.044493,10.000000,-11.877763], "target": [0.057186,9.269040,-11.202960], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
   "lights": [
-    {"type": "directional", "position": [0.000000,0.000000,0.000000], "direction": [-0.357771,-0.894427,-0.268328], "color": [1.000000,1.000000,1.000000], "intensity": 1.000000, "range": 10.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.120000, "attQuadratic": 0.040000},
-    {"type": "point", "position": [-1.350000,7.000000,-1.350000], "direction": [0.000000,-1.000000,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 0.100000, "range": 120.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.020000, "attQuadratic": 0.004000},
-    {"type": "spot", "position": [2.000000,4.000000,2.000000], "direction": [-0.371391,-0.928477,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 8.000000, "range": 100.000000, "innerHalfAngleDeg": 22.000000, "outerHalfAngleDeg": 35.000000, "attConstant": 1.000000, "attLinear": 0.090000, "attQuadratic": 0.032000}
+    {"type": "directional", "position": [0.000000,0.000000,0.000000], "direction": [-0.357771,-0.894427,-0.268328], "color": [1.000000,1.000000,1.000000], "intensity": 0.000000, "range": 10.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.120000, "attQuadratic": 0.040000},
+    {"type": "point", "position": [-1.350000,5.100000,-1.350000], "direction": [0.000000,-1.000000,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 4.480000, "range": 120.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.020000, "attQuadratic": 0.004000},
+    {"type": "spot", "position": [2.000000,4.000000,2.000000], "direction": [-0.371391,-0.928477,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 0.000000, "range": 100.000000, "innerHalfAngleDeg": 22.000000, "outerHalfAngleDeg": 35.000000, "attConstant": 1.000000, "attLinear": 0.090000, "attQuadratic": 0.032000}
   ],
   "skybox": "Skybox",
   "nodes": [
     {"name": "Ground", "parent": -1, "visible": true, "mesh": "quad", "material": "ground", "transform": {"position": [0.000000,-0.600000,0.000000], "rotationDegrees": [-90.000000,0.000000,0.000000], "scale": [8.000000,8.000000,8.000000]}},
     {"name": "Glass", "parent": -1, "visible": true, "mesh": "quad", "material": "glass", "transform": {"position": [0.000000,2.300000,2.600000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [4.000000,4.000000,4.000000]}},
-    {"name": "Seahawk", "parent": -1, "visible": true, "mesh": "seahawk", "material": "ship", "transform": {"position": [0.000000,1.200000,0.000000], "rotationDegrees": [0.000000,180.000000,0.000000], "scale": [0.020000,0.020000,0.020000]}},
-    {"name": "MirrorSphere", "parent": -1, "visible": true, "mesh": "sphere", "material": "mirror", "transform": {"position": [0.000000,5.000000,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
-    {"name": "watermelon", "parent": -1, "visible": true, "mesh": "watermelon", "material": "watermelon", "transform": {"position": [0.000000,5.000000,-5.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [0.010000,0.010000,0.010000]}},
+    {"name": "MirrorSphere", "parent": -1, "visible": false, "mesh": "sphere", "material": "mirror", "transform": {"position": [0.000000,5.000000,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
+    {"name": "watermelon", "parent": -1, "visible": false, "mesh": "watermelon", "material": "watermelon", "transform": {"position": [0.000000,5.000000,-5.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [0.010000,0.010000,0.010000]}},
     {"name": "Cube_0_0", "parent": -1, "visible": true, "mesh": "cube", "material": "watermelon", "transform": {"position": [-2.700000,2.300000,-2.700000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
     {"name": "Cube_1_0", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [-1.350000,2.300000,-2.700000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
     {"name": "Cube_2_0", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,-2.700000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},

@@ -348,6 +348,12 @@ export namespace rhi
 		uint32_t firstInstance{ 0 };
 	};
 
+	struct CommandBindTexture2DArray
+	{
+		std::uint32_t slot{ 0 };
+		TextureHandle texture{};
+	};
+
 	using Command = std::variant<
 		CommandBeginPass,
 		CommandEndPass,
@@ -368,7 +374,8 @@ export namespace rhi
 		CommandSetConstants,
 		CommandDX12ImGuiRender,
 		CommandDrawIndexed,
-		CommandDraw>;
+		CommandDraw,
+		CommandBindTexture2DArray>;
 
 	struct CommandList
 	{
@@ -473,6 +480,10 @@ export namespace rhi
 		void DX12ImGuiRender(const void* drawData)
 		{
 			commands.emplace_back(CommandDX12ImGuiRender{ drawData });
+		}
+		void BindTexture2DArray(std::uint32_t slot, TextureHandle texture)
+		{
+			commands.emplace_back(CommandBindTexture2DArray{ slot, texture });
 		}
 	};
 

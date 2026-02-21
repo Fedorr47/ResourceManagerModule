@@ -25,6 +25,7 @@ module;
 #include <utility>
 #include <vector>
 #include <unordered_map>
+#include "assert.h"
 
 export module core:renderer_dx12;
 
@@ -65,32 +66,32 @@ export namespace rendern
 	static_assert(sizeof(InstanceData) == 64);
 
 	struct BatchKey
-{
-	const rendern::MeshRHI* mesh{};
-	// Material key (must be immutable during RenderFrame)
-	rhi::TextureDescIndex albedoDescIndex{};
-	rhi::TextureDescIndex normalDescIndex{};
-	rhi::TextureDescIndex metalnessDescIndex{};
-	rhi::TextureDescIndex roughnessDescIndex{};
-	rhi::TextureDescIndex aoDescIndex{};
-	rhi::TextureDescIndex emissiveDescIndex{};
+	{
+		const rendern::MeshRHI* mesh{};
+		// Material key (must be immutable during RenderFrame)
+		rhi::TextureDescIndex albedoDescIndex{};
+		rhi::TextureDescIndex normalDescIndex{};
+		rhi::TextureDescIndex metalnessDescIndex{};
+		rhi::TextureDescIndex roughnessDescIndex{};
+		rhi::TextureDescIndex aoDescIndex{};
+		rhi::TextureDescIndex emissiveDescIndex{};
 
-	mathUtils::Vec4 baseColor{};
-	float shadowBias{}; // texels
+		mathUtils::Vec4 baseColor{};
+		float shadowBias{}; // texels
 
-	// PBR scalars (used if corresponding texture isn't provided)
-	float metallic{};
-	float roughness{};
-	float ao{};
-	float emissiveStrength{};
+		// PBR scalars (used if corresponding texture isn't provided)
+		float metallic{};
+		float roughness{};
+		float ao{};
+		float emissiveStrength{};
 
-	// Legacy (kept for batching stability with OpenGL fallback / old materials)
-	float shininess{};
-	float specStrength{};
+		// Legacy (kept for batching stability with OpenGL fallback / old materials)
+		float shininess{};
+		float specStrength{};
 
-	std::uint32_t permBits{};
-	std::uint32_t envSource{};
-};
+		std::uint32_t permBits{};
+		std::uint32_t envSource{};
+	};
 
 	struct BatchKeyHash
 	{
@@ -188,7 +189,7 @@ export namespace rendern
 		std::array<float, 16> uViewProj{};
 		std::array<float, 16> uLightViewProj{};
 		std::array<float, 4>  uCameraAmbient{}; // xyz + ambient
-        std::array<float, 4>  uCameraForward{}; // xyz + 0
+		std::array<float, 4>  uCameraForward{}; // xyz + 0
 		std::array<float, 4>  uBaseColor{};     // fallback baseColor
 
 		// shininess, specStrength, materialShadowBiasTexels, flagsBits
@@ -324,18 +325,18 @@ export namespace rendern
 
 		void RenderFrame(rhi::IRHISwapChain& swapChain, const Scene& scene, const void* imguiDrawData)
 		{
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_00_SetupCSM.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_01_BuildInstances.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_02_ShadowPasses.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_02_ReflectionCapture.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_03_PreDepth.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_04_MainPass.inl"
-			#include "RendererImpl/DirectX12Renderer_RenderFrame_05_DebugAndPresent.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_00_SetupCSM.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_01_BuildInstances.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_02_ShadowPasses.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_02_ReflectionCapture.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_03_PreDepth.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_04_MainPass.inl"
+#include "RendererImpl/DirectX12Renderer_RenderFrame_05_DebugAndPresent.inl"
 		}
 
 		void Shutdown()
 		{
-			#include "RendererImpl/DirectX12Renderer_Shutdown.inl"
+#include "RendererImpl/DirectX12Renderer_Shutdown.inl"
 		}
 
 	private:
@@ -382,15 +383,15 @@ export namespace rendern
 
 		std::uint32_t UploadLights(const Scene& scene, const mathUtils::Vec3& camPos)
 		{
-			#include "RendererImpl/DirectX12Renderer_UploadLights.inl"
+#include "RendererImpl/DirectX12Renderer_UploadLights.inl"
 		}
 
 		void CreateResources()
 		{
-			#include "RendererImpl/DirectX12Renderer_CreateResources_00_PathsSkybox.inl"
-			#include "RendererImpl/DirectX12Renderer_CreateResources_01_MainPipelines.inl"
-			#include "RendererImpl/DirectX12Renderer_CreateResources_02_ShadowPipelines.inl"
-			#include "RendererImpl/DirectX12Renderer_CreateResources_03_DynamicBuffers.inl"
+#include "RendererImpl/DirectX12Renderer_CreateResources_00_PathsSkybox.inl"
+#include "RendererImpl/DirectX12Renderer_CreateResources_01_MainPipelines.inl"
+#include "RendererImpl/DirectX12Renderer_CreateResources_02_ShadowPipelines.inl"
+#include "RendererImpl/DirectX12Renderer_CreateResources_03_DynamicBuffers.inl"
 
 			EnsureReflectionCaptureResources();
 		}
@@ -517,6 +518,12 @@ export namespace rendern
 
 		MeshRHI skyboxMesh_{};
 		rhi::PipelineHandle psoSkybox_{};
+		// Debug: visualize a cubemap as a 3x2 atlas (swapchain pass).
+		rhi::PipelineHandle psoDebugCubeAtlas_{};
+		rhi::GraphicsState debugCubeAtlasState_{};
+		rhi::InputLayoutHandle debugCubeAtlasLayout_{};
+		rhi::BufferHandle debugCubeAtlasVB_{};
+		std::uint32_t debugCubeAtlasVBStrideBytes_{ 0 };
 		rhi::GraphicsState skyboxState_{};
 	};
 } // namespace rendern

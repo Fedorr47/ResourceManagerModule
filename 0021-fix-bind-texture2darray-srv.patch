@@ -1,0 +1,83 @@
+--- a/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device.inl
++++ b/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device.inl
+@@ -1030,7 +1030,7 @@
+                     {
+                         return srvHeap_->GetGPUDescriptorHandleForHeapStart();
+                     }
+-                    if (!it->second.hasSRV)
++                    if (!it->second.hasSRVArray)
+                     {
+                         return srvHeap_->GetGPUDescriptorHandleForHeapStart();
+                     }
+@@ -1057,7 +1057,7 @@
+                         return NullBufferSRV();
+                     }
+ 
+-                    if (!it->second.hasSRV)
++                    if (!it->second.hasSRVArray)
+                     {
+                         return NullBufferSRV();
+                     }
+@@ -1621,7 +1621,7 @@
+                                     throw std::runtime_error("DX12: BindTexture2D: texture not found in textures_ map");
+                                 }
+ 
+-                                if (!it->second.hasSRV)
++                                if (!it->second.hasSRVArray)
+                                 {
+                                     throw std::runtime_error("DX12: BindTexture2D: texture has no SRV");
+                                 }
+@@ -1842,14 +1842,14 @@
+                                 }
+ 
+                                 // Ensure an Array SRV exists for cube textures.
+-                                if (!it->second.hasSRV)
++                                if (!it->second.hasSRVArray)
+                                 {
+                                     const auto desc = it->second.resource->GetDesc();
+                                     AllocateSRV_CubeAsArray(it->second, it->second.srvFormat, desc.MipLevels);
+                                 }
+ 
+                                 TransitionTexture(cmd.texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+-                                boundTex[cmd.slot] = it->second.srvGpu;
++                                boundTex[cmd.slot] = it->second.srvGpuArray;
+                             }
+                         }
+                         else
+@@ -1977,6 +1977,12 @@
+             UINT srvIndex{ 0 };
+             D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
+             D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
++
++            // Optional SRV view for cube textures exposed as a 2D array (6 slices).
++            bool hasSRVArray{ false };
++            UINT srvIndexArray{ 0 };
++            D3D12_CPU_DESCRIPTOR_HANDLE srvCpuArray{};
++            D3D12_GPU_DESCRIPTOR_HANDLE srvGpuArray{};
+ 
+             // Optional SRV for cube textures viewed as Texture2DArray (ArraySize=6).
+             // Used for point-light distance cubemaps to avoid TextureCube face-selection seams.
+@@ -2795,7 +2801,7 @@
+ 
+         void AllocateSRV_CubeAsArray(TextureEntry& entry, DXGI_FORMAT fmt, UINT mipLevels)
+         {
+-            if (entry.hasSRV)
++            if (entry.hasSRVArray)
+                 return;
+ 
+             if (entry.type != TextureEntry::Type::Cube)
+@@ -2823,10 +2829,10 @@
+ 
+             NativeDevice()->CreateShaderResourceView(entry.resource.Get(), &srvDesc, cpu);
+ 
+-            entry.hasSRV = true;
+-            entry.srvIndex = idx;
+-            entry.srvCpu = cpu;
+-            entry.srvGpu = gpu;
++            entry.hasSRVArray = true;
++            entry.srvIndexArray = idx;
++            entry.srvCpuArray = cpu;
++            entry.srvGpuArray = gpu;
+         }
+ 
+ #if CORE_DX12_HAS_DXC

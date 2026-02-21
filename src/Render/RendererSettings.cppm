@@ -12,7 +12,7 @@ export namespace rendern
 	{
 		float dirShadowBaseBiasTexels{ 0.6f };
 		float spotShadowBaseBiasTexels{ 1.0f };
-		float pointShadowBaseBiasTexels{ 3.0f };
+		float pointShadowBaseBiasTexels{ 0.4f };
 		float shadowSlopeScaleTexels{ 2.0f };
 
 		// Directional shadow cascade settings (DX12-only usage; safe to ignore in other backends)
@@ -37,6 +37,9 @@ export namespace rendern
 		float debugLightGizmoScale = 1.0f;
 		float lightGizmoArrowLength{ 1.5f };
 		float lightGizmoArrowThickness{ 0.05f };
+
+		bool ShowCubeAtlas{ false }; // debug: visualize point shadow cubemap atlas on the swapchain (DX12-only)
+		float debugCubeAtlasIndex{ 0.0f };
 
 		std::filesystem::path modelPath = std::filesystem::path("models") / "cube.obj";
 	};

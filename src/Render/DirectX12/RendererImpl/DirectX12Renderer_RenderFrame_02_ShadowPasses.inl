@@ -127,12 +127,12 @@
 					// Point shadows use a cubemap R32_FLOAT distance map (color) + depth for rasterization.
 					// Prefer layered one-pass (SV_RenderTargetArrayIndex). If unavailable, try VI (SV_ViewID).
 					// Otherwise we fall back to 6 separate passes (face-by-face).
-					const bool useLayered =
+					bool useLayered =
 						(!disablePointShadowLayered_) &&
 						static_cast<bool>(psoPointShadowLayered_) &&
 						device_.SupportsVPAndRTArrayIndexFromAnyShader();
 
-					const bool useVI = (!disablePointShadowVI_) && static_cast<bool>(psoPointShadowVI_);
+					bool useVI = (!disablePointShadowVI_) && static_cast<bool>(psoPointShadowVI_);
 
 					const rhi::Extent2D cubeExtent{ 2048, 2048 };
 					const auto cube = graph.CreateTexture(renderGraph::RGTextureDesc{
@@ -186,7 +186,8 @@
 							return mathUtils::LookAtRH(pos, pos + dirs[face], ups[face]);
 						};
 
-					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(90.0f), 1.0f, 0.1f, rec.range);
+					const float pointNearZ = 0.01f;
+					const mathUtils::Mat4 proj90 = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(90.0f), 1.0f, pointNearZ, rec.range);
 
 					if (useLayered)
 					{
@@ -397,14 +398,14 @@
 					sd.spotVPRows[spotShadowIndex * 4 + 2] = vp[2];
 					sd.spotVPRows[spotShadowIndex * 4 + 3] = vp[3];
 
-					sd.spotInfo[spotShadowIndex] = mathUtils::Vec4(AsFloatBits(spotShadow.lightIndex), 0, settings_.spotShadowBaseBiasTexels, 0);
+					sd.spotInfo[spotShadowIndex] = mathUtils::Vec4(AsFloatBits(spotShadow.lightIndex), 0, 0.0f, 0);
 				}
 
 				for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
 				{
 					const auto& pointShadow = pointShadows[pointShadowIndex];
 					sd.pointPosRange[pointShadowIndex] = mathUtils::Vec4(pointShadow.pos, pointShadow.range);
-					sd.pointInfo[pointShadowIndex] = mathUtils::Vec4(AsFloatBits(pointShadow.lightIndex), 0, settings_.pointShadowBaseBiasTexels, 0);
+					sd.pointInfo[pointShadowIndex] = mathUtils::Vec4(AsFloatBits(pointShadow.lightIndex), 0, 0.0f, 0);
 				}
 
 				device_.UpdateBuffer(shadowDataBuffer_, std::as_bytes(std::span{ &sd, 1 }));

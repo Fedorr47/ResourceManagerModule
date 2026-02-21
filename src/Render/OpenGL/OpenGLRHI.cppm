@@ -1288,7 +1288,7 @@ void DestroyFramebuffer(FrameBufferHandle framebuffer) noexcept override
 			// Stage-1: OpenGL backend ignores structured-buffer SRVs.
 		}
 
-void ExecuteOnce(const CommandSetUniformInt& cmd)
+		void ExecuteOnce(const CommandSetUniformInt& cmd)
 		{
 			SetUniformIntImpl(cmd.name, cmd.value);
 		}
@@ -1351,6 +1351,12 @@ void ExecuteOnce(const CommandSetUniformInt& cmd)
 			}
 
 			glDrawArrays(currentTopology_, static_cast<GLint>(cmd.firstVertex), static_cast<GLsizei>(cmd.vertexCount));
+		}
+
+		void ExecuteOnce(const CommandBindTexture2DArray& cmd)
+		{
+			glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(cmd.slot));
+			glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(cmd.texture.id));
 		}
 
 		//---------------------------------------------------------------------//

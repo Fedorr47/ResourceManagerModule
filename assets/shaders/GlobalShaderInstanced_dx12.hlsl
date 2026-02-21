@@ -1,10 +1,7 @@
-// GlobalShaderInstanced_dx12.hlsl
-// NOTE: Save as UTF-8 without BOM to keep FXC happy.
-
-// Samplers (must match root signature)
 SamplerState gLinear : register(s0);
 SamplerComparisonState gShadowCmp : register(s1);
 SamplerState gPointClamp : register(s2);
+SamplerState gLinearClamp : register(s3);
 
 // Textures / SRVs (must match root signature tables per register)
 Texture2D gAlbedo : register(t0);
@@ -29,10 +26,10 @@ Texture2D<float> gSpotShadow2 : register(t5);
 Texture2D<float> gSpotShadow3 : register(t6);
 
 // Point distance cubemaps (normalized distance)
-TextureCube<float> gPointShadow0 : register(t7);
-TextureCube<float> gPointShadow1 : register(t8);
-TextureCube<float> gPointShadow2 : register(t9);
-TextureCube<float> gPointShadow3 : register(t10);
+Texture2DArray<float> gPointShadow0 : register(t7);
+Texture2DArray<float> gPointShadow1 : register(t8);
+Texture2DArray<float> gPointShadow2 : register(t9);
+Texture2DArray<float> gPointShadow3 : register(t10);
 
 // Shadow metadata buffer (one element)
 struct ShadowDataSB
@@ -95,6 +92,10 @@ static const uint FLAG_USE_ROUGH_TEX = 1u << 4;
 static const uint FLAG_USE_AO_TEX = 1u << 5;
 static const uint FLAG_USE_EMISSIVE_TEX = 1u << 6;
 static const uint FLAG_USE_ENV = 1u << 7;
+static const uint FLAG_ENV_FLIP_Z = 1u << 8;
+// When enabled, treat gEnv as an unfiltered dynamic cubemap: sample mip0 only.
+// This avoids seams/garbage when the cubemap has multiple mips but only mip0 is rendered.
+static const uint FLAG_ENV_FORCE_MIP0 = 1u << 9;
 
 static const uint kMaxSpotShadows = 4;
 static const uint kMaxPointShadows = 4;
@@ -470,67 +471,153 @@ float SpotShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTe
     return Shadow2D(gSpotShadow3, clip, biasTexels);
 }
 
-float ShadowPoint(TextureCube<float> distCube,
+// ---------------- Point shadow sampling without TextureCube face selection ----------------
+// We bind point shadows as Texture2DArray[6] (cubemap faces), and do explicit dir->face+UV mapping.
+
+struct CubeFaceUV
+{
+    uint face; // 0..5 : +X,-X,+Y,-Y,+Z,-Z
+    float2 uv; // [0..1]
+};
+
+CubeFaceUV CubeDirToFaceUV(float3 dir)
+{
+    float3 a = abs(dir);
+    CubeFaceUV o;
+    float2 st; // [-1..1], +Y up
+
+    if (a.x >= a.y && a.x >= a.z)
+    {
+        float inv = 1.0f / max(a.x, 1e-6f);
+        if (dir.x > 0.0f)
+        {
+            o.face = 0u; // +X
+            // Inverse of DebugCubeAtlas DirFromFaceST(+X): dir=(1, st.y, -st.x)
+            st = float2(-dir.z, dir.y) * inv;
+        }
+        else
+        {
+            o.face = 1u; // -X
+            // Inverse of DebugCubeAtlas DirFromFaceST(-X): dir=(-1, st.y, st.x)
+            st = float2(dir.z, dir.y) * inv;
+        }
+    }
+    else if (a.y >= a.x && a.y >= a.z)
+    {
+        float inv = 1.0f / max(a.y, 1e-6f);
+        if (dir.y > 0.0f)
+        {
+            o.face = 2u; // +Y
+            // Inverse of DebugCubeAtlas DirFromFaceST(+Y): dir=(st.x, 1, -st.y)
+            st = float2(dir.x, -dir.z) * inv;
+        }
+        else
+        {
+            o.face = 3u; // -Y
+            // Inverse of DebugCubeAtlas DirFromFaceST(-Y): dir=(st.x, -1, st.y)
+            st = float2(dir.x, dir.z) * inv;
+        }
+    }
+    else
+    {
+        float inv = 1.0f / max(a.z, 1e-6f);
+        if (dir.z > 0.0f)
+        {
+            o.face = 4u; // +Z
+            // Inverse of DebugCubeAtlas DirFromFaceST(+Z): dir=(st.x, st.y, 1)
+            st = float2(dir.x, dir.y) * inv;
+        }
+        else
+        {
+            o.face = 5u; // -Z
+            // Inverse of DebugCubeAtlas DirFromFaceST(-Z): dir=(-st.x, st.y, -1)
+            st = float2(-dir.x, dir.y) * inv;
+        }
+    }
+
+    // st.y is +up; texture UV is +down in D3D. Also flip X to match FaceView() basis.
+    o.uv = float2(-st.x, -st.y) * 0.5f + 0.5f;
+    return o;
+}
+
+float SamplePointShadow(Texture2DArray<float> distArr, float3 dir)
+{
+    CubeFaceUV fu = CubeDirToFaceUV(dir);
+
+    // If we are outside the face, treat as "far" (fully lit).
+    if (fu.uv.x < 0.0f || fu.uv.x > 1.0f || fu.uv.y < 0.0f || fu.uv.y > 1.0f)
+        return 1.0f;
+
+    uint w, h, layers, mips;
+    distArr.GetDimensions(0, w, h, layers, mips);
+
+    // Map [0..1] -> [0..w-1], [0..h-1]
+    int2 xy = int2(fu.uv * float2((float) w, (float) h));
+    xy = clamp(xy, int2(0, 0), int2((int) w - 1, (int) h - 1));
+
+    return distArr.Load(int4(xy, (int) fu.face, 0)).r;
+}
+
+float ShadowPoint(Texture2DArray<float> distArr,
                   float3 lightPos, float range,
                   float3 worldPos, float biasTexels)
 {
     float3 v = worldPos - lightPos;
     float d = length(v);
+    
+    if (d >= range)
+        return 1.0f;
+
     float3 dir = v / max(d, 1e-6f);
 
     float nd = saturate(d / max(range, 1e-3f));
 
-    uint w, h, levels;
-    distCube.GetDimensions(0, w, h, levels);
+    uint w, h, layers, levels;
+    distArr.GetDimensions(0, w, h, layers, levels);
 
-    // Bias is expressed in "shadow texels" by the CPU. Convert to normalized [0..1] distance.
+    const float invRes = 1.0f / float(max(w, h));
+    const float biasNorm = biasTexels * invRes;
+    const float compare = max(nd - biasNorm, 0.0f);
+    
+    const float stored = SamplePointShadow(distArr, dir);
+    return (compare <= stored) ? 1.0f : 0.0f;
+}
+
+float ShadowPoint_SimpleSeam(Texture2DArray<float> distArr,
+                             float3 lightPos, float range,
+                             float3 worldPos,
+                             float biasTexels)
+{
+    float3 v = worldPos - lightPos;
+    float d = length(v);
+    if (d >= range)
+        return 1.0f;
+
+    float3 dir = v / max(d, 1e-6f);
+    float nd = d / max(range, 1e-6f);
+
+    uint w, h, layers, mips;
+    distArr.GetDimensions(0, w, h, layers, mips);
+
     const float invRes = 1.0f / float(max(w, h));
     const float biasNorm = biasTexels * invRes;
 
-    const float compare = nd - biasNorm;
+    float stored = SamplePointShadow(distArr, dir);
 
-    // Manual PCF for distance-cubemap shadows (R32_FLOAT distance).
-    float3 up = (abs(dir.y) < 0.99f) ? float3(0, 1, 0) : float3(1, 0, 0);
-    float3 T = normalize(cross(up, dir));
-    float3 B = cross(dir, T);
+    const float compare = max(nd - biasNorm, 0.0f);
 
-    // ~1-2 texels in "face space".
-    const float radius = 1.5f * invRes;
-
-    const float2 taps[8] =
-    {
-        float2(-0.326f, -0.406f), float2(-0.840f, -0.074f),
-        float2(-0.696f, 0.457f), float2(-0.203f, 0.621f),
-        float2(0.962f, -0.195f), float2(0.473f, -0.480f),
-        float2(0.519f, 0.767f), float2(0.185f, -0.893f)
-    };
-
-    float lit = 0.0f;
-    {
-        float stored = distCube.SampleLevel(gPointClamp, dir, 0).r;
-        lit += (compare <= stored) ? 1.0f : 0.0f;
-    }
-
-    [unroll]
-    for (int i = 0; i < 8; ++i)
-    {
-        float3 ddir = normalize(dir + (T * taps[i].x + B * taps[i].y) * radius);
-        float stored = distCube.SampleLevel(gPointClamp, ddir, 0).r;
-        lit += (compare <= stored) ? 1.0f : 0.0f;
-    }
-
-    return lit / 9.0f;
+    return (compare <= stored) ? 1.0f : 0.0f;
 }
 
 // Wrapper matching CPU call-site signature: (slot, worldPos, materialBiasTexels, baseBiasTexels, slopeScaleTexels)
 // NOTE: slopeScaleTexels is currently ignored here; kept for ABI stability with C++.
-float SpotShadowFactor(uint slot, float3 worldPos, float materialBiasTexels, float baseBiasTexels, float slopeScaleTexels)
+float SpotShadowFactor(uint slot, float3 worldPos, float NdotL, float materialBiasTexels, float baseBiasTexels, float slopeScaleTexels)
 {
     if (slot >= 4)
         return 1.0f;
     ShadowDataSB sd = gShadowData[0];
     const float extraBiasTexels = sd.spotInfo[slot].z;
-    const float biasTexels = materialBiasTexels + baseBiasTexels + extraBiasTexels;
+    const float biasTexels = ComputeBiasTexels(NdotL, baseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
     return SpotShadowFactor(slot, sd, worldPos, biasTexels);
 }
 
@@ -543,23 +630,23 @@ float PointShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasT
     float range = sd.pointPosRange[slot].w;
 
     if (slot == 0)
-        return ShadowPoint(gPointShadow0, lp, range, worldPos, biasTexels);
+        return ShadowPoint_SimpleSeam(gPointShadow0, lp, range, worldPos, biasTexels);
     if (slot == 1)
-        return ShadowPoint(gPointShadow1, lp, range, worldPos, biasTexels);
+        return ShadowPoint_SimpleSeam(gPointShadow1, lp, range, worldPos, biasTexels);
     if (slot == 2)
-        return ShadowPoint(gPointShadow2, lp, range, worldPos, biasTexels);
-    return ShadowPoint(gPointShadow3, lp, range, worldPos, biasTexels);
+        return ShadowPoint_SimpleSeam(gPointShadow2, lp, range, worldPos, biasTexels);
+    return ShadowPoint_SimpleSeam(gPointShadow3, lp, range, worldPos, biasTexels);
 }
 
 // Wrapper matching CPU call-site signature: (slot, worldPos, materialBiasTexels, baseBiasTexels, slopeScaleTexels)
 // NOTE: slopeScaleTexels is currently ignored here; kept for ABI stability with C++.
-float PointShadowFactor(uint slot, float3 worldPos, float materialBiasTexels, float baseBiasTexels, float slopeScaleTexels)
+float PointShadowFactor(uint slot, float3 worldPos, float NdotL, float materialBiasTexels, float baseBiasTexels, float slopeScaleTexels)
 {
     if (slot >= 4)
         return 1.0f;
     ShadowDataSB sd = gShadowData[0];
     const float extraBiasTexels = sd.pointInfo[slot].z;
-    const float biasTexels = materialBiasTexels + baseBiasTexels + extraBiasTexels;
+    const float biasTexels = ComputeBiasTexels(NdotL, baseBiasTexels, slopeScaleTexels, materialBiasTexels, extraBiasTexels);
     return PointShadowFactor(slot, sd, worldPos, biasTexels);
 }
 
@@ -595,6 +682,8 @@ float4 PSMain(VSOut IN) : SV_Target0
     const bool useAOTex = (flags & FLAG_USE_AO_TEX) != 0;
     const bool useEmissiveTex = (flags & FLAG_USE_EMISSIVE_TEX) != 0;
     const bool useEnv = (flags & FLAG_USE_ENV) != 0;
+	const bool envFlipZ = (flags & FLAG_ENV_FLIP_Z) != 0;
+	const bool envForceMip0 = (flags & FLAG_ENV_FORCE_MIP0) != 0;
 
     float3 baseColor = uBaseColor.rgb;
     float alphaOut = uBaseColor.a;
@@ -657,20 +746,30 @@ float4 PSMain(VSOut IN) : SV_Target0
         {
             const float3 toLight = Ld.p0.xyz - IN.worldPos;
             const float dist = length(toLight);
-            if (dist > Ld.p2.w)
+            // Soft range cutoff (prevents a hard circle boundary).
+            const float range = max(Ld.p2.w, 1e-3f);
+            const float fade = max(range * 0.10f, 0.05f);
+            float rangeFade = saturate((range - dist) / fade);
+            rangeFade = rangeFade * rangeFade;
+            if (rangeFade <= 0.0f)
                 continue;
 
             L = toLight / max(dist, 1e-6f);
 
             const float attLin = Ld.p3.z;
             const float attQuad = Ld.p3.w;
-            attenuation = 1.0f / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
+            attenuation = rangeFade / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
         }
         else if (type == LIGHT_SPOT)
         {
             const float3 toLight = Ld.p0.xyz - IN.worldPos;
             const float dist = length(toLight);
-            if (dist > Ld.p2.w)
+            // Soft range cutoff (prevents a hard circle boundary).
+            const float range = max(Ld.p2.w, 1e-3f);
+            const float fade = max(range * 0.10f, 0.05f);
+            float rangeFade = saturate((range - dist) / fade);
+            rangeFade = rangeFade * rangeFade;
+            if (rangeFade <= 0.0f)
                 continue;
 
             L = toLight / max(dist, 1e-6f);
@@ -685,7 +784,7 @@ float4 PSMain(VSOut IN) : SV_Target0
 
             const float attLin = Ld.p3.z;
             const float attQuad = Ld.p3.w;
-            attenuation = spotAtt / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
+            attenuation = (spotAtt * rangeFade) / max(1.0f + attLin * dist + attQuad * dist * dist, 1e-6f);
         }
         else
         {
@@ -706,13 +805,15 @@ float4 PSMain(VSOut IN) : SV_Target0
             }
             else if (type == LIGHT_POINT)
             {
-                if (pointShadowCount > 0)
-                    shadowFactor = PointShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.z, uShadowBias.w);
+                int slot = FindPointShadowSlot((uint) i, (uint) pointShadowCount);
+                if (slot >= 0)
+                    shadowFactor = PointShadowFactor((uint) slot, IN.worldPos, NdotL, uMaterialFlags.z, uShadowBias.z, uShadowBias.w);
             }
             else // SPOT
             {
-                if (spotShadowCount > 0)
-                    shadowFactor = SpotShadowFactor(0, IN.worldPos, uMaterialFlags.z, uShadowBias.y, uShadowBias.w);
+                int slot = FindSpotShadowSlot((uint) i, (uint) spotShadowCount);
+                if (slot >= 0)
+                    shadowFactor = SpotShadowFactor((uint) slot, IN.worldPos, NdotL, uMaterialFlags.z, uShadowBias.y, uShadowBias.w);
             }
         }
 
@@ -746,14 +847,33 @@ float4 PSMain(VSOut IN) : SV_Target0
         uint w, h, levels;
         gEnv.GetDimensions(0, w, h, levels);
         float mipMax = (levels > 0u) ? (float) (levels - 1u) : 0.0f;
+        
+        // Dynamic reflection captures typically render only mip0. If the texture was created with
+        // a full mip chain, sampling higher mips will read uninitialized data and show face seams.
+		if (envForceMip0)
+			mipMax = 0.0f;
 
         const float3 R = reflect(-V, N);
+        
+        // NOTE: Skybox cubemaps may use a different convention (see Skybox_dx12.hlsl which flips Z when sampling).
+        // To keep IBL consistent with the visible skybox, optionally flip Z for env sampling.
+		float3 envN = N;
+		float3 envR = R;
+		if (envFlipZ)
+		{
+			envN.z = -envN.z;
+			envR.z = -envR.z;
+		}
 
-        // "Diffuse irradiance" approximation: very blurry env sample.
-        const float3 envDiffuse = gEnv.SampleLevel(gLinear, N, mipMax).rgb;
-
-        // Specular IBL approximation: env prefiltered by mip level.
-        const float3 envSpec = gEnv.SampleLevel(gLinear, R, roughness * mipMax).rgb;
+        // For dynamic captures (mip0 only), keep both diffuse and specular on mip0.
+		const float lodDiffuse = envForceMip0 ? 0.0f : mipMax;
+		const float lodSpec = envForceMip0 ? 0.0f : (roughness * mipMax);
+        
+        // "Diffuse irradiance" approximation: very blurry env sample (or mip0 for dynamic captures).
+        const float3 envDiffuse = gEnv.SampleLevel(gLinearClamp, envN, lodDiffuse).rgb;
+        
+        // Specular IBL approximation: env prefiltered by mip level (or mip0 for dynamic captures).
+        const float3 envSpec = gEnv.SampleLevel(gLinearClamp, envR, lodSpec).rgb;
 
         const float3 F = FresnelSchlick(NdotV, F0);
         const float3 kS = F;

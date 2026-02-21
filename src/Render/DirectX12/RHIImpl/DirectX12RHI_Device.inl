@@ -14,7 +14,6 @@
     
         D3D12_PIPELINE_STATE_SUBOBJECT_TYPE type{ Type };
         T data{};
-        std::array<std::uint8_t, kPadSize> _pad{};
     };
 
     class DX12Device final : public IRHIDevice
@@ -113,7 +112,7 @@
             {
                 D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
                 heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV;
-                heapDesc.NumDescriptors = 4096;
+                heapDesc.NumDescriptors = kSrvHeapNumDescriptors;
                 heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_SHADER_VISIBLE;
                 ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&srvHeap_)),
                     "DX12: Create SRV heap failed");
@@ -176,6 +175,12 @@
                     fr.cbMapped = nullptr;
                 }
 
+                if (fr.bufUpload)
+                {
+                    fr.bufUpload->Unmap(0, nullptr);
+                    fr.bufMapped = nullptr;
+                }
+
                 fr.deferredResources.clear();
                 fr.deferredFreeSrv.clear();
                 fr.deferredFreeRtv.clear();
@@ -201,9 +206,41 @@
 
             it->second.resource.Reset();
             it->second.resource.Attach(newRes); // takes ownership (AddRef already implied by Attach contract)
-            it->second.hasSRV = false;
 
-            AllocateSRV(it->second, fmt, mipLevels);
+            // Keep the same descriptor slot if we already had an SRV; just rewrite it.
+            if (it->second.hasSRV && it->second.srvIndex != 0)
+            {
+                D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+                cpu.ptr += static_cast<SIZE_T>(it->second.srvIndex) * srvInc_;
+
+                D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+                srvDesc.Format = fmt;
+                srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+                srvDesc.ViewDimension = (it->second.type == TextureEntry::Type::Cube)
+                    ? D3D12_SRV_DIMENSION_TEXTURECUBE
+                    : D3D12_SRV_DIMENSION_TEXTURE2D;
+
+                if (it->second.type == TextureEntry::Type::Cube)
+                {
+                    srvDesc.TextureCube.MostDetailedMip = 0;
+                    srvDesc.TextureCube.MipLevels = mipLevels;
+                    srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
+                }
+                else
+                {
+                    srvDesc.Texture2D.MostDetailedMip = 0;
+                    srvDesc.Texture2D.MipLevels = mipLevels;
+                    srvDesc.Texture2D.PlaneSlice = 0;
+                    srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+                }
+
+                NativeDevice()->CreateShaderResourceView(it->second.resource.Get(), &srvDesc, cpu);
+            }
+            else
+            {
+                it->second.hasSRV = false;
+                AllocateSRV(it->second, fmt, mipLevels);
+            }
         } /// DX12Device
 
         TextureHandle RegisterSampledTexture(ID3D12Resource* res, DXGI_FORMAT fmt, UINT mipLevels)
@@ -635,7 +672,11 @@
             {
                 CurrentFrame().deferredFreeSrv.push_back(entry.srvIndex);
             }
-
+            // If we also created a cube-as-array SRV, recycle it too.
+            if (entry.hasSRVArray && entry.srvIndexArray != 0)
+            {
+                CurrentFrame().deferredFreeSrv.push_back(entry.srvIndexArray);
+            }
             if (entry.hasRTV)
             {
                 CurrentFrame().deferredFreeRtv.push_back(entry.rtvIndex);
@@ -823,6 +864,18 @@
                     freeSrv_.push_back(entry.srvIndex);
                 }
             }
+
+            if (entry.hasSRVArray && entry.srvIndexArray != 0)
+            {
+                if (hasSubmitted_)
+                {
+                    CurrentFrame().deferredFreeSrv.push_back(entry.srvIndexArray);
+                }
+                else
+                {
+                    freeSrv_.push_back(entry.srvIndexArray);
+                }
+            }
         }
 
         // ---------------- Input layouts ----------------
@@ -1006,7 +1059,7 @@
 
             auto ResolveTextureHandleFromDesc = [&](TextureDescIndex idx) -> TextureHandle
                 {
-                    if (idx == 0) // 0 = null SRV (как в рендерере)
+                    if (idx == 0) // 0 = null SRV
                     {
                         return {};
                     }
@@ -1446,82 +1499,82 @@
 
                                     auto& te = it->second;
 
-if (fb.colorCubeAllFaces)
-{
-    if (!te.hasRTVAllFaces)
-    {
-        throw std::runtime_error("DX12: CommandBeginPass: cubemap color texture has no RTV (all faces)");
-    }
-
-    Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    rtvs[0] = te.rtvAllFaces;
-    numRT = 1;
-    curRTVFormats[0] = te.rtvFormat;
-}
-else if (fb.colorCubeFace != 0xFFFFFFFFu)
-{
-    if (!te.hasRTVFaces)
-    {
-        throw std::runtime_error("DX12: CommandBeginPass: cubemap color texture has no RTV faces");
-    }
-    if (fb.colorCubeFace >= 6)
-    {
-        throw std::runtime_error("DX12: CommandBeginPass: cubemap face index out of range");
-    }
-
-    Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    rtvs[0] = te.rtvFaces[fb.colorCubeFace];
-    numRT = 1;
-    curRTVFormats[0] = te.rtvFormat;
-}
-else
-{
-    if (!te.hasRTV)
-    {
-        throw std::runtime_error("DX12: CommandBeginPass: color texture has no RTV");
-    }
-
-    Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
-
-    rtvs[0] = te.rtv;
-    numRT = 1;
-    curRTVFormats[0] = te.rtvFormat;
-}
-                                }
-                                // Depth
-                                if (fb.depth)
-                                {
-                                    auto it = textures_.find(fb.depth.id);
-                                    if (it == textures_.end())
+                                    if (fb.colorCubeAllFaces)
                                     {
-                                        throw std::runtime_error("DX12: CommandBeginPass: framebuffer depth texture not found");
+                                        if (!te.hasRTVAllFaces)
+                                        {
+                                            throw std::runtime_error("DX12: CommandBeginPass: cubemap color texture has no RTV (all faces)");
+                                        }
+                                    
+                                        Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                                    
+                                        rtvs[0] = te.rtvAllFaces;
+                                        numRT = 1;
+                                        curRTVFormats[0] = te.rtvFormat;
                                     }
-
-auto& te = it->second;
-
-if (fb.colorCubeAllFaces && te.hasDSVAllFaces)
-{
-    Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-
-    dsv = te.dsvAllFaces;
-    hasDSV = true;
-    curDSVFormat = te.dsvFormat;
-}
-else
-{
-    if (!te.hasDSV)
-    {
-        throw std::runtime_error("DX12: CommandBeginPass: depth texture has no DSV");
-    }
-
-    Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
-
-    dsv = te.dsv;
-    hasDSV = true;
-    curDSVFormat = te.dsvFormat;
-}
+                                    else if (fb.colorCubeFace != 0xFFFFFFFFu)
+                                    {
+                                        if (!te.hasRTVFaces)
+                                        {
+                                            throw std::runtime_error("DX12: CommandBeginPass: cubemap color texture has no RTV faces");
+                                        }
+                                        if (fb.colorCubeFace >= 6)
+                                        {
+                                            throw std::runtime_error("DX12: CommandBeginPass: cubemap face index out of range");
+                                        }
+                                    
+                                        Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                                    
+                                        rtvs[0] = te.rtvFaces[fb.colorCubeFace];
+                                        numRT = 1;
+                                        curRTVFormats[0] = te.rtvFormat;
+                                    }
+                                    else
+                                    {
+                                        if (!te.hasRTV)
+                                        {
+                                            throw std::runtime_error("DX12: CommandBeginPass: color texture has no RTV");
+                                        }
+                                    
+                                        Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_RENDER_TARGET);
+                                    
+                                        rtvs[0] = te.rtv;
+                                        numRT = 1;
+                                        curRTVFormats[0] = te.rtvFormat;
+                                    }
+                                                                    }
+                                                                    // Depth
+                                                                    if (fb.depth)
+                                                                    {
+                                                                        auto it = textures_.find(fb.depth.id);
+                                                                        if (it == textures_.end())
+                                                                        {
+                                                                            throw std::runtime_error("DX12: CommandBeginPass: framebuffer depth texture not found");
+                                                                        }
+                                    
+                                    auto& te = it->second;
+                                    
+                                    if (fb.colorCubeAllFaces && te.hasDSVAllFaces)
+                                    {
+                                        Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+                                    
+                                        dsv = te.dsvAllFaces;
+                                        hasDSV = true;
+                                        curDSVFormat = te.dsvFormat;
+                                    }
+                                    else
+                                    {
+                                        if (!te.hasDSV)
+                                        {
+                                            throw std::runtime_error("DX12: CommandBeginPass: depth texture has no DSV");
+                                        }
+                                    
+                                        Barrier(te.resource.Get(), te.state, D3D12_RESOURCE_STATE_DEPTH_WRITE);
+                                    
+                                        dsv = te.dsv;
+                                        hasDSV = true;
+                                        curDSVFormat = te.dsvFormat;
+                                    }
                                 }
 
                                 curPassIsSwapChain = false;
@@ -1831,6 +1884,27 @@ else
 
                             ImGui_ImplDX12_RenderDrawData(reinterpret_cast<ImDrawData*>(const_cast<void*>(cmd.drawData)), cmdList_.Get());
                         }
+                        else if constexpr (std::is_same_v<T, CommandBindTexture2DArray>)
+                        {
+                            if (cmd.slot < boundTex.size())
+                            {
+                                auto it = textures_.find(cmd.texture.id);
+                                if (it == textures_.end())
+                                {
+                                    throw std::runtime_error("DX12: BindTexture2DArray: texture not found in textures_ map");
+                                }
+
+                                // Ensure an Array SRV exists for cube textures.
+                                if (!it->second.hasSRVArray)
+                                {
+                                    const auto desc = it->second.resource->GetDesc();
+                                    AllocateSRV_CubeAsArray(it->second, it->second.srvFormat, desc.MipLevels);
+                                }
+
+                                TransitionTexture(cmd.texture, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                boundTex[cmd.slot] = it->second.srvGpuArray;
+                            }
+                        }
                         else
                         {
                             // other commands ignored
@@ -1956,6 +2030,12 @@ else
             UINT srvIndex{ 0 };
             D3D12_CPU_DESCRIPTOR_HANDLE srvCpu{};
             D3D12_GPU_DESCRIPTOR_HANDLE srvGpu{};
+
+            // Optional SRV view for cube textures exposed as a 2D array (6 slices).
+            bool hasSRVArray{ false };
+            UINT srvIndexArray{ 0 };
+            D3D12_CPU_DESCRIPTOR_HANDLE srvCpuArray{};
+            D3D12_GPU_DESCRIPTOR_HANDLE srvGpuArray{};
         };
 
         struct InputLayoutEntry
@@ -2031,6 +2111,12 @@ else
             bool hasDSVAllFaces{ false };
             UINT dsvIndexAllFaces{ 0 };
             D3D12_CPU_DESCRIPTOR_HANDLE dsvAllFaces{};
+
+            // Optional SRV view for cube textures exposed as a 2D array (6 slices).
+            bool hasSRVArray{ false };
+            UINT srvIndexArray{ 0 };
+            D3D12_CPU_DESCRIPTOR_HANDLE srvCpuArray{};
+            D3D12_GPU_DESCRIPTOR_HANDLE srvGpuArray{};
         };
 
 
@@ -2050,6 +2136,7 @@ else
         static constexpr UINT kPerFrameCBUploadBytes = 512u * 1024u;
         static constexpr UINT kPerFrameBufUploadBytes = 8u * 1024u * 1024u; // 8 MB per frame buffer upload ring
         static constexpr UINT kMaxSRVSlots = 20; // t0..t19 (room for PBR maps + env)
+        static constexpr UINT kSrvHeapNumDescriptors = 16384u; // CBV/SRV/UAV shader-visible heap size
 
         struct FrameResource
         {
@@ -2321,7 +2408,8 @@ else
 
             //  s0 - linear wrap
             //  s1 - comparison sampler for shadow maps (clamp)
-            //  s2 - point clamp (used by point shadows / env sampling)
+            //  s2 - point clamp (used by point shadows)
+            //  s3 - linear clamp (used by skybox/env cubemaps)
             std::array<D3D12_DESCRIPTOR_RANGE, kMaxSRVSlots> ranges{};
             for (UINT i = 0; i < kMaxSRVSlots; ++i)
             {
@@ -2349,7 +2437,7 @@ else
                 rootParams[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
             }
 
-            D3D12_STATIC_SAMPLER_DESC samplers[3]{};
+            D3D12_STATIC_SAMPLER_DESC samplers[4]{};
 
             auto MakeStaticSampler =
                 [](UINT reg,
@@ -2389,8 +2477,8 @@ else
             // s1: shadow comparison sampler (clamp)
             samplers[1] = MakeStaticSampler(
                 1,
-		// Point filter + explicit PCF in shader: keeps contact edges crisp and avoids "mushy" shadows.
-		D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT,
+		        // Point filter + explicit PCF in shader: keeps contact edges crisp and avoids "mushy" shadows.
+		        D3D12_FILTER_COMPARISON_MIN_MAG_MIP_POINT,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
                 D3D12_TEXTURE_ADDRESS_MODE_BORDER,
@@ -2401,6 +2489,16 @@ else
             samplers[2] = MakeStaticSampler(
                 2,
                 D3D12_FILTER_MIN_MAG_MIP_POINT,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+                D3D12_TEXTURE_ADDRESS_MODE_BORDER,
+                D3D12_COMPARISON_FUNC_ALWAYS,
+                D3D12_STATIC_BORDER_COLOR_OPAQUE_WHITE);
+
+            // s3: linear clamp (cubemaps: skybox / IBL env)
+            samplers[3] = MakeStaticSampler(
+                3,
+                D3D12_FILTER_MIN_MAG_MIP_LINEAR,
                 D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                 D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
                 D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
@@ -2410,7 +2508,7 @@ else
             D3D12_ROOT_SIGNATURE_DESC rootSigDesc{};
             rootSigDesc.NumParameters = static_cast<UINT>(rootParams.size());
             rootSigDesc.pParameters = rootParams.data();
-            rootSigDesc.NumStaticSamplers = 3;
+            rootSigDesc.NumStaticSamplers = 4;
             rootSigDesc.pStaticSamplers = samplers;
             rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
 
@@ -2658,7 +2756,7 @@ else
                 idx = nextSrvIndex_++;
             }
 
-            if (idx >= 4096u)
+            if (idx >= kSrvHeapNumDescriptors)
             {
                 throw std::runtime_error("DX12: SRV heap exhausted (increase SRV heap NumDescriptors).");
             }
@@ -2752,6 +2850,42 @@ else
             entry.srvIndex = idx;
             entry.srvCpu = cpu;
             entry.srvGpu = gpu;
+        }
+
+        void AllocateSRV_CubeAsArray(TextureEntry& entry, DXGI_FORMAT fmt, UINT mipLevels)
+        {
+            if (entry.hasSRVArray)
+                return;
+
+            if (entry.type != TextureEntry::Type::Cube)
+                throw std::runtime_error("DX12: AllocateSRV_CubeAsArray: texture is not a cube");
+
+            const UINT idx = AllocateSrvIndex();
+
+            D3D12_CPU_DESCRIPTOR_HANDLE cpu = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+            cpu.ptr += static_cast<SIZE_T>(idx) * srvInc_;
+
+            D3D12_GPU_DESCRIPTOR_HANDLE gpu = srvHeap_->GetGPUDescriptorHandleForHeapStart();
+            gpu.ptr += static_cast<UINT64>(idx) * static_cast<UINT64>(srvInc_);
+
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.Format = fmt;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+            srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2DARRAY;
+            srvDesc.Texture2DArray.MostDetailedMip = 0;
+            srvDesc.Texture2DArray.MipLevels = mipLevels;
+            srvDesc.Texture2DArray.FirstArraySlice = 0;
+            srvDesc.Texture2DArray.ArraySize = 6;
+            srvDesc.Texture2DArray.PlaneSlice = 0;
+            srvDesc.Texture2DArray.ResourceMinLODClamp = 0.0f;
+
+            NativeDevice()->CreateShaderResourceView(entry.resource.Get(), &srvDesc, cpu);
+
+            entry.hasSRVArray = true;
+            entry.srvIndexArray = idx;
+            entry.srvCpuArray = cpu;
+            entry.srvGpuArray = gpu;
         }
 
 #if CORE_DX12_HAS_DXC
