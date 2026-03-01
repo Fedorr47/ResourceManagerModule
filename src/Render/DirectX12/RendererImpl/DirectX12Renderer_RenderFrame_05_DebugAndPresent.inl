@@ -143,6 +143,8 @@
 							const mathUtils::Vec3 pivot = scene.editorScaleGizmo.pivotWorld;
 							const float axisLen = scene.editorScaleGizmo.axisLengthWorld;
 							const float handleHalf = std::max(axisLen * 0.08f, 0.03f);
+							const float planeInner = axisLen * 0.24f;
+							const float planeOuter = axisLen * 0.40f;
 
 							auto AxisColor = [&](GizmoAxis axis, std::uint32_t baseColor) -> std::uint32_t
 								{
@@ -157,6 +159,19 @@
 									return baseColor;
 								};
 
+							auto AddPlaneHandle = [&](GizmoAxis axis, const mathUtils::Vec3& a, const mathUtils::Vec3& b, std::uint32_t baseColor)
+								{
+									const std::uint32_t color = AxisColor(axis, baseColor);
+									const mathUtils::Vec3 p00 = pivot + a * planeInner + b * planeInner;
+									const mathUtils::Vec3 p10 = pivot + a * planeOuter + b * planeInner;
+									const mathUtils::Vec3 p11 = pivot + a * planeOuter + b * planeOuter;
+									const mathUtils::Vec3 p01 = pivot + a * planeInner + b * planeOuter;
+									debugList.AddLine(p00, p10, color, true);
+									debugList.AddLine(p10, p11, color, true);
+									debugList.AddLine(p11, p01, color, true);
+									debugList.AddLine(p01, p00, color, true);
+								};
+
 							auto AddScaleHandle = [&](GizmoAxis axis, const mathUtils::Vec3& dir, std::uint32_t baseColor)
 								{
 									const std::uint32_t color = AxisColor(axis, baseColor);
@@ -166,9 +181,18 @@
 									debugList.AddAxesCross(end, handleHalf, color, true);
 								};
 
+							AddPlaneHandle(GizmoAxis::XY, scene.editorScaleGizmo.axisXWorld, scene.editorScaleGizmo.axisYWorld, debugDraw::PackRGBA8(255, 220, 80, 255));
+							AddPlaneHandle(GizmoAxis::XZ, scene.editorScaleGizmo.axisXWorld, scene.editorScaleGizmo.axisZWorld, debugDraw::PackRGBA8(255, 80, 255, 255));
+							AddPlaneHandle(GizmoAxis::YZ, scene.editorScaleGizmo.axisYWorld, scene.editorScaleGizmo.axisZWorld, debugDraw::PackRGBA8(80, 255, 255, 255));
 							AddScaleHandle(GizmoAxis::X, scene.editorScaleGizmo.axisXWorld, debugDraw::PackRGBA8(255, 80, 80, 255));
 							AddScaleHandle(GizmoAxis::Y, scene.editorScaleGizmo.axisYWorld, debugDraw::PackRGBA8(80, 255, 80, 255));
 							AddScaleHandle(GizmoAxis::Z, scene.editorScaleGizmo.axisZWorld, debugDraw::PackRGBA8(80, 160, 255, 255));
+							debugList.AddWireSphere(
+								pivot,
+								scene.editorScaleGizmo.uniformHandleRadiusWorld,
+								AxisColor(GizmoAxis::XYZ, debugDraw::PackRGBA8(230, 230, 230, 255)),
+								16,
+								true);
 						}
 						
 						// Pick ray (from the editor UI) visualized in the main view via DebugDraw.

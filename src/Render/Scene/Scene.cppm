@@ -99,7 +99,8 @@ export namespace rendern
 		Z,
 		XY,
 		XZ,
-		YZ
+		YZ,
+		XYZ
 	};
 
 	enum class GizmoMode : std::uint8_t
@@ -110,6 +111,12 @@ export namespace rendern
 		Scale
 	};
 
+	enum class GizmoSpace : std::uint8_t
+	{
+		World = 0,
+		Local
+	};
+
 	struct TranslateGizmoState
 	{
 		bool enabled{ true };
@@ -118,6 +125,9 @@ export namespace rendern
 		GizmoAxis activeAxis{ GizmoAxis::None };
 		mathUtils::Vec3 pivotWorld{ 0.0f, 0.0f, 0.0f };
 		float axisLengthWorld{ 1.0f };
+		mathUtils::Vec3 axisXWorld{ 1.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 axisYWorld{ 0.0f, 1.0f, 0.0f };
+		mathUtils::Vec3 axisZWorld{ 0.0f, 0.0f, 1.0f };
 	};
 
 	struct RotateGizmoState
@@ -144,6 +154,7 @@ export namespace rendern
 		mathUtils::Vec3 axisYWorld{ 0.0f, 1.0f, 0.0f };
 		mathUtils::Vec3 axisZWorld{ 0.0f, 0.0f, 1.0f };
 		float axisLengthWorld{ 1.0f };
+		float uniformHandleRadiusWorld{ 0.12f };
 	};
 
 	struct MaterialParams
@@ -271,6 +282,7 @@ export namespace rendern
 
 		// Active editor gizmo mode (runtime-only).
 		GizmoMode editorGizmoMode{ GizmoMode::Translate };
+		GizmoSpace editorTranslateSpace{ GizmoSpace::World };
 
 		// Editor translate gizmo (runtime-only).
 		TranslateGizmoState editorTranslateGizmo{};
@@ -292,6 +304,7 @@ export namespace rendern
 			editorReflectionCaptureOwnerNode = -1;
 			editorReflectionCaptureOwnerDrawItem = -1;
 			editorGizmoMode = GizmoMode::Translate;
+			editorTranslateSpace = GizmoSpace::World;
 			editorTranslateGizmo = {};
 			editorRotateGizmo = {};
 			editorScaleGizmo = {};

@@ -14,6 +14,10 @@ import std;
 
 namespace
 {
+	constexpr float kPlaneHandleInnerFraction = 0.24f;
+	constexpr float kPlaneHandleOuterFraction = 0.40f;
+	constexpr float kMinScaleComponent = 0.001f;
+
 	static mathUtils::Vec3 SafeNormalizeOr(const mathUtils::Vec3& v, const mathUtils::Vec3& fallback) noexcept
 	{
 		if (mathUtils::Length(v) < 1e-5f)
@@ -21,6 +25,38 @@ namespace
 			return fallback;
 		}
 		return mathUtils::Normalize(v);
+	}
+
+	static bool PointInTriangle2D(const mathUtils::Vec2& p,
+		const mathUtils::Vec2& a,
+		const mathUtils::Vec2& b,
+		const mathUtils::Vec2& c) noexcept
+	{
+		const float c0 = mathUtils::Cross2D(b - a, p - a);
+		const float c1 = mathUtils::Cross2D(c - b, p - b);
+		const float c2 = mathUtils::Cross2D(a - c, p - c);
+		const bool hasNeg = (c0 < 0.0f) || (c1 < 0.0f) || (c2 < 0.0f);
+		const bool hasPos = (c0 > 0.0f) || (c1 > 0.0f) || (c2 > 0.0f);
+		return !(hasNeg && hasPos);
+	}
+
+	static bool PointInQuad2D(const mathUtils::Vec2& p,
+		const mathUtils::Vec2& a,
+		const mathUtils::Vec2& b,
+		const mathUtils::Vec2& c,
+		const mathUtils::Vec2& d) noexcept
+	{
+		return PointInTriangle2D(p, a, b, c) || PointInTriangle2D(p, a, c, d);
+	}
+
+	static bool IsAxisHandle(rendern::GizmoAxis axis) noexcept
+	{
+		return axis == rendern::GizmoAxis::X || axis == rendern::GizmoAxis::Y || axis == rendern::GizmoAxis::Z;
+	}
+
+	static bool IsPlaneHandle(rendern::GizmoAxis axis) noexcept
+	{
+		return axis == rendern::GizmoAxis::XY || axis == rendern::GizmoAxis::XZ || axis == rendern::GizmoAxis::YZ;
 	}
 
 	static mathUtils::Vec3 AxisDirection(const rendern::ScaleGizmoState& gizmo, rendern::GizmoAxis axis) noexcept
@@ -31,6 +67,37 @@ namespace
 		case rendern::GizmoAxis::Y: return gizmo.axisYWorld;
 		case rendern::GizmoAxis::Z: return gizmo.axisZWorld;
 		default: return mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+		}
+	}
+
+	static void GetPlaneBasis(const rendern::ScaleGizmoState& gizmo,
+		rendern::GizmoAxis axis,
+		mathUtils::Vec3& basisA,
+		mathUtils::Vec3& basisB,
+		mathUtils::Vec3& planeNormal) noexcept
+	{
+		switch (axis)
+		{
+		case rendern::GizmoAxis::XY:
+			basisA = gizmo.axisXWorld;
+			basisB = gizmo.axisYWorld;
+			planeNormal = mathUtils::Normalize(mathUtils::Cross(basisA, basisB));
+			break;
+		case rendern::GizmoAxis::XZ:
+			basisA = gizmo.axisXWorld;
+			basisB = gizmo.axisZWorld;
+			planeNormal = mathUtils::Normalize(mathUtils::Cross(basisA, basisB));
+			break;
+		case rendern::GizmoAxis::YZ:
+			basisA = gizmo.axisYWorld;
+			basisB = gizmo.axisZWorld;
+			planeNormal = mathUtils::Normalize(mathUtils::Cross(basisA, basisB));
+			break;
+		default:
+			basisA = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+			basisB = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+			planeNormal = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+			break;
 		}
 	}
 
@@ -61,7 +128,90 @@ namespace
 		return true;
 	}
 
-	static rendern::GizmoAxis HitTestScaleHandle(const rendern::Scene& scene,
+	static bool BuildPlaneHandleQuad(const rendern::Scene& scene,
+		const rendern::ScaleGizmoState& gizmo,
+		rendern::GizmoAxis axis,
+		float viewportW,
+		float viewportH,
+		mathUtils::Vec2& p0,
+		mathUtils::Vec2& p1,
+		mathUtils::Vec2& p2,
+		mathUtils::Vec2& p3) noexcept
+	{
+		mathUtils::Vec3 basisA{};
+		mathUtils::Vec3 basisB{};
+		mathUtils::Vec3 planeNormal{};
+		GetPlaneBasis(gizmo, axis, basisA, basisB, planeNormal);
+		if (mathUtils::Length(planeNormal) < 1e-5f)
+		{
+			return false;
+		}
+
+		const float inner = gizmo.axisLengthWorld * kPlaneHandleInnerFraction;
+		const float outer = gizmo.axisLengthWorld * kPlaneHandleOuterFraction;
+		const mathUtils::Vec3 w0 = gizmo.pivotWorld + basisA * inner + basisB * inner;
+		const mathUtils::Vec3 w1 = gizmo.pivotWorld + basisA * outer + basisB * inner;
+		const mathUtils::Vec3 w2 = gizmo.pivotWorld + basisA * outer + basisB * outer;
+		const mathUtils::Vec3 w3 = gizmo.pivotWorld + basisA * inner + basisB * outer;
+
+		return ProjectWorldToScreen(scene, w0, viewportW, viewportH, p0)
+			&& ProjectWorldToScreen(scene, w1, viewportW, viewportH, p1)
+			&& ProjectWorldToScreen(scene, w2, viewportW, viewportH, p2)
+			&& ProjectWorldToScreen(scene, w3, viewportW, viewportH, p3);
+	}
+
+	static rendern::GizmoAxis HitTestUniformHandle(const rendern::Scene& scene,
+		const rendern::ScaleGizmoState& gizmo,
+		float mouseX,
+		float mouseY,
+		float viewportW,
+		float viewportH) noexcept
+	{
+		mathUtils::Vec2 pivotScreen{};
+		if (!ProjectWorldToScreen(scene, gizmo.pivotWorld, viewportW, viewportH, pivotScreen))
+		{
+			return rendern::GizmoAxis::None;
+		}
+
+		const mathUtils::Vec2 mouse{ mouseX, mouseY };
+		const mathUtils::Vec2 delta = mouse - pivotScreen;
+		const float radiusPx = 12.0f;
+		return mathUtils::Dot(delta, delta) <= radiusPx * radiusPx ? rendern::GizmoAxis::XYZ : rendern::GizmoAxis::None;
+	}
+
+	static rendern::GizmoAxis HitTestPlaneHandle(const rendern::Scene& scene,
+		const rendern::ScaleGizmoState& gizmo,
+		float mouseX,
+		float mouseY,
+		float viewportW,
+		float viewportH) noexcept
+	{
+		const mathUtils::Vec2 mouse{ mouseX, mouseY };
+		const rendern::GizmoAxis planeOrder[] =
+		{
+			rendern::GizmoAxis::XY,
+			rendern::GizmoAxis::XZ,
+			rendern::GizmoAxis::YZ,
+		};
+
+		for (rendern::GizmoAxis axis : planeOrder)
+		{
+			mathUtils::Vec2 p0{}, p1{}, p2{}, p3{};
+			if (!BuildPlaneHandleQuad(scene, gizmo, axis, viewportW, viewportH, p0, p1, p2, p3))
+			{
+				continue;
+			}
+
+			if (PointInQuad2D(mouse, p0, p1, p2, p3))
+			{
+				return axis;
+			}
+		}
+
+		return rendern::GizmoAxis::None;
+	}
+
+	static rendern::GizmoAxis HitTestAxisHandle(const rendern::Scene& scene,
 		const rendern::ScaleGizmoState& gizmo,
 		float mouseX,
 		float mouseY,
@@ -94,6 +244,27 @@ namespace
 		TestAxis(rendern::GizmoAxis::Y, gizmo.axisYWorld);
 		TestAxis(rendern::GizmoAxis::Z, gizmo.axisZWorld);
 		return bestAxis;
+	}
+
+	static rendern::GizmoAxis HitTestHandle(const rendern::Scene& scene,
+		const rendern::ScaleGizmoState& gizmo,
+		float mouseX,
+		float mouseY,
+		float viewportW,
+		float viewportH) noexcept
+	{
+		const rendern::GizmoAxis uniformAxis = HitTestUniformHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
+		if (uniformAxis != rendern::GizmoAxis::None)
+		{
+			return uniformAxis;
+		}
+
+		const rendern::GizmoAxis planeAxis = HitTestPlaneHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
+		if (planeAxis != rendern::GizmoAxis::None)
+		{
+			return planeAxis;
+		}
+		return HitTestAxisHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
 	}
 
 	static bool IntersectRayPlane(const geometry::Ray& ray,
@@ -139,7 +310,7 @@ export namespace rendern
 		void SyncVisual(const LevelAsset& asset, const LevelInstance& levelInst, Scene& scene) const noexcept
 		{
 			ScaleGizmoState& gizmo = scene.editorScaleGizmo;
-			if (!gizmo.enabled)
+			if (!gizmo.enabled || scene.editorGizmoMode != GizmoMode::Scale)
 			{
 				gizmo.visible = false;
 				gizmo.hoveredAxis = GizmoAxis::None;
@@ -165,6 +336,7 @@ export namespace rendern
 
 			const float distToCamera = mathUtils::Length(scene.camera.position - gizmo.pivotWorld);
 			gizmo.axisLengthWorld = std::clamp(distToCamera * 0.18f, 0.35f, 4.0f);
+			gizmo.uniformHandleRadiusWorld = gizmo.axisLengthWorld * 0.12f;
 		}
 
 		void ClearHover(Scene& scene) const noexcept
@@ -181,7 +353,7 @@ export namespace rendern
 				return;
 			}
 
-			gizmo.hoveredAxis = HitTestScaleHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
+			gizmo.hoveredAxis = HitTestHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
 		}
 
 		bool TryBeginDrag(const LevelAsset& asset,
@@ -204,22 +376,40 @@ export namespace rendern
 				return false;
 			}
 
-			const GizmoAxis axis = HitTestScaleHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
+			const GizmoAxis axis = HitTestHandle(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
 			if (axis == GizmoAxis::None)
 			{
 				return false;
 			}
 
-			const mathUtils::Vec3 axisWorld = AxisDirection(gizmo, axis);
+			const geometry::Ray ray = BuildMouseRay(scene, mouseX, mouseY, viewportW, viewportH);
 			const mathUtils::Vec3 viewDir = mathUtils::Normalize(scene.camera.target - scene.camera.position);
-			const mathUtils::Vec3 planeNormal = ComputeAxisDragPlaneNormal(axisWorld, viewDir);
+
+			mathUtils::Vec3 planeNormal{};
+			mathUtils::Vec3 startHit{};
+			mathUtils::Vec3 basisA{};
+			mathUtils::Vec3 basisB{};
+			if (axis == GizmoAxis::XYZ)
+			{
+				planeNormal = viewDir;
+				dragAxisWorld_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+			}
+			else if (IsAxisHandle(axis))
+			{
+				dragAxisWorld_ = AxisDirection(gizmo, axis);
+				planeNormal = ComputeAxisDragPlaneNormal(dragAxisWorld_, viewDir);
+			}
+			else if (IsPlaneHandle(axis))
+			{
+				dragAxisWorld_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+				GetPlaneBasis(gizmo, axis, basisA, basisB, planeNormal);
+			}
 			if (mathUtils::Length(planeNormal) < 1e-5f)
 			{
 				return false;
 			}
 
-			mathUtils::Vec3 startHit{};
-			if (!IntersectRayPlane(BuildMouseRay(scene, mouseX, mouseY, viewportW, viewportH), gizmo.pivotWorld, planeNormal, startHit))
+			if (!IntersectRayPlane(ray, gizmo.pivotWorld, planeNormal, startHit))
 			{
 				return false;
 			}
@@ -229,10 +419,12 @@ export namespace rendern
 			dragAxis_ = axis;
 			dragStartLocalScale_ = asset.nodes[static_cast<std::size_t>(selectedNode)].transform.scale;
 			dragStartWorldHit_ = startHit;
-			dragAxisWorld_ = axisWorld;
 			dragPlaneNormal_ = planeNormal;
 			dragPivotWorld_ = gizmo.pivotWorld;
 			dragReferenceLengthWorld_ = std::max(gizmo.axisLengthWorld, 0.001f);
+			dragStartRadius_ = std::max(1e-4f, mathUtils::Length(startHit - dragPivotWorld_));
+			dragBasisAWorld_ = basisA;
+			dragBasisBWorld_ = basisB;
 
 			gizmo.activeAxis = axis;
 			gizmo.hoveredAxis = axis;
@@ -259,25 +451,99 @@ export namespace rendern
 				return false;
 			}
 
-			const float axisDelta = mathUtils::Dot(currentHit - dragStartWorldHit_, dragAxisWorld_);
-			float factor = 1.0f + (axisDelta / dragReferenceLengthWorld_);
-			factor = std::max(factor, 0.001f);
-
 			auto scale = dragStartLocalScale_;
-			switch (dragAxis_)
+			if (dragAxis_ == GizmoAxis::XYZ)
 			{
-			case GizmoAxis::X: scale.x = std::max(dragStartLocalScale_.x * factor, 0.001f); break;
-			case GizmoAxis::Y: scale.y = std::max(dragStartLocalScale_.y * factor, 0.001f); break;
-			case GizmoAxis::Z: scale.z = std::max(dragStartLocalScale_.z * factor, 0.001f); break;
-			default: return false;
+				const float currentRadius = std::max(1e-4f, mathUtils::Length(currentHit - dragPivotWorld_));
+				float factor = currentRadius / dragStartRadius_;
+				factor = std::clamp(factor, 0.01f, 100.0f);
+				if (snapEnabled)
+				{
+					factor = std::max(0.1f, std::round(factor * 10.0f) / 10.0f);
+				}
+				scale = mathUtils::MaxVec3(dragStartLocalScale_ * factor, mathUtils::Vec3(kMinScaleComponent, kMinScaleComponent, kMinScaleComponent));
+			}
+			else if (IsAxisHandle(dragAxis_))
+			{
+				const float axisDelta = mathUtils::Dot(currentHit - dragStartWorldHit_, dragAxisWorld_);
+				float factor = 1.0f + (axisDelta / dragReferenceLengthWorld_);
+				factor = std::max(factor, kMinScaleComponent);
+
+				switch (dragAxis_)
+				{
+				case GizmoAxis::X: scale.x = std::max(dragStartLocalScale_.x * factor, kMinScaleComponent); break;
+				case GizmoAxis::Y: scale.y = std::max(dragStartLocalScale_.y * factor, kMinScaleComponent); break;
+				case GizmoAxis::Z: scale.z = std::max(dragStartLocalScale_.z * factor, kMinScaleComponent); break;
+				default: return false;
+				}
+			}
+			else if (IsPlaneHandle(dragAxis_))
+			{
+				const mathUtils::Vec3 worldDelta = currentHit - dragStartWorldHit_;
+				const float axisDeltaA = mathUtils::Dot(worldDelta, dragBasisAWorld_);
+				const float axisDeltaB = mathUtils::Dot(worldDelta, dragBasisBWorld_);
+				const float factorA = std::max(1.0f + (axisDeltaA / dragReferenceLengthWorld_), kMinScaleComponent);
+				const float factorB = std::max(1.0f + (axisDeltaB / dragReferenceLengthWorld_), kMinScaleComponent);
+
+				switch (dragAxis_)
+				{
+				case GizmoAxis::XY:
+					scale.x = std::max(dragStartLocalScale_.x * factorA, kMinScaleComponent);
+					scale.y = std::max(dragStartLocalScale_.y * factorB, kMinScaleComponent);
+					break;
+				case GizmoAxis::XZ:
+					scale.x = std::max(dragStartLocalScale_.x * factorA, kMinScaleComponent);
+					scale.z = std::max(dragStartLocalScale_.z * factorB, kMinScaleComponent);
+					break;
+				case GizmoAxis::YZ:
+					scale.y = std::max(dragStartLocalScale_.y * factorA, kMinScaleComponent);
+					scale.z = std::max(dragStartLocalScale_.z * factorB, kMinScaleComponent);
+					break;
+				default:
+					return false;
+				}
+			}
+			else
+			{
+				return false;
 			}
 
 			if (snapEnabled)
 			{
 				constexpr float kScaleSnapStep = 0.1f;
-				scale.x = std::max(std::round(scale.x / kScaleSnapStep) * kScaleSnapStep, 0.001f);
-				scale.y = std::max(std::round(scale.y / kScaleSnapStep) * kScaleSnapStep, 0.001f);
-				scale.z = std::max(std::round(scale.z / kScaleSnapStep) * kScaleSnapStep, 0.001f);
+				auto SnapPositive = [](float value) noexcept
+					{
+						return std::max(std::round(value / kScaleSnapStep) * kScaleSnapStep, kMinScaleComponent);
+					};
+
+				switch (dragAxis_)
+				{
+				case GizmoAxis::X:
+					scale.x = SnapPositive(scale.x);
+					break;
+				case GizmoAxis::Y:
+					scale.y = SnapPositive(scale.y);
+					break;
+				case GizmoAxis::Z:
+					scale.z = SnapPositive(scale.z);
+					break;
+				case GizmoAxis::XY:
+					scale.x = SnapPositive(scale.x);
+					scale.y = SnapPositive(scale.y);
+					break;
+				case GizmoAxis::XZ:
+					scale.x = SnapPositive(scale.x);
+					scale.z = SnapPositive(scale.z);
+					break;
+				case GizmoAxis::YZ:
+					scale.y = SnapPositive(scale.y);
+					scale.z = SnapPositive(scale.z);
+					break;
+				case GizmoAxis::XYZ:
+				case GizmoAxis::None:
+				default:
+					break;
+				}
 			}
 
 			asset.nodes[static_cast<std::size_t>(dragNodeIndex_)].transform.scale = scale;
@@ -296,6 +562,9 @@ export namespace rendern
 			dragPlaneNormal_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
 			dragPivotWorld_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
 			dragReferenceLengthWorld_ = 1.0f;
+			dragStartRadius_ = 1.0f;
+			dragBasisAWorld_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
+			dragBasisBWorld_ = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
 			scene.editorScaleGizmo.activeAxis = GizmoAxis::None;
 			scene.editorScaleGizmo.hoveredAxis = GizmoAxis::None;
 		}
@@ -312,8 +581,11 @@ export namespace rendern
 			mathUtils::Vec3 dragStartLocalScale_{ 1.0f, 1.0f, 1.0f };
 			mathUtils::Vec3 dragStartWorldHit_{ 0.0f, 0.0f, 0.0f };
 			mathUtils::Vec3 dragAxisWorld_{ 0.0f, 0.0f, 0.0f };
+			mathUtils::Vec3 dragBasisAWorld_{ 0.0f, 0.0f, 0.0f };
+			mathUtils::Vec3 dragBasisBWorld_{ 0.0f, 0.0f, 0.0f };
 			mathUtils::Vec3 dragPlaneNormal_{ 0.0f, 0.0f, 0.0f };
 			mathUtils::Vec3 dragPivotWorld_{ 0.0f, 0.0f, 0.0f };
 			float dragReferenceLengthWorld_{ 1.0f };
+			float dragStartRadius_{ 1.0f };
 	};
 }

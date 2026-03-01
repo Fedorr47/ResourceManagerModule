@@ -249,14 +249,20 @@ namespace rendern::ui::level_ui_detail
             constexpr const char* kGizmoModes[] = { "None", "Translate", "Rotate", "Scale" };
             if (ImGui::Combo("Mode", &gizmoMode, kGizmoModes, IM_ARRAYSIZE(kGizmoModes)))
                 scene.editorGizmoMode = static_cast<rendern::GizmoMode>(gizmoMode);
-            ImGui::TextUnformatted("Hotkeys: Q = None, W = Translate, E = Rotate, R = Scale");
+            ImGui::TextUnformatted("Hotkeys: Q = None, W = Translate, E = Rotate, R = Scale, X = Toggle translate space");
 
             ImGui::SeparatorText("Translate Gizmo");
             bool gizmoEnabled = scene.editorTranslateGizmo.enabled;
             if (ImGui::Checkbox("Enable translate gizmo", &gizmoEnabled))
                 scene.editorTranslateGizmo.enabled = gizmoEnabled;
 
+            int translateSpace = static_cast<int>(scene.editorTranslateSpace);
+            constexpr const char* kTranslateSpaceModes[] = { "World", "Local" };
+            if (ImGui::Combo("Translate Space", &translateSpace, kTranslateSpaceModes, IM_ARRAYSIZE(kTranslateSpaceModes)))
+                scene.editorTranslateSpace = static_cast<rendern::GizmoSpace>(translateSpace);
+
             ImGui::TextUnformatted("LMB drag axis X/Y/Z or plane handle XY/XZ/YZ in the main viewport. Hold Shift to snap by 0.5.");
+            ImGui::Text("Translate space: %s", scene.editorTranslateSpace == rendern::GizmoSpace::World ? "World" : "Local");
             ImGui::Text("Visible: %s", scene.editorTranslateGizmo.visible ? "Yes" : "No");
             ImGui::Text("Hovered axis: %d", static_cast<int>(scene.editorTranslateGizmo.hoveredAxis));
             ImGui::Text("Active axis: %d", static_cast<int>(scene.editorTranslateGizmo.activeAxis));
@@ -276,7 +282,7 @@ namespace rendern::ui::level_ui_detail
             if (ImGui::Checkbox("Enable scale gizmo", &scaleGizmoEnabled))
                 scene.editorScaleGizmo.enabled = scaleGizmoEnabled;
 
-            ImGui::TextUnformatted("LMB drag local X/Y/Z scale handles in the main viewport. Hold Shift to snap by 0.1.");
+            ImGui::TextUnformatted("LMB drag local X/Y/Z scale handles, XY/XZ/YZ plane handles, or the center sphere for uniform scale in the main viewport. Hold Shift to snap by 0.1. Q/W/E/R switches modes.");
             ImGui::Text("Visible: %s", scene.editorScaleGizmo.visible ? "Yes" : "No");
             ImGui::Text("Hovered axis: %d", static_cast<int>(scene.editorScaleGizmo.hoveredAxis));
             ImGui::Text("Active axis: %d", static_cast<int>(scene.editorScaleGizmo.activeAxis));

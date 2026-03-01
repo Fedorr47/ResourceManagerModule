@@ -84,6 +84,15 @@ namespace appEditor
             EndAllGizmoDrags(interaction, scene);
             scene.editorGizmoMode = nextMode;
         }
+
+        if (input.KeyPressed('X') && scene.editorGizmoMode == rendern::GizmoMode::Translate)
+        {
+            EndAllGizmoDrags(interaction, scene);
+            scene.editorTranslateSpace =
+                (scene.editorTranslateSpace == rendern::GizmoSpace::World)
+                ? rendern::GizmoSpace::Local
+                : rendern::GizmoSpace::World;
+        }
     }
 
     inline void SyncEditorGizmoVisuals(
