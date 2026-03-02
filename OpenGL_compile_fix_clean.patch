@@ -1,0 +1,47 @@
+--- a/src/Core/Hash/HashUtils.cppm
++++ b/src/Core/Hash/HashUtils.cppm
+@@ -4,7 +4,9 @@
+ import std;
+ import :mesh;
+ import :rhi;
+ import :math_utils;
++#if defined(CORE_USE_DX12)
+ import :common_DX12_Structs;
++#endif
+ 
+ export namespace hashUtils
+ {
+@@ -12,6 +14,7 @@
+ 	{
+ 		seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
+ 	}
++
++#if defined(CORE_USE_DX12)
+ 
+ 	struct BatchKeyHash
+ 	{
+@@ -60,5 +63,6 @@
+ 			return seed;
+ 		}
+ 	};
++#endif
+ }
+--- a/src/Render/OpenGL/OpenGLRenderer.cppm
++++ b/src/Render/OpenGL/OpenGLRenderer.cppm
+@@ -146,7 +146,7 @@
+ 
+ 						// Uniforms (name-based path; typical for GL)
+ 						ctx.commandList.SetUniformInt("uTex", 0);
+-						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.r, mat.baseColor.g, mat.baseColor.b, mat.baseColor.a });
++						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.x, mat.baseColor.y, mat.baseColor.z, mat.baseColor.w });
+ 
+ 						const glm::mat4 mvp = proj * view * model;
+ 
+--- a/src/Render/OpenGL/RenderGL.ixx
++++ b/src/Render/OpenGL/RenderGL.ixx
+@@ -4,4 +4,4 @@
+ export import :render;
+ export import :rhi_gl;
+ export import :render_core_gl;
+-export import :renderer_gl;
++export import :renderer_mesh_gl;

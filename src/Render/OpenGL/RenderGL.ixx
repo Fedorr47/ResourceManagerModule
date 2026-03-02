@@ -4,4 +4,4 @@ export module core:render_gl;
 export import :render;
 export import :rhi_gl;
 export import :render_core_gl;
-export import :renderer_gl;
+export import :renderer_mesh_gl;

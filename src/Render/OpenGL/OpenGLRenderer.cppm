@@ -19,6 +19,7 @@ import :scene;
 import :math_utils;
 import :renderer_settings;
 import :render_core;
+import :visibility;
 import :render_graph;
 import :file_system;
 import :mesh;
@@ -146,7 +147,7 @@ export namespace rendern
 
 						// Uniforms (name-based path; typical for GL)
 						ctx.commandList.SetUniformInt("uTex", 0);
-						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.r, mat.baseColor.g, mat.baseColor.b, mat.baseColor.a });
+						ctx.commandList.SetUniformFloat4("uColor", { mat.baseColor.x, mat.baseColor.y, mat.baseColor.z, mat.baseColor.w });
 
 						const glm::mat4 mvp = proj * view * model;
 

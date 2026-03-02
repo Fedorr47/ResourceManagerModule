@@ -106,16 +106,25 @@ namespace
 		}
 	}
 
+	static bool IsDepthFormat(rhi::Format format) noexcept
+	{
+		return format == rhi::Format::D32_FLOAT || format == rhi::Format::D24_UNORM_S8_UINT;
+	}
+
 	static GLenum ToGLInternalFormat(rhi::Format format)
 	{
 		switch (format)
 		{
 		case rhi::Format::RGBA8_UNORM:
 			return GL_RGBA8;
+		case rhi::Format::R32_FLOAT:
+			return GL_R32F;
 		case rhi::Format::BGRA8_UNORM:
 			return GL_RGBA8;
 		case rhi::Format::D32_FLOAT:
 			return GL_DEPTH_COMPONENT32F;
+		case rhi::Format::D24_UNORM_S8_UINT:
+			return GL_DEPTH24_STENCIL8;
 		default:
 			return GL_RGBA8;
 		}
@@ -129,8 +138,12 @@ namespace
 			return GL_RGBA;
 		case rhi::Format::BGRA8_UNORM:
 			return GL_BGRA;
+		case rhi::Format::R32_FLOAT:
+			return GL_RED;
 		case rhi::Format::D32_FLOAT:
 			return GL_DEPTH_COMPONENT;
+		case rhi::Format::D24_UNORM_S8_UINT:
+			return GL_DEPTH_STENCIL;
 		default:
 			return GL_RGBA;
 		}
@@ -143,8 +156,11 @@ namespace
 		case rhi::Format::RGBA8_UNORM:
 		case rhi::Format::BGRA8_UNORM:
 			return GL_UNSIGNED_BYTE;
+		case rhi::Format::R32_FLOAT:
 		case rhi::Format::D32_FLOAT:
 			return GL_FLOAT;
+		case rhi::Format::D24_UNORM_S8_UINT:
+			return GL_UNSIGNED_INT_24_8;
 		default:
 			return GL_UNSIGNED_BYTE;
 		}
@@ -563,10 +579,7 @@ namespace rhi
 			GLuint tex = 0;
 			glCreateTextures(GL_TEXTURE_CUBE_MAP, 1, &tex);
 
-			GLint internal = 0;
-			GLint base = 0;
-			GLint type = 0;
-			ToGLInternalFormat(format, internal, base, type);
+			const GLenum internal = ToGLInternalFormat(format);
 
 			glTextureStorage2D(tex, 1, internal, static_cast<GLsizei>(extent.width), static_cast<GLsizei>(extent.height));
 
@@ -1413,6 +1426,28 @@ void DestroyFramebuffer(FrameBufferHandle framebuffer) noexcept override
 		{
 			glActiveTexture(GL_TEXTURE0 + static_cast<GLenum>(cmd.slot));
 			glBindTexture(GL_TEXTURE_2D_ARRAY, static_cast<GLuint>(cmd.texture.id));
+		}
+
+		void ExecuteOnce(const CommandSetPrimitiveTopology& cmd)
+		{
+			// Cached GLenum used by Draw/DrawIndexed.
+			switch (cmd.topology)
+			{
+			case rhi::PrimitiveTopology::TriangleList:
+				currentTopology_ = GL_TRIANGLES;
+				break;
+			case rhi::PrimitiveTopology::LineList:
+				currentTopology_ = GL_LINES;
+				break;
+			default:
+				currentTopology_ = GL_TRIANGLES;
+				break;
+			}
+		}
+
+		void ExecuteOnce(const CommandDX12ImGuiRender& /*cmd*/)
+		{
+			// DX12-only command. Other backends intentionally ignore it.
 		}
 
 		//---------------------------------------------------------------------//

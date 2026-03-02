@@ -6,7 +6,9 @@ import std;
 import :mesh;
 import :rhi;
 import :math_utils;
+#if defined(CORE_USE_DX12)
 import :common_DX12_Structs;
+#endif
 
 export namespace hashUtils
 {
@@ -15,6 +17,7 @@ export namespace hashUtils
 		seed ^= value + 0x9e3779b97f4a7c15ull + (seed << 6) + (seed >> 2);
 	}
 
+#if defined(CORE_USE_DX12)
 	struct BatchKeyHash
 	{
 		static std::size_t HashU32(std::uint32_t value) noexcept { return std::hash<std::uint32_t>{}(value); }
@@ -61,4 +64,5 @@ export namespace hashUtils
 			return seed;
 		}
 	};
+#endif
 }
