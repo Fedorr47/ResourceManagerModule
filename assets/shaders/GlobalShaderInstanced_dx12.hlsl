@@ -130,9 +130,18 @@ static const uint FLAG_ENV_FORCE_MIP0 = 1u << 9;
 #endif
 
 // Editor: render an unlit highlight overlay (ignores lighting/env).
-// Used by the editor selection highlight pass.
+// Used by the editor selection highlight / outline passes.
 #ifndef CORE_HIGHLIGHT
 #define CORE_HIGHLIGHT 0
+#endif
+
+// Editor outline shell: inflate the selected mesh in VS using a small screen-space offset
+// derived from the normal direction. Uses a few existing constant slots only in this path:
+//   uPbrParams.x  = normal probe distance in world units
+//   uCounts.w     = outline width in pixels
+//   uShadowBias.xy = inverse viewport size
+#ifndef CORE_OUTLINE
+#define CORE_OUTLINE 0
 #endif
 
 static const uint kMaxSpotShadows = 4;
@@ -142,6 +151,71 @@ static const uint kMaxPointShadows = 4;
 static const int LIGHT_DIR = 0;
 static const int LIGHT_POINT = 1;
 static const int LIGHT_SPOT = 2;
+
+static const float kInverseEpsilon = 1e-8f;
+
+float3x3 Inverse3x3(float3x3 m)
+{
+    const float a00 = m[0][0];
+    const float a01 = m[0][1];
+    const float a02 = m[0][2];
+
+    const float a10 = m[1][0];
+    const float a11 = m[1][1];
+    const float a12 = m[1][2];
+
+    const float a20 = m[2][0];
+    const float a21 = m[2][1];
+    const float a22 = m[2][2];
+
+    // Cofactor matrix
+    const float c00 = (a11 * a22 - a12 * a21);
+    const float c01 = -(a10 * a22 - a12 * a20);
+    const float c02 = (a10 * a21 - a11 * a20);
+
+    const float c10 = -(a01 * a22 - a02 * a21);
+    const float c11 = (a00 * a22 - a02 * a20);
+    const float c12 = -(a00 * a21 - a01 * a20);
+
+    const float c20 = (a01 * a12 - a02 * a11);
+    const float c21 = -(a00 * a12 - a02 * a10);
+    const float c22 = (a00 * a11 - a01 * a10);
+
+    const float det = a00 * c00 + a01 * c01 + a02 * c02;
+
+    if (abs(det) < kInverseEpsilon)
+    {
+        // Degenerate matrix fallback
+        return float3x3(
+            1.0f, 0.0f, 0.0f,
+            0.0f, 1.0f, 0.0f,
+            0.0f, 0.0f, 1.0f
+        );
+    }
+
+    const float invDet = 1.0f / det;
+
+    // adj(M) = transpose(cofactor(M))
+    float3x3 invM;
+    invM[0][0] = c00 * invDet;
+    invM[0][1] = c10 * invDet;
+    invM[0][2] = c20 * invDet;
+
+    invM[1][0] = c01 * invDet;
+    invM[1][1] = c11 * invDet;
+    invM[1][2] = c21 * invDet;
+
+    invM[2][0] = c02 * invDet;
+    invM[2][1] = c12 * invDet;
+    invM[2][2] = c22 * invDet;
+
+    return invM;
+}
+
+float3x3 InverseTranspose3x3(float3x3 m)
+{
+    return transpose(Inverse3x3(m));
+}
 
 float4x4 LoadDirVP(ShadowDataSB sd, uint cascade)
 {
@@ -809,16 +883,45 @@ VSOut VSMain(VSIn IN)
 {
 	VSOut OUT;
 
-	float4x4 model = MakeMatRows(IN.i0, IN.i1, IN.i2, IN.i3);
+    float4x4 model = MakeMatRows(IN.i0, IN.i1, IN.i2, IN.i3);
+    float3x3 model3x3 = (float3x3) model;
 
-	float4 world = mul(float4(IN.pos, 1.0f), model);
-	float3 nrmW = mul(float4(IN.nrm, 0.0f), model).xyz;
+    float4 world = mul(float4(IN.pos, 1.0f), model);
+
+    float3x3 normalMatrix = InverseTranspose3x3(model3x3);
+    float3 nrmW = normalize(mul(IN.nrm, normalMatrix));
 	
 	OUT.worldPos = world.xyz;
-	OUT.nrmW = normalize(nrmW);
+	OUT.nrmW = nrmW;
 	
 	OUT.uv = IN.uv;
 	OUT.posH = mul(world, uViewProj);
+
+#if defined(CORE_OUTLINE) && CORE_OUTLINE
+	const float normalProbeDistance = max(uPbrParams.x, 1e-4f);
+	const float outlineWidthPixels = max(uCounts.w, 0.0f);
+	const float2 invViewport = max(uShadowBias.xy, float2(0.0f, 0.0f));
+
+	float4 worldNormalProbe = float4(world.xyz + nrmW * normalProbeDistance, 1.0f);
+	float4 clipBase = OUT.posH;
+	float4 clipProbe = mul(worldNormalProbe, uViewProj);
+
+	float2 ndcBase = clipBase.xy / max(clipBase.w, 1e-6f);
+	float2 ndcProbe = clipProbe.xy / max(clipProbe.w, 1e-6f);
+	float2 ndcDir = ndcProbe - ndcBase;
+	float2 pixelScale = 2.0f * invViewport;
+	float2 pixelDir = float2(
+		pixelScale.x > 0.0f ? (ndcDir.x / pixelScale.x) : 0.0f,
+		pixelScale.y > 0.0f ? (ndcDir.y / pixelScale.y) : 0.0f);
+	float pixelDirLen = length(pixelDir);
+	if (pixelDirLen > 1e-6f)
+	{
+		pixelDir /= pixelDirLen;
+		float2 ndcOffset = float2(pixelDir.x * outlineWidthPixels * pixelScale.x, pixelDir.y * outlineWidthPixels * pixelScale.y);
+		clipBase.xy += ndcOffset * clipBase.w;
+		OUT.posH = clipBase;
+	}
+#endif
 
 	OUT.shadowPos = mul(world, uLightViewProj);
 #if defined(CORE_PLANAR_CLIP) && CORE_PLANAR_CLIP

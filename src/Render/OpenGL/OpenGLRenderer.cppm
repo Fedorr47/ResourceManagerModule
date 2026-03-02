@@ -49,6 +49,8 @@ export namespace rendern
 			rhi::ClearDesc clearDesc{};
 			clearDesc.clearColor = true;
 			clearDesc.clearDepth = true;
+			clearDesc.clearStencil = true;
+			clearDesc.stencil = 0;
 			clearDesc.color = { 0.1f, 0.1f, 0.1f, 1.0f };
 
 			graph.AddSwapChainPass(
@@ -125,6 +127,8 @@ export namespace rendern
 						ctx.commandList.SetState(state_);
 					}
 
+					constexpr std::uint32_t kEditorOutlineStencilRef = 0x80u;
+
 					auto DrawOne = [&](const MeshRHI& mesh, const glm::mat4& model, const MaterialParams& mat)
 					{
 						ctx.commandList.BindInputLayout(mesh.layout);
@@ -197,15 +201,39 @@ export namespace rendern
 						const glm::mat4 model = ToGlmMat4(modelMu);
 						DrawOne(mesh, model, mat);
 
-						// Editor selection highlight: draw the selected object again as a translucent overlay.
+						// Editor selection outline + highlight.
 						if (scene.editorSelectedDrawItem >= 0
 							&& static_cast<std::size_t>(scene.editorSelectedDrawItem) == drawItemIndex)
 						{
+							MaterialParams mark = mat;
+							mark.baseColor = { 1.0f, 1.0f, 1.0f, 0.0f };
+							mark.albedoDescIndex = 0;
+
+							ctx.commandList.SetStencilRef(kEditorOutlineStencilRef);
+							ctx.commandList.SetState(outlineMarkState_);
+							DrawOne(mesh, model, mark);
+
+							const auto& bounds = item.mesh->GetBounds();
+							float outlineScale = 1.03f;
+							if (bounds.sphereRadius > 0.0f)
+							{
+								outlineScale = std::clamp(1.0f + 0.08f / bounds.sphereRadius, 1.02f, 1.08f);
+							}
+							const glm::mat4 outlineModel = model * glm::scale(glm::mat4(1.0f), glm::vec3(outlineScale));
+
+							MaterialParams outline = mat;
+							outline.baseColor = { 1.0f, 0.72f, 0.10f, 0.95f };
+							outline.albedoDescIndex = 0;
+							ctx.commandList.SetState(outlineState_);
+							DrawOne(mesh, outlineModel, outline);
+
 							MaterialParams hi = mat;
 							hi.baseColor = { 1.0f, 0.95f, 0.25f, 0.35f };
 							hi.albedoDescIndex = 0; // force solid color
 							ctx.commandList.SetState(highlightState_);
 							DrawOne(mesh, model, hi);
+
+							ctx.commandList.SetStencilRef(0u);
 							ctx.commandList.SetState(state_);
 						}
 						drewAny = true;
@@ -340,6 +368,31 @@ export namespace rendern
 			highlightState_ = state_;
 			highlightState_.blend.enable = true;
 			highlightState_.depth.writeEnable = false;
+
+			outlineMarkState_ = state_;
+			outlineMarkState_.blend.enable = true;
+			outlineMarkState_.depth.writeEnable = false;
+			outlineMarkState_.depth.stencil.enable = true;
+			outlineMarkState_.depth.stencil.readMask = 0xFFu;
+			outlineMarkState_.depth.stencil.writeMask = 0xFFu;
+			outlineMarkState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+			outlineMarkState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+			outlineMarkState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
+			outlineMarkState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
+			outlineMarkState_.depth.stencil.back = outlineMarkState_.depth.stencil.front;
+
+			outlineState_ = state_;
+			outlineState_.blend.enable = true;
+			outlineState_.depth.writeEnable = false;
+			outlineState_.rasterizer.cullMode = rhi::CullMode::Front;
+			outlineState_.depth.stencil.enable = true;
+			outlineState_.depth.stencil.readMask = 0xFFu;
+			outlineState_.depth.stencil.writeMask = 0x00u;
+			outlineState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+			outlineState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+			outlineState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
+			outlineState_.depth.stencil.front.compareOp = rhi::CompareOp::NotEqual;
+			outlineState_.depth.stencil.back = outlineState_.depth.stencil.front;
 		}
 
 		rhi::IRHIDevice& device_;
@@ -353,6 +406,8 @@ export namespace rendern
 		rhi::PipelineHandle psoTex_{};
 		rhi::GraphicsState state_{};
 		rhi::GraphicsState highlightState_{};
+		rhi::GraphicsState outlineMarkState_{};
+		rhi::GraphicsState outlineState_{};
 
 		MeshRHI skyboxMesh_{};
 		rhi::PipelineHandle psoSkybox_{};

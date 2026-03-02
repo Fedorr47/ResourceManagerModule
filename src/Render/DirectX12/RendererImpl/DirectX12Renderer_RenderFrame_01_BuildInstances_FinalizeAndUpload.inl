@@ -106,6 +106,7 @@ const std::uint32_t instStride = static_cast<std::uint32_t>(sizeof(InstanceData)
 // inside the batched instance buffer.
 const rendern::MeshRHI* editorHighlightMesh = nullptr;
 bool editorHighlightIsTransparent = false;
+float editorOutlineWorldOffset = 0.025f;
 
 if (!combinedInstances.empty())
 {
@@ -134,6 +135,11 @@ if (highlightInstanceBuffer_ && scene.editorSelectedDrawItem >= 0
 		device_.UpdateBuffer(highlightInstanceBuffer_, std::as_bytes(std::span{ &inst, 1 }));
 
 		editorHighlightMesh = mesh;
+		const auto& bounds = di.mesh->GetBounds();
+		if (bounds.sphereRadius > 0.0f)
+		{
+			editorOutlineWorldOffset = std::max(0.01f, bounds.sphereRadius * 0.03f);
+		}
 		// If the selected object is transparent, we render highlight AFTER the transparent pass
 		// so it stays visible on top of its own transparency.
 		if (di.material.id != 0)

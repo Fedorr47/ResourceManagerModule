@@ -20,6 +20,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 	planarMirrorDraws,
 	editorHighlightMesh,
 	editorHighlightIsTransparent,
+	editorOutlineWorldOffset,
 	doDepthPrepass,
 	imguiDrawData](renderGraph::PassContext& ctx)
 {
@@ -42,6 +43,16 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 
 	const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
 	const mathUtils::Mat4 viewProj = proj * view;
+
+	constexpr std::uint32_t kEditorOutlineStencilRef = 0x80u;
+
+	auto BindEditorSelectionGeometry = [&]()
+	{
+		ctx.commandList.BindInputLayout(editorHighlightMesh->layoutInstanced);
+		ctx.commandList.BindVertexBuffer(0, editorHighlightMesh->vertexBuffer, editorHighlightMesh->vertexStrideBytes, 0);
+		ctx.commandList.BindVertexBuffer(1, highlightInstanceBuffer_, instStride, 0);
+		ctx.commandList.BindIndexBuffer(editorHighlightMesh->indexBuffer, editorHighlightMesh->indexType, 0);
+	};
 
 	auto DrawEditorSelectionHighlight = [&]()
 	{
@@ -70,10 +81,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 		constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
 		constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-		ctx.commandList.BindInputLayout(editorHighlightMesh->layoutInstanced);
-		ctx.commandList.BindVertexBuffer(0, editorHighlightMesh->vertexBuffer, editorHighlightMesh->vertexStrideBytes, 0);
-		ctx.commandList.BindVertexBuffer(1, highlightInstanceBuffer_, instStride, 0);
-		ctx.commandList.BindIndexBuffer(editorHighlightMesh->indexBuffer, editorHighlightMesh->indexType, 0);
+		BindEditorSelectionGeometry();
 
 		ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
 		ctx.commandList.DrawIndexed(
@@ -85,6 +93,81 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 			0);
 
 		// Restore the main pass state (keeps following draws unchanged).
+		ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
+	};
+
+	auto DrawEditorSelectionOutline = [&]()
+	{
+		if (!editorHighlightMesh || !highlightInstanceBuffer_ || !psoOutline_)
+		{
+			return;
+		}
+
+		const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
+		const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
+
+		BindEditorSelectionGeometry();
+
+		// 1) Mark visible selected-object pixels in stencil.
+		ctx.commandList.SetStencilRef(kEditorOutlineStencilRef);
+		ctx.commandList.SetState(outlineMarkState_);
+		ctx.commandList.BindPipeline(psoHighlight_);
+
+		PerBatchConstants markConstants{};
+		std::memcpy(markConstants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+		std::memcpy(markConstants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+		markConstants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.0f };
+		markConstants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
+		markConstants.uBaseColor = { 1.0f, 1.0f, 1.0f, 0.0f };
+		markConstants.uMaterialFlags = { 0.0f, 0.0f, 0.0f, AsFloatBits(0u) };
+		markConstants.uPbrParams = { 0.0f, 1.0f, 1.0f, 0.0f };
+		markConstants.uCounts = { 0.0f, 0.0f, 0.0f, 0.0f };
+		markConstants.uShadowBias = { 0.0f, 0.0f, 0.0f, 0.0f };
+		markConstants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
+		markConstants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+		ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &markConstants, 1 }));
+		ctx.commandList.DrawIndexed(
+			editorHighlightMesh->indexCount,
+			editorHighlightMesh->indexType,
+			0,
+			0,
+			1,
+			0);
+
+		// 2) Draw inflated mesh only outside the marked silhouette.
+		ctx.commandList.SetState(outlineState_);
+		ctx.commandList.BindPipeline(psoOutline_);
+
+		PerBatchConstants outlineConstants{};
+		std::memcpy(outlineConstants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+		std::memcpy(outlineConstants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+		outlineConstants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.0f };
+		outlineConstants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
+		outlineConstants.uBaseColor = { 1.0f, 0.72f, 0.10f, 0.95f };
+		outlineConstants.uMaterialFlags = { 0.0f, 0.0f, 0.0f, AsFloatBits(0u) };
+		// x = small world-space normal probe distance used to derive a screen-space silhouette direction.
+		outlineConstants.uPbrParams = { editorOutlineWorldOffset, 0.0f, 0.0f, 0.0f };
+		// w = desired outline thickness in pixels.
+		outlineConstants.uCounts = { 0.0f, 0.0f, 0.0f, 3.0f };
+		// x/y = inverse viewport size (used only by CORE_OUTLINE path).
+		outlineConstants.uShadowBias = {
+			extent.width ? (1.0f / static_cast<float>(extent.width)) : 0.0f,
+			extent.height ? (1.0f / static_cast<float>(extent.height)) : 0.0f,
+			0.0f,
+			0.0f
+		};
+		outlineConstants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
+		outlineConstants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+		ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &outlineConstants, 1 }));
+		ctx.commandList.DrawIndexed(
+			editorHighlightMesh->indexCount,
+			editorHighlightMesh->indexType,
+			0,
+			0,
+			1,
+			0);
+
+		ctx.commandList.SetStencilRef(0u);
 		ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 	};
 
@@ -335,10 +418,11 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 	// --- Planar reflections (stencil-gated overlay; coplanar mirrors are grouped to avoid seams) ---
 	#include "RendererImpl/DirectX12Renderer_RenderFrame_04a_PlanarReflections.inl"
 
-	// If the selected object is opaque, draw highlight BEFORE transparent objects
+	// If the selected object is opaque, draw outline/highlight BEFORE transparent objects
 	// so transparent surfaces still blend on top.
 	if (editorHighlightMesh && !editorHighlightIsTransparent)
 	{
+		DrawEditorSelectionOutline();
 		DrawEditorSelectionHighlight();
 	}
 
@@ -485,10 +569,11 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 		}
 	}
 
-	// If the selected object is itself transparent, render highlight AFTER the transparent pass
+	// If the selected object is itself transparent, render outline/highlight AFTER the transparent pass
 	// so it stays visible on top of its own translucency.
 	if (editorHighlightMesh && editorHighlightIsTransparent)
 	{
+		DrawEditorSelectionOutline();
 		DrawEditorSelectionHighlight();
 	}
 

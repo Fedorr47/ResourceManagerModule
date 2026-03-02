@@ -81,6 +81,22 @@
 						.defines = hiDefs
 						});
 					psoHighlight_ = psoCache_.GetOrCreate("PSO_Mesh_Highlight", vsHi, psHi);
+
+					auto outlineDefs = hiDefs;
+					outlineDefs.push_back("CORE_OUTLINE=1");
+					const auto vsOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Vertex,
+						.name = "VSMain",
+						.filePath = shaderPath.string(),
+						.defines = outlineDefs
+						});
+					const auto psOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
+						.stage = rhi::ShaderStage::Pixel,
+						.name = "PSMain",
+						.filePath = shaderPath.string(),
+						.defines = outlineDefs
+						});
+					psoOutline_ = psoCache_.GetOrCreate("PSO_Mesh_Outline", vsOutline, psOutline);
 				}
 			
 				state_.depth.testEnable = true;
@@ -106,6 +122,37 @@
 				highlightState_.blend.enable = true;
 				highlightState_.depth.writeEnable = false;
 				highlightState_.rasterizer.cullMode = rhi::CullMode::None;
+
+				// Outline mark pass: write stencil where the selected object is visible, keep color untouched
+				// by drawing with alpha=0 under standard alpha blending.
+				outlineMarkState_ = state_;
+				outlineMarkState_.blend.enable = true;
+				outlineMarkState_.depth.writeEnable = false;
+				outlineMarkState_.rasterizer.cullMode = rhi::CullMode::None;
+				outlineMarkState_.depth.stencil.enable = true;
+				outlineMarkState_.depth.stencil.readMask = 0xFFu;
+				outlineMarkState_.depth.stencil.writeMask = 0xFFu;
+				outlineMarkState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+				outlineMarkState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+				outlineMarkState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
+				outlineMarkState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
+				outlineMarkState_.depth.stencil.back = outlineMarkState_.depth.stencil.front;
+
+				// Outline shell pass: render an inflated version of the selected mesh only where the
+				// stencil is NOT equal to the selected-object mark. Front-face culling keeps the shell
+				// mostly on the silhouette.
+				outlineState_ = state_;
+				outlineState_.blend.enable = true;
+				outlineState_.depth.writeEnable = false;
+				outlineState_.rasterizer.cullMode = rhi::CullMode::Front;
+				outlineState_.depth.stencil.enable = true;
+				outlineState_.depth.stencil.readMask = 0xFFu;
+				outlineState_.depth.stencil.writeMask = 0x00u;
+				outlineState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+				outlineState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+				outlineState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
+				outlineState_.depth.stencil.front.compareOp = rhi::CompareOp::NotEqual;
+				outlineState_.depth.stencil.back = outlineState_.depth.stencil.front;
 
 				// Planar reflection stencil mask (writes stencil, keeps color untouched via depth-only PSO).
 				planarMaskState_ = preDepthState_;
