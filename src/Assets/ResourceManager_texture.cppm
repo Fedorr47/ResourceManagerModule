@@ -248,6 +248,41 @@ public:
 		return errorStr;
 	}
 
+	ResourceStreamingStats GetStreamingStats() const
+	{
+		std::scoped_lock lock(mutex_);
+
+		ResourceStreamingStats stats{};
+		stats.totalEntries = static_cast<std::uint32_t>(entries_.size());
+		stats.queuedUploads = static_cast<std::uint32_t>(uploadQueue_.size());
+		stats.queuedDestroys = static_cast<std::uint32_t>(destroyQueue_.size());
+
+		for (const auto& [id, entry] : entries_)
+		{
+			switch (entry.state)
+			{
+			case ResourceState::Loading:
+				++stats.loadingEntries;
+				break;
+			case ResourceState::Loaded:
+				++stats.loadedEntries;
+				break;
+			case ResourceState::Failed:
+				++stats.failedEntries;
+				break;
+			default:
+				break;
+			}
+
+			if (entry.pendingCpu.has_value())
+			{
+				++stats.pendingCpuEntries;
+			}
+		}
+
+		return stats;
+	}
+
 	bool ProcessUploads(TextureIO& io, std::size_t maxPerCall = 8, std::size_t maxDestroyedPerCall = 32)
 	{
 		std::size_t uploaded = 0;

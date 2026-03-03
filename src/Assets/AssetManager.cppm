@@ -243,6 +243,23 @@ namespace
 	}
 } // namespace
 
+export struct AssetStreamingStats
+{
+	ResourceStreamingStats textures{};
+	ResourceStreamingStats meshes{};
+	ResourceStreamingStats total{};
+
+	[[nodiscard]] bool HasPendingWork() const noexcept
+	{
+		return total.HasPendingWork();
+	}
+
+	[[nodiscard]] float Completion01() const noexcept
+	{
+		return total.Completion01();
+	}
+};
+
 export class AssetManager
 {
 public:
@@ -329,6 +346,22 @@ public:
 	{
 		rm_.Clear<TextureResource>();
 		rm_.Clear<rendern::MeshResource>();
+	}
+
+	AssetStreamingStats GetStreamingStats() const
+	{
+		AssetStreamingStats stats{};
+		stats.textures = rm_.GetStorage<TextureResource>().GetStreamingStats();
+		stats.meshes = rm_.GetStorage<rendern::MeshResource>().GetStreamingStats();
+
+		stats.total.totalEntries = stats.textures.totalEntries + stats.meshes.totalEntries;
+		stats.total.loadingEntries = stats.textures.loadingEntries + stats.meshes.loadingEntries;
+		stats.total.loadedEntries = stats.textures.loadedEntries + stats.meshes.loadedEntries;
+		stats.total.failedEntries = stats.textures.failedEntries + stats.meshes.failedEntries;
+		stats.total.pendingCpuEntries = stats.textures.pendingCpuEntries + stats.meshes.pendingCpuEntries;
+		stats.total.queuedUploads = stats.textures.queuedUploads + stats.meshes.queuedUploads;
+		stats.total.queuedDestroys = stats.textures.queuedDestroys + stats.meshes.queuedDestroys;
+		return stats;
 	}
 
 	ResourceManager& GetResourceManager() noexcept { return rm_; }

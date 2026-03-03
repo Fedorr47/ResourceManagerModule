@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
+#include <bit>
 
 export module core:texture_decoder_stb;
 
@@ -36,6 +37,25 @@ export class StbTextureDecoder final : public ITextureDecoder
 		}
 	}
 
+	static void FlipImageRowsRGBA8(std::vector<unsigned char>& pixels, int width, int height)
+	{
+		if (width <= 0 || height <= 1)
+		{
+			return;
+		}
+
+		const std::size_t rowBytes = static_cast<std::size_t>(width) * 4u;
+		std::vector<unsigned char> scratch(rowBytes);
+		for (int y = 0; y < height / 2; ++y)
+		{
+			auto* rowA = pixels.data() + static_cast<std::size_t>(y) * rowBytes;
+			auto* rowB = pixels.data() + static_cast<std::size_t>(height - 1 - y) * rowBytes;
+			std::memcpy(scratch.data(), rowA, rowBytes);
+			std::memcpy(rowA, rowB, rowBytes);
+			std::memcpy(rowB, scratch.data(), rowBytes);
+		}
+	}
+
 	static std::vector<TextureMipLevel> MakeMipChain_Box2x2(
 		const std::vector<unsigned char>& mip0,
 		std::uint32_t width0,
@@ -46,6 +66,7 @@ export class StbTextureDecoder final : public ITextureDecoder
 		bool isNormalMap)
 	{
 		std::vector<TextureMipLevel> chain;
+		chain.reserve(1u + static_cast<std::size_t>(std::bit_width(std::max(width0, height0))));
 
 		// Normal maps must stay in linear space.
 		const bool effectiveSrgb = srgb && !isNormalMap;
@@ -234,6 +255,7 @@ export class StbTextureDecoder final : public ITextureDecoder
 		bool generateMips,
 		bool srgb,
 		bool isNormalMap,
+		bool flipY,
 		TextureCPUData& outCpu,
 		std::string& outError)
 	{
@@ -278,6 +300,10 @@ export class StbTextureDecoder final : public ITextureDecoder
 		{
 			std::vector<unsigned char> mip0;
 			CopyRectRGBA8(pixels, width, height, rects[face].x, rects[face].y, faceSize, mip0);
+			if (flipY)
+			{
+				FlipImageRowsRGBA8(mip0, faceSize, faceSize);
+			}
 			outCpu.cubeMips[static_cast<std::size_t>(face)] = MakeMipChain_Box2x2(
 				mip0,
 				static_cast<std::uint32_t>(faceSize),
@@ -295,9 +321,6 @@ export class StbTextureDecoder final : public ITextureDecoder
 	std::optional<TextureCPUData> Decode(const TextureProperties& properties, std::string_view resolvedPath)
 	{
 		namespace fs = std::filesystem;
-
-		// stb flip is global; set it per-decode.
-		stbi_set_flip_vertically_on_load(properties.flipY ? 1 : 0);
 
 		auto resolvePath = [](std::string_view pth) -> fs::path
 			{
@@ -338,8 +361,6 @@ export class StbTextureDecoder final : public ITextureDecoder
 
 		if (properties.dimension == TextureDimension::Cube)
 		{
-			stbi_set_flip_vertically_on_load(0);
-
 			TextureCPUData out{};
 			out.dimension = TextureDimension::Cube;
 			out.format = TextureFormat::RGBA;
@@ -348,7 +369,7 @@ export class StbTextureDecoder final : public ITextureDecoder
 			if (properties.cubeFromCross)
 			{
 				std::string error;
-				if (!TryDecodeCubeCrossRGBA8(resolvePath(properties.filePath), properties.generateMips, properties.srgb, properties.isNormalMap, out, error))
+				if (!TryDecodeCubeCrossRGBA8(resolvePath(properties.filePath), properties.generateMips, properties.srgb, properties.isNormalMap, properties.flipY, out, error))
 				{
 					throw std::runtime_error("Cubemap cross decode failed: " + error);
 				}
@@ -371,6 +392,10 @@ export class StbTextureDecoder final : public ITextureDecoder
 
 				int w = 0, h = 0;
 				auto mip0 = loadFaceRGBA8(facePath, w, h);
+				if (properties.flipY)
+				{
+					FlipImageRowsRGBA8(mip0, w, h);
+				}
 
 				if (face == 0)
 				{
@@ -404,7 +429,6 @@ export class StbTextureDecoder final : public ITextureDecoder
 		}
 
 		// ---------------------- Tex2D ----------------------
-		stbi_set_flip_vertically_on_load(properties.flipY ? 1 : 0);
 		fs::path correctPath = resolvePath(resolvedPath);
 
 		if (!fs::exists(correctPath))
@@ -430,6 +454,10 @@ export class StbTextureDecoder final : public ITextureDecoder
 		std::vector<unsigned char> mip0;
 		mip0.resize(size);
 		std::memcpy(mip0.data(), data, size);
+		if (properties.flipY)
+		{
+			FlipImageRowsRGBA8(mip0, width, height);
+		}
 
 		stbi_image_free(data);
 

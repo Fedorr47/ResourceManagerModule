@@ -14,6 +14,7 @@ module;
 #include <stdexcept>
 #include <functional>
 #include <mutex>
+#include <algorithm>
 
 export module core:resource_manager_core;
 
@@ -108,6 +109,33 @@ export struct TextureCPUData
 export struct GPUTexture
 {
 	unsigned int id{};
+};
+
+export struct ResourceStreamingStats
+{
+	std::uint32_t totalEntries{};
+	std::uint32_t loadingEntries{};
+	std::uint32_t loadedEntries{};
+	std::uint32_t failedEntries{};
+	std::uint32_t pendingCpuEntries{};
+	std::uint32_t queuedUploads{};
+	std::uint32_t queuedDestroys{};
+
+	[[nodiscard]] bool HasPendingWork() const noexcept
+	{
+		return loadingEntries > 0u || pendingCpuEntries > 0u || queuedUploads > 0u;
+	}
+
+	[[nodiscard]] float Completion01() const noexcept
+	{
+		if (totalEntries == 0u)
+		{
+			return 1.0f;
+		}
+
+		const std::uint32_t completed = loadedEntries + failedEntries;
+		return std::clamp(static_cast<float>(completed) / static_cast<float>(totalEntries), 0.0f, 1.0f);
+	}
 };
 
 export class ITextureDecoder
@@ -370,6 +398,12 @@ public:
 
 	template <typename T>
 	ResourceStorage<T>& GetStorage()
+	{
+		return storage<T>();
+	}
+
+	template <typename T>
+	const ResourceStorage<T>& GetStorage() const
 	{
 		return storage<T>();
 	}
