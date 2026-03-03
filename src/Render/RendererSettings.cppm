@@ -54,7 +54,10 @@ export namespace rendern
 		float planarMirrorNormalLength{ 2.0f };
 
 		bool loadingOverlayVisible{ false };
-		float loadingOverlayProgress01{ 0.0f };
+		float loadingOverlayProgressBar{ 0.0f };
+
+		std::uint32_t loadingOverlayTotalUnits{ 0u };
+		std::uint32_t loadingOverlayCompletedUnits{ 0u };
 
 		float reflectionCaptureFovPadDeg{ 0.0f };
 		std::filesystem::path modelPath = std::filesystem::path("models") / "cube.obj";

@@ -367,7 +367,7 @@ if (settings_.loadingOverlayVisible)
 	const std::uint32_t backbufferH = std::max(1u, scDesc.extent.height);
 	const float pxToNdcX = 2.0f / static_cast<float>(backbufferW);
 	const float pxToNdcY = 2.0f / static_cast<float>(backbufferH);
-	const float progress01 = std::clamp(settings_.loadingOverlayProgress01, 0.0f, 1.0f);
+	const float progressOfBar = std::clamp(settings_.loadingOverlayProgressBar, 0.0f, 1.0f);
 
 	const float barWidthNdc = std::clamp(520.0f * pxToNdcX, 0.42f, 0.82f);
 	const float barHeightNdc = std::clamp(24.0f * pxToNdcY, 0.035f, 0.09f);
@@ -383,31 +383,42 @@ if (settings_.loadingOverlayVisible)
 	const float innerX1 = x1 - borderPadNdcX;
 	const float innerY0 = y0 + borderPadNdcY;
 	const float innerY1 = y1 - borderPadNdcY;
-	const float fillX1 = std::lerp(innerX0, innerX1, progress01);
+	const float fillX1 = std::lerp(innerX0, innerX1, progressOfBar);
 
 	const std::uint32_t colFrame = debugDraw::PackRGBA8(235, 235, 235, 255);
 	const std::uint32_t colBg = debugDraw::PackRGBA8(18, 24, 32, 255);
 	const std::uint32_t colFill = debugDraw::PackRGBA8(80, 220, 255, 255);
 	const std::uint32_t colTick = debugDraw::PackRGBA8(255, 255, 255, 255);
 
-	const std::uint32_t bgColumns = std::max(8u, static_cast<std::uint32_t>((innerX1 - innerX0) / pxToNdcX));
-	debugList.AddScreenSpaceFilledRectNdc(innerX0, innerY0, innerX1, innerY1, colBg, bgColumns);
+	// Use pixel-aligned fills to avoid "black stripes" caused by line rasterization gaps.
+	debugList.AddScreenSpaceFilledRectNdcPixelAligned(innerX0, innerY0, innerX1, innerY1, colBg, pxToNdcX);
 	if (fillX1 > innerX0)
 	{
-		const std::uint32_t fillColumns = std::max(2u, static_cast<std::uint32_t>((fillX1 - innerX0) / pxToNdcX));
-		debugList.AddScreenSpaceFilledRectNdc(innerX0, innerY0, fillX1, innerY1, colFill, fillColumns);
+		debugList.AddScreenSpaceFilledRectNdcPixelAligned(innerX0, innerY0, fillX1, innerY1, colFill, pxToNdcX);
 	}
 
 	debugList.AddScreenSpaceRectNdc(x0, y0, x1, y1, colFrame);
 	debugList.AddScreenSpaceRectNdc(innerX0, innerY0, innerX1, innerY1, colFrame);
 
-	for (std::uint32_t tick = 1; tick < 4; ++tick)
+	const std::uint32_t totalUnits = settings_.loadingOverlayTotalUnits;
+	if (totalUnits > 1u)
 	{
-		const float xt = std::lerp(innerX0, innerX1, static_cast<float>(tick) / 4.0f);
-		debugList.AddScreenSpaceLineNdc(
-			mathUtils::Vec3(xt, innerY0, 0.0f),
-			mathUtils::Vec3(xt, innerY1, 0.0f),
-			colTick);
+		std::uint32_t tickEvery = 1u;
+		constexpr std::uint32_t kMaxTicks = 24u;
+		while ((totalUnits / tickEvery) > kMaxTicks)
+		{
+			tickEvery *= 2u;
+		}
+
+		for (std::uint32_t t = tickEvery; t < totalUnits; t += tickEvery)
+		{
+			const float frac = static_cast<float>(t) / static_cast<float>(totalUnits);
+			const float xt = std::lerp(innerX0, innerX1, frac);
+			debugList.AddScreenSpaceLineNdc(
+				mathUtils::Vec3(xt, innerY0, 0.0f),
+				mathUtils::Vec3(xt, innerY1, 0.0f),
+				colTick);
+		}
 	}
 }
 

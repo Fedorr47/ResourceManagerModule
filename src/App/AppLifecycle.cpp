@@ -74,7 +74,7 @@ namespace appLifecycle
 
         app.rendererSettings.drawLightGizmos = true;
         app.rendererSettings.loadingOverlayVisible = true;
-        app.rendererSettings.loadingOverlayProgress01 = 0.0f;
+        app.rendererSettings.loadingOverlayProgressBar = 0.0f;
         app.renderer = std::make_unique<rendern::Renderer>(*app.device, app.rendererSettings);
 
 #if defined(CORE_USE_DX12)
@@ -131,7 +131,7 @@ namespace appLifecycle
 
         auto& overlay = app.loadingOverlay;
         const float lerpAlpha = std::clamp(deltaSeconds * (hasPendingStreaming ? 4.0f : 10.0f), 0.0f, 1.0f);
-        overlay.displayProgress01 = std::lerp(overlay.displayProgress01, targetProgress01, lerpAlpha);
+        overlay.displayProgressBar = std::lerp(overlay.displayProgressBar, targetProgress01, lerpAlpha);
 
         if (hasPendingStreaming)
         {
@@ -140,7 +140,7 @@ namespace appLifecycle
         }
         else
         {
-            overlay.displayProgress01 = std::max(overlay.displayProgress01, 1.0f);
+            overlay.displayProgressBar = std::max(overlay.displayProgressBar, 1.0f);
             overlay.completedHoldSeconds += deltaSeconds;
             if (overlay.completedHoldSeconds >= 0.35f)
             {
@@ -149,9 +149,12 @@ namespace appLifecycle
         }
 
         app.rendererSettings.loadingOverlayVisible = overlay.visible;
-        app.rendererSettings.loadingOverlayProgress01 = overlay.visible
-            ? std::clamp(overlay.displayProgress01, hasPendingStreaming ? 0.02f : 1.0f, 1.0f)
+        app.rendererSettings.loadingOverlayProgressBar = overlay.visible
+            ? std::clamp(overlay.displayProgressBar, hasPendingStreaming ? 0.02f : 1.0f, 1.0f)
             : 0.0f;
+
+        app.rendererSettings.loadingOverlayTotalUnits = streamingStats.total.totalEntries;
+        app.rendererSettings.loadingOverlayCompletedUnits = streamingStats.total.loadedEntries + streamingStats.total.failedEntries;
 
         app.win32Input.SetCaptureMode(appUi::GetInputCaptureForImGui());
         app.win32Input.NewFrame(app.window.hwnd);

@@ -11,7 +11,7 @@ namespace appLifecycle
     struct LoadingOverlayState
     {
         bool visible = true;
-        float displayProgress01 = 0.0f;
+        float displayProgressBar = 0.0f;
         float completedHoldSeconds = 0.0f;
     };
 
