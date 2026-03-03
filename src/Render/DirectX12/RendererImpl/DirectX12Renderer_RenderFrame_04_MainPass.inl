@@ -46,6 +46,10 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 	std::vector<EditorSelectionDraw> selectionOpaque;
 	std::vector<EditorSelectionDraw> selectionTransparent;
 
+	std::vector<InstanceData> selectionInstances;
+	std::vector<std::uint32_t> selectionOpaqueStart;
+	std::vector<std::uint32_t> selectionTransparentStart;
+
 	auto BindEditorSelectionGeometry = [&](const rendern::MeshRHI& mesh)
 		{
 			ctx.commandList.BindInputLayout(mesh.layoutInstanced);
@@ -54,7 +58,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 			ctx.commandList.BindIndexBuffer(mesh.indexBuffer, mesh.indexType, 0);
 		};
 
-	auto DrawEditorSelectionHighlight = [&](const rendern::MeshRHI& mesh)
+	auto DrawEditorSelectionHighlight = [&](const rendern::MeshRHI& mesh, std::uint32_t startInstance)
 		{
 			if (!highlightInstanceBuffer_)
 			{
@@ -90,13 +94,13 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 				0,
 				0,
 				1,
-				0);
+				startInstance);
 
 			// Restore the main pass state (keeps following draws unchanged).
 			ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 		};
 
-	auto DrawEditorSelectionOutline = [&](const rendern::MeshRHI& mesh, float editorOutlineWorldOffset)
+	auto DrawEditorSelectionOutline = [&](const rendern::MeshRHI& mesh, float editorOutlineWorldOffset, std::uint32_t startInstance)
 		{
 			if (!highlightInstanceBuffer_ || !psoOutline_)
 			{
@@ -132,7 +136,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 				0,
 				0,
 				1,
-				0);
+				startInstance);
 
 			// 2) Draw inflated mesh only outside the marked silhouette.
 			ctx.commandList.SetState(outlineState_);
@@ -165,12 +169,12 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 				0,
 				0,
 				1,
-				0);
+				startInstance);
 
 			ctx.commandList.SetStencilRef(0u);
 			ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 		};
-
+	
 	auto UploadSelectionInstance = [&](const InstanceData& inst)
 		{
 			if (!highlightInstanceBuffer_)
@@ -180,19 +184,115 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 			device_.UpdateBuffer(highlightInstanceBuffer_, std::as_bytes(std::span{ &inst, 1 }));
 		};
 
-	auto DrawSelectionGroup = [&](const std::vector<EditorSelectionDraw>& group)
+	auto DrawSelectionGroup = [&](const std::vector<EditorSelectionDraw>& group, const std::vector<std::uint32_t>& starts)
 		{
-			for (const EditorSelectionDraw& s : group)
+			const std::size_t count = std::min(group.size(), starts.size());
+			for (std::size_t i = 0; i < count; ++i)
 			{
+				const EditorSelectionDraw& s = group[i];
 				if (!s.mesh)
 				{
 					continue;
 				}
-				UploadSelectionInstance(s.instance);
-				DrawEditorSelectionOutline(*s.mesh, s.outlineWorldOffset);
-				DrawEditorSelectionHighlight(*s.mesh);
+				const std::uint32_t startInstance = starts[i];
+				DrawEditorSelectionOutline(*s.mesh, s.outlineWorldOffset, startInstance);
+				DrawEditorSelectionHighlight(*s.mesh, startInstance);
 			}
 		};
+
+	// Build editor selection draw lists once per frame. We split into opaque/transparent selections
+	// to preserve the old behavior:
+	// - opaque selection outline/highlight is drawn BEFORE transparent objects,
+	// - transparent selection outline/highlight is drawn AFTER the transparent pass.
+	selectionOpaque.clear();
+	selectionTransparent.clear();
+	selectionInstances.clear();
+	selectionOpaqueStart.clear();
+	selectionTransparentStart.clear();
+
+	constexpr std::size_t kMaxSelectionInstances = 4096;
+	selectionOpaque.reserve(scene.editorSelectedDrawItems.size());
+	selectionTransparent.reserve(scene.editorSelectedDrawItems.size());
+	selectionInstances.reserve(std::min(scene.editorSelectedDrawItems.size(), kMaxSelectionInstances));
+	selectionOpaqueStart.reserve(scene.editorSelectedDrawItems.size());
+	selectionTransparentStart.reserve(scene.editorSelectedDrawItems.size());
+
+	for (const int diIndex : scene.editorSelectedDrawItems)
+	{
+		if (diIndex < 0)
+		{
+			continue;
+		}
+
+		if (selectionInstances.size() >= kMaxSelectionInstances)
+		{
+			break;
+		}
+
+		const std::size_t idx = static_cast<std::size_t>(diIndex);
+		if (idx >= scene.drawItems.size())
+		{
+			continue;
+		}
+
+		const DrawItem& di = scene.drawItems[idx];
+		const rendern::MeshRHI* mesh = di.mesh ? &di.mesh->GetResource() : nullptr;
+		if (!mesh || mesh->indexCount == 0 || !mesh->vertexBuffer || !mesh->indexBuffer)
+		{
+			continue;
+		}
+
+		EditorSelectionDraw sel{};
+		sel.mesh = mesh;
+
+		const mathUtils::Mat4 model = di.transform.ToMatrix();
+		sel.instance.i0 = model[0];
+		sel.instance.i1 = model[1];
+		sel.instance.i2 = model[2];
+		sel.instance.i3 = model[3];
+
+		sel.outlineWorldOffset = 0.01f;
+		if (di.mesh)
+		{
+			const auto& bounds = di.mesh->GetBounds();
+			if (bounds.sphereRadius > 0.0f)
+			{
+				sel.outlineWorldOffset = std::max(0.01f, bounds.sphereRadius * 0.03f);
+			}
+		}
+
+		if (di.material.id != 0)
+		{
+			const auto& mat = scene.GetMaterial(di.material);
+			const MaterialPerm perm = EffectivePerm(mat);
+			sel.isTransparent = HasFlag(perm, MaterialPerm::Transparent);
+		}
+		else
+		{
+			sel.isTransparent = false;
+		}
+
+		const std::uint32_t startInstance = static_cast<std::uint32_t>(selectionInstances.size());
+		selectionInstances.push_back(sel.instance);
+
+		if (sel.isTransparent)
+		{
+			selectionTransparent.push_back(sel);
+			selectionTransparentStart.push_back(startInstance);
+		}
+		else
+		{
+			selectionOpaque.push_back(sel);
+			selectionOpaqueStart.push_back(startInstance);
+		}
+	}
+
+	// Upload all selection instances at once. Note: rhi::Device::UpdateBuffer is deferred on DX12,
+	// so per-draw updates would not interleave correctly with draw calls.
+	if (!selectionInstances.empty() && highlightInstanceBuffer_)
+	{
+		device_.UpdateBuffer(highlightInstanceBuffer_, std::as_bytes(std::span{ selectionInstances }));
+	}
 
 	// --- Skybox draw ---
 	{
@@ -396,70 +496,6 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 			0.0f
 		};
 
-		// Gather selection list for this frame. We split into opaque/transparent selections
-		// to preserve the old behavior:
-		// - opaque selection outline/highlight is drawn BEFORE transparent objects,
-		// - transparent selection outline/highlight is drawn AFTER the transparent pass.
-		selectionOpaque.reserve(scene.editorSelectedDrawItems.size());
-		selectionTransparent.reserve(scene.editorSelectedDrawItems.size());
-
-		for (const int diIndex : scene.editorSelectedDrawItems)
-		{
-			if (diIndex < 0)
-			{
-				continue;
-			}
-			const std::size_t idx = static_cast<std::size_t>(diIndex);
-			if (idx >= scene.drawItems.size())
-			{
-				continue;
-			}
-
-			const DrawItem& di = scene.drawItems[idx];
-			const rendern::MeshRHI* mesh = di.mesh ? &di.mesh->GetResource() : nullptr;
-			if (!mesh || mesh->indexCount == 0 || !mesh->vertexBuffer || !mesh->indexBuffer)
-			{
-				continue;
-			}
-
-			EditorSelectionDraw sel{};
-			sel.mesh = mesh;
-			const mathUtils::Mat4 model = di.transform.ToMatrix();
-			sel.instance.i0 = model[0];
-			sel.instance.i1 = model[1];
-			sel.instance.i2 = model[2];
-			sel.instance.i3 = model[3];
-
-			if (di.mesh)
-			{
-				const auto& bounds = di.mesh->GetBounds();
-				if (bounds.sphereRadius > 0.0f)
-				{
-					sel.outlineWorldOffset = std::max(0.01f, bounds.sphereRadius * 0.03f);
-				}
-			}
-
-			if (di.material.id != 0)
-			{
-				const auto& mat = scene.GetMaterial(di.material);
-				const MaterialPerm perm = EffectivePerm(mat);
-				sel.isTransparent = HasFlag(perm, MaterialPerm::Transparent);
-			}
-			else
-			{
-				sel.isTransparent = false;
-			}
-
-			if (sel.isTransparent)
-			{
-				selectionTransparent.push_back(sel);
-			}
-			else
-			{
-				selectionOpaque.push_back(sel);
-			}
-		}
-
 		constants.uShadowBias = {
 			settings_.dirShadowBaseBiasTexels,
 			settings_.spotShadowBaseBiasTexels,
@@ -508,7 +544,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 	// so transparent surfaces still blend on top.
 	if (!selectionOpaque.empty())
 	{
-		DrawSelectionGroup(selectionOpaque);
+		DrawSelectionGroup(selectionOpaque, selectionOpaqueStart);
 	}
 
 	if (!transparentDraws.empty())
@@ -658,7 +694,7 @@ graph.AddSwapChainPass("MainPass", clearDesc,
 	// so it stays visible on top of their own translucency.
 	if (!selectionTransparent.empty())
 	{
-		DrawSelectionGroup(selectionTransparent);
+		DrawSelectionGroup(selectionTransparent, selectionTransparentStart);
 	}
 
 	// ImGui overlay (optional)

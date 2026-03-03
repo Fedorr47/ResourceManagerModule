@@ -39,7 +39,7 @@
 					rhi::BufferDesc id{};
 					id.bindFlag = rhi::BufferBindFlag::VertexBuffer;
 					id.usageFlag = rhi::BufferUsageFlag::Dynamic;
-					id.sizeInBytes = sizeof(InstanceData);
+					id.sizeInBytes = sizeof(InstanceData) * 4096u; // multi-select outline/highlight
 					id.debugName = "HighlightInstanceVB";
 					highlightInstanceBuffer_ = device_.CreateBuffer(id);
 				}
