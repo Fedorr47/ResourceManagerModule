@@ -42,6 +42,8 @@ import :mesh;
 import :scene_bridge;
 import :debug_draw;
 import :debug_draw_renderer_dx12;
+import :debug_text;
+import :debug_text_renderer_dx12;
 import :common_DX12_Structs;
 
 export namespace rendern
@@ -53,19 +55,19 @@ export namespace rendern
 	{
 		// +X, -X, +Y, -Y, +Z, -Z
 		static const mathUtils::Vec3 kDirs[6] = {
-			{ 1, 0, 0 }, 
-			{ -1, 0, 0 }, 
-			{ 0, 1, 0 }, 
+			{ 1, 0, 0 },
+			{ -1, 0, 0 },
+			{ 0, 1, 0 },
 			{ 0, -1, 0 },
-			{ 0, 0, 1 }, 
+			{ 0, 0, 1 },
 			{ 0, 0, -1 }
 		};
 		static const mathUtils::Vec3 kUps[6] = {
 			{ 0, 1, 0 },
-			{ 0, 1, 0 }, 
-			{ 0, 0, -1 }, 
-			{ 0, 0, 1 }, 
-			{ 0, 1, 0 }, 
+			{ 0, 1, 0 },
+			{ 0, 0, -1 },
+			{ 0, 0, 1 },
+			{ 0, 1, 0 },
 			{ 0, 1, 0 }
 		};
 		const std::uint32_t f = (face < 6u) ? face : 0u;
@@ -85,6 +87,7 @@ export namespace rendern
 			, shaderLibrary_(device)
 			, psoCache_(device)
 			, debugDrawRenderer_(device, shaderLibrary_, psoCache_)
+			, debugTextRenderer_(device, shaderLibrary_, psoCache_)
 		{
 			CreateResources();
 		}
@@ -236,7 +239,7 @@ export namespace rendern
 			{
 				device_.UpdateTextureDescriptor(reflectionCubeDescIndex_, reflectionCube_);
 			}
-	
+
 
 			for (ReflectionProbeRuntime& probe : reflectionProbes_)
 			{
@@ -256,44 +259,28 @@ export namespace rendern
 		}
 
 
-		
-	void EnsureReflectionProbeResources(std::size_t requiredCount)
-	{
-		if (requiredCount > kMaxReflectionProbes)
-		{
-			requiredCount = kMaxReflectionProbes;
-		}
 
-		if (reflectionProbes_.size() < requiredCount)
+		void EnsureReflectionProbeResources(std::size_t requiredCount)
 		{
-			reflectionProbes_.resize(requiredCount);
-		}
-
-		for (std::size_t i = 0; i < requiredCount; ++i)
-		{
-			ReflectionProbeRuntime& probe = reflectionProbes_[i];
-			const bool needCreate = (!probe.cube) || (!probe.depthCube);
-			if (!needCreate)
+			if (requiredCount > kMaxReflectionProbes)
 			{
-				continue;
+				requiredCount = kMaxReflectionProbes;
 			}
 
-			if (probe.cube)
+			if (reflectionProbes_.size() < requiredCount)
 			{
-				device_.DestroyTexture(probe.cube);
-				probe.cube = {};
-			}
-			if (probe.depthCube)
-			{
-				device_.DestroyTexture(probe.depthCube);
-				probe.depthCube = {};
+				reflectionProbes_.resize(requiredCount);
 			}
 
-			probe.cube = device_.CreateTextureCube(reflectionCubeExtent_, rhi::Format::RGBA8_UNORM);
-			probe.depthCube = device_.CreateTextureCube(reflectionCubeExtent_, rhi::Format::D32_FLOAT);
-
-			if (!probe.cube || !probe.depthCube)
+			for (std::size_t i = 0; i < requiredCount; ++i)
 			{
+				ReflectionProbeRuntime& probe = reflectionProbes_[i];
+				const bool needCreate = (!probe.cube) || (!probe.depthCube);
+				if (!needCreate)
+				{
+					continue;
+				}
+
 				if (probe.cube)
 				{
 					device_.DestroyTexture(probe.cube);
@@ -304,27 +291,43 @@ export namespace rendern
 					device_.DestroyTexture(probe.depthCube);
 					probe.depthCube = {};
 				}
-				continue;
-			}
 
-			if (probe.cubeDescIndex == 0)
-			{
-				probe.cubeDescIndex = device_.AllocateTextureDesctiptor(probe.cube);
-			}
-			else
-			{
-				device_.UpdateTextureDescriptor(probe.cubeDescIndex, probe.cube);
-			}
+				probe.cube = device_.CreateTextureCube(reflectionCubeExtent_, rhi::Format::RGBA8_UNORM);
+				probe.depthCube = device_.CreateTextureCube(reflectionCubeExtent_, rhi::Format::D32_FLOAT);
 
-			probe.dirty = true;
-			probe.hasLastPos = false;
-			probe.ownerDrawItem = -1;
-			probe.capturePos = {};
-			probe.lastPos = {};
+				if (!probe.cube || !probe.depthCube)
+				{
+					if (probe.cube)
+					{
+						device_.DestroyTexture(probe.cube);
+						probe.cube = {};
+					}
+					if (probe.depthCube)
+					{
+						device_.DestroyTexture(probe.depthCube);
+						probe.depthCube = {};
+					}
+					continue;
+				}
+
+				if (probe.cubeDescIndex == 0)
+				{
+					probe.cubeDescIndex = device_.AllocateTextureDesctiptor(probe.cube);
+				}
+				else
+				{
+					device_.UpdateTextureDescriptor(probe.cubeDescIndex, probe.cube);
+				}
+
+				probe.dirty = true;
+				probe.hasLastPos = false;
+				probe.ownerDrawItem = -1;
+				probe.capturePos = {};
+				probe.lastPos = {};
+			}
 		}
-	}
 
-private:
+	private:
 		static constexpr std::uint32_t kMaxLights = 64;
 		static constexpr std::uint32_t kDefaultInstanceBufferSizeBytes = 8u * 1024u * 1024u; // 8 MB (combined shadow+main instances)
 
@@ -334,6 +337,7 @@ private:
 		ShaderLibrary shaderLibrary_;
 		PSOCache psoCache_;
 		debugDraw::DebugDrawRendererDX12 debugDrawRenderer_;
+		debugText::DebugTextRendererDX12 debugTextRenderer_;
 
 		// Main pass
 		std::array<rhi::PipelineHandle, 4> psoMain_{}; // idx: (UseTex?1:0)|(UseShadow?2:0)

@@ -1,6 +1,7 @@
 
 // Debug primitives (no ImGui dependency) - rendered in the main view.
 debugDraw::DebugDrawList debugList;
+debugText::DebugTextList textList;
 if (settings_.drawLightGizmos)
 {
 	const float scale = settings_.debugLightGizmoScale;
@@ -436,6 +437,23 @@ if (debugList.VertexCount() > 0)
 	graph.AddSwapChainPass("DebugPrimitivesPass", clear, [this, viewProj](renderGraph::PassContext& ctx)
 		{
 			debugDrawRenderer_.Draw(ctx.commandList, viewProj, settings_.debugDrawDepthTest);
+		});
+}
+
+// Debug text (no ImGui dependency) - rendered in screen space over the swapchain.
+debugTextRenderer_.Upload(textList);
+if (!textList.Empty())
+{
+	const std::uint32_t backbufferW = std::max(1u, scDesc.extent.width);
+	const std::uint32_t backbufferH = std::max(1u, scDesc.extent.height);
+
+	rhi::ClearDesc clear{};
+	clear.clearColor = false;
+	clear.clearDepth = false;
+
+	graph.AddSwapChainPass("DebugTextPass", clear, [this, backbufferW, backbufferH](renderGraph::PassContext& ctx)
+		{
+			debugTextRenderer_.Draw(ctx.commandList, backbufferW, backbufferH);
 		});
 }
 
