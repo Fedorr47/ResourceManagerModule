@@ -145,32 +145,35 @@ if constexpr (std::is_same_v<T, CommandBeginPass>)
                     curRTVFormats[0] = te.rtvFormat;
                 }
             }
-            // Regular MRT.
-            for (std::uint32_t i = 0; i < fb.colorCount; ++i)
+            else
             {
-                const TextureHandle th = fb.colors[i];
-                if (th.id == 0)
+                // Regular MRT.
+                for (std::uint32_t i = 0; i < fb.colorCount; ++i)
                 {
-                    throw std::runtime_error("DX12: CommandBeginPass: framebuffer color attachment is null");
+                    const TextureHandle th = fb.colors[i];
+                    if (th.id == 0)
+                    {
+                        throw std::runtime_error("DX12: CommandBeginPass: framebuffer color attachment is null");
+                    }
+                    auto it = textures_.find(th.id);
+                    if (it == textures_.end())
+                    {
+                        throw std::runtime_error("DX12: CommandBeginPass: framebuffer color texture not found");
+                    }
+                    auto& te = it->second;
+                    if (!te.hasRTV)
+                    {
+                        throw std::runtime_error("DX12: CommandBeginPass: color texture has no RTV");
+                    }
+                    TransitionResource(
+                        cmdList_.Get(),
+                        te.resource.Get(),
+                        te.state,
+                        D3D12_RESOURCE_STATE_RENDER_TARGET);
+                    rtvs[numRT] = te.rtv;
+                    curRTVFormats[numRT] = te.rtvFormat;
+                    ++numRT;
                 }
-                auto it = textures_.find(th.id);
-                if (it == textures_.end())
-                {
-                    throw std::runtime_error("DX12: CommandBeginPass: framebuffer color texture not found");
-                }
-                auto& te = it->second;
-                if (!te.hasRTV)
-                {
-                    throw std::runtime_error("DX12: CommandBeginPass: color texture has no RTV");
-                }
-                TransitionResource(
-                    cmdList_.Get(),
-                    te.resource.Get(),
-                    te.state,
-                    D3D12_RESOURCE_STATE_RENDER_TARGET);
-                rtvs[numRT] = te.rtv;
-                curRTVFormats[numRT] = te.rtvFormat;
-                ++numRT;
             }
         }
         // Depth
