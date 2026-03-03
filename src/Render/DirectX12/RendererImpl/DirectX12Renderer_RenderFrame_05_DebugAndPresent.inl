@@ -267,6 +267,84 @@ if (scene.editorGizmoMode == GizmoMode::Rotate && scene.editorRotateGizmo.enable
 	debugList.AddWireCircle(pivot, scene.editorRotateGizmo.axisYWorld, scene.editorRotateGizmo.axisZWorld, ringRadius, RingColor(GizmoAxis::X, debugDraw::PackRGBA8(255, 80, 80, 255)), 64, true);
 	debugList.AddWireCircle(pivot, scene.editorRotateGizmo.axisXWorld, scene.editorRotateGizmo.axisZWorld, ringRadius, RingColor(GizmoAxis::Y, debugDraw::PackRGBA8(80, 255, 80, 255)), 64, true);
 	debugList.AddWireCircle(pivot, scene.editorRotateGizmo.axisXWorld, scene.editorRotateGizmo.axisYWorld, ringRadius, RingColor(GizmoAxis::Z, debugDraw::PackRGBA8(80, 160, 255, 255)), 64, true);
+
+	// Axis labels (screen-space text anchored to a projected point on each ring)
+	{
+		auto SafeNormalizeOr = [&](const mathUtils::Vec3& v, const mathUtils::Vec3& fallback) -> mathUtils::Vec3
+			{
+				const float len = mathUtils::Length(v);
+				if (len < 1e-5f)
+				{
+					return fallback;
+				}
+				return v * (1.0f / len);
+			};
+
+		const mathUtils::Vec3 camPos = scene.camera.position;
+		const mathUtils::Vec3 camFwd = SafeNormalizeOr(scene.camera.target - scene.camera.position, mathUtils::Vec3(0.0f, 0.0f, -1.0f));
+		mathUtils::Vec3 camRight = mathUtils::Cross(camFwd, scene.camera.up);
+		camRight = SafeNormalizeOr(camRight, mathUtils::Vec3(1.0f, 0.0f, 0.0f));
+		mathUtils::Vec3 camUp = mathUtils::Cross(camRight, camFwd);
+		camUp = SafeNormalizeOr(camUp, mathUtils::Vec3(0.0f, 1.0f, 0.0f));
+
+		auto AddRotateAxisLabel = [&](GizmoAxis axis, const mathUtils::Vec3& axisNWorld, std::string_view label, std::uint32_t baseColor, float textScale = 2.0f)
+			{
+				const std::uint32_t rgba = RingColor(axis, baseColor);
+
+				// View direction from pivot towards the camera.
+				const mathUtils::Vec3 viewDir = SafeNormalizeOr(camPos - pivot, mathUtils::Vec3(0.0f, 0.0f, 1.0f));
+				const mathUtils::Vec3 n = SafeNormalizeOr(axisNWorld, mathUtils::Vec3(1.0f, 0.0f, 0.0f));
+
+				// Pick a point on the ring that is most "facing" the camera: project viewDir onto the ring plane.
+				mathUtils::Vec3 t = viewDir - n * mathUtils::Dot(viewDir, n);
+				if (mathUtils::Length(t) < 1e-5f)
+				{
+					// If camera is nearly aligned with the axis, fall back to a stable basis.
+					t = camRight - n * mathUtils::Dot(camRight, n);
+					if (mathUtils::Length(t) < 1e-5f)
+					{
+						t = camUp - n * mathUtils::Dot(camUp, n);
+					}
+				}
+				t = SafeNormalizeOr(t, camRight);
+
+				const mathUtils::Vec3 ringPointW = pivot + t * ringRadius;
+
+				mathUtils::Vec2 pivotPx{};
+				mathUtils::Vec2 ringPx{};
+				if (!ProjectWorldToScreenPx(pivot, pivotPx) || !ProjectWorldToScreenPx(ringPointW, ringPx))
+				{
+					return;
+				}
+
+				mathUtils::Vec2 out2D = ringPx - pivotPx;
+				const float outLen = std::sqrt(out2D.x * out2D.x + out2D.y * out2D.y);
+				if (outLen < 1e-3f)
+				{
+					return;
+				}
+				out2D = out2D / outLen;
+
+				// Push the label slightly outside the ring; push more when the projected ring gets small.
+				const float extraPad = std::clamp(140.0f / outLen, 0.0f, 28.0f);
+				const float pad = 10.0f + extraPad;
+				const float x = ringPx.x + out2D.x * pad;
+				const float y = ringPx.y + out2D.y * pad;
+
+				const float outlinePx = std::clamp(textScale * 0.6f, 1.0f, 3.0f);
+				textList.AddOutlinedTextAlignedPx(
+					x, y, label,
+					debugText::TextAlignH::Center, debugText::TextAlignV::Middle,
+					rgba,
+					debugText::PackRGBA8(0, 0, 0, 210),
+					textScale,
+					outlinePx);
+			};
+
+		AddRotateAxisLabel(GizmoAxis::X, scene.editorRotateGizmo.axisXWorld, "X", debugDraw::PackRGBA8(255, 80, 80, 255));
+		AddRotateAxisLabel(GizmoAxis::Y, scene.editorRotateGizmo.axisYWorld, "Y", debugDraw::PackRGBA8(80, 255, 80, 255));
+		AddRotateAxisLabel(GizmoAxis::Z, scene.editorRotateGizmo.axisZWorld, "Z", debugDraw::PackRGBA8(80, 160, 255, 255));
+	}
 }
 if (scene.editorGizmoMode == GizmoMode::Scale && scene.editorScaleGizmo.enabled && scene.editorScaleGizmo.visible)
 {
