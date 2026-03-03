@@ -5,6 +5,7 @@ module;
 #include <optional>
 #include <span>
 #include <functional>
+#include <vector>
 
 export module core:render_graph;
 
@@ -49,7 +50,7 @@ struct RGTextureDesc
 	{
 		bool useSwapChainBackbuffer{ false };
 
-		std::optional<RGTexture> color;
+		std::vector<RGTexture> colors;
 		std::optional<RGTexture> depth;
 
 
@@ -174,29 +175,37 @@ struct RGTextureDesc
 				}
 				else
 				{
-					const auto color = pass.attachments.color ? resources.GetTexture(*pass.attachments.color) : rhi::TextureHandle();
+					std::vector<rhi::TextureHandle> colors;
+					colors.reserve(pass.attachments.colors.size());
+
+					for (const auto& c : pass.attachments.colors)
+					{
+						colors.push_back(resources.GetTexture(c));
+					}
+
 					const auto depth = pass.attachments.depth ? resources.GetTexture(*pass.attachments.depth) : rhi::TextureHandle();
 
-					if (pass.attachments.color)
+					if (!pass.attachments.colors.empty())
 					{
-						passExtent = textures_[pass.attachments.color->id].extent;
+						passExtent = textures_[pass.attachments.colors.front().id].extent;
 					}
 					else if (pass.attachments.depth)
 					{
 						passExtent = textures_[pass.attachments.depth->id].extent;
 					}
 
-					if (pass.attachments.colorCubeAllFaces && color.id != 0)
+					// Cubemap rendering is only supported for a single color attachment.
+					if (pass.attachments.colorCubeAllFaces && colors.size() == 1 && colors[0].id != 0)
 					{
-						frameBuffer = device.CreateFramebufferCube(color, depth);
+						frameBuffer = device.CreateFramebufferCube(colors[0], depth);
 					}
-					else if (pass.attachments.colorCubeFace && color.id != 0)
+					else if (pass.attachments.colorCubeFace && colors.size() == 1 && colors[0].id != 0)
 					{
-						frameBuffer = device.CreateFramebufferCubeFace(color, *pass.attachments.colorCubeFace, depth);
+						frameBuffer = device.CreateFramebufferCubeFace(colors[0], *pass.attachments.colorCubeFace, depth);
 					}
 					else
 					{
-						frameBuffer = device.CreateFramebuffer(color, depth);
+						frameBuffer = device.CreateFramebufferMRT(colors, depth);
 					}
 					transientFramebuffers.push_back(frameBuffer);
 				}

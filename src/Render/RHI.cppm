@@ -256,6 +256,8 @@ export namespace rhi
 		ClearDesc clearDesc{};
 		// Optional: when frameBuffer.id == 0 (swapchain backbuffer), this selects which swapchain.
 		IRHISwapChain* swapChain{ nullptr };
+		// If false, depth-stencil is not bound (useful for fullscreen passes that sample depth as SRV).
+		bool bindDepthStencil{ true };
 	};
 
 	struct InputLayoutDesc
@@ -536,6 +538,7 @@ export namespace rhi
 		virtual ~IRHISwapChain() = default;
 		virtual SwapChainDesc GetDesc() const = 0;
 		virtual FrameBufferHandle GetCurrentBackBuffer() const = 0;
+		virtual TextureHandle GetDepthTexture() const = 0;
 		virtual void Present() = 0;
 		virtual void Resize(Extent2D newExtent) = 0;
 	};
@@ -562,6 +565,21 @@ export namespace rhi
 
 		// Framebuffers
 		virtual FrameBufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
+		// Multiple render targets (MRT). 0 colors means depth-only pass.
+		// Default implementation falls back to the single-color CreateFramebuffer() and will throw for colors.size() > 1.
+		virtual FrameBufferHandle CreateFramebufferMRT(std::span<const TextureHandle> colors, TextureHandle depth)
+		{
+			if (colors.empty())
+			{
+				return CreateFramebuffer(TextureHandle{}, depth);
+			}
+			if (colors.size() == 1)
+			{
+				return CreateFramebuffer(colors[0], depth);
+			}
+
+			throw std::runtime_error("CreateFramebufferMRT: backend does not support MRT yet");
+		}
 		virtual FrameBufferHandle CreateFramebufferCubeFace(TextureHandle colorCube, std::uint32_t faceIndex, TextureHandle depth) = 0;
 		virtual FrameBufferHandle CreateFramebufferCube(TextureHandle colorCube, TextureHandle depthCube)
 		{
@@ -644,6 +662,10 @@ namespace rhi
 		FrameBufferHandle GetCurrentBackBuffer() const override
 		{
 			return FrameBufferHandle{ 0 };
+		}
+		TextureHandle GetDepthTexture() const override
+		{
+			return TextureHandle{};
 		}
 		void Present() override {}
 		void Resize(Extent2D newExtent) override

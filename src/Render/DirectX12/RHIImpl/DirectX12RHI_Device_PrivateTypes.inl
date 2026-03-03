@@ -105,7 +105,9 @@
 
         struct FramebufferEntry
         {
-            TextureHandle color{};
+            static constexpr std::uint32_t kMaxColorAttachments = 8u;
+            std::array<TextureHandle, kMaxColorAttachments> colors{};
+            std::uint32_t colorCount{ 0u };
             TextureHandle depth{};
 
             // UINT32_MAX means "regular 2D color attachment".

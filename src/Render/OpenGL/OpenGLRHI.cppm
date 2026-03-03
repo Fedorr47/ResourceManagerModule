@@ -454,6 +454,11 @@ namespace rhi
 			return FrameBufferHandle{ 0 };
 		}
 
+		TextureHandle GetDepthTexture() const override
+		{
+			return TextureHandle{};
+		}
+
 		void Present() override
 		{
 			if (desc_.hooks.present)

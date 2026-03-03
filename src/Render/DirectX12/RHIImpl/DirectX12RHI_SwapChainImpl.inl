@@ -58,55 +58,8 @@ DX12SwapChain::DX12SwapChain(DX12Device& owner, DX12SwapChainDesc desc)
 
     currBackBuffer_ = swapChain_->GetCurrentBackBufferIndex();
 
-    // Depth+Stencil (D24S8)
-    depthFormat_ = DXGI_FORMAT_D24_UNORM_S8_UINT;
-    {
-        D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
-        heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-        heapDesc.NumDescriptors = 1;
-        heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
-        ThrowIfFailed(device_.NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&dsvHeap_)),
-            "DX12: Create swapchain DSV heap failed");
-
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsvHeap_->GetCPUDescriptorHandleForHeapStart();
-
-        D3D12_HEAP_PROPERTIES heapProps{};
-        heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-        D3D12_RESOURCE_DESC resourceDesc{};
-        resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        resourceDesc.Width = chainSwapDesc_.base.extent.width;
-        resourceDesc.Height = chainSwapDesc_.base.extent.height;
-        resourceDesc.DepthOrArraySize = 1;
-        resourceDesc.MipLevels = 1;
-        resourceDesc.Format = depthFormat_;
-        resourceDesc.SampleDesc.Count = 1;
-        resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-        D3D12_CLEAR_VALUE clearValue{};
-        clearValue.Format = depthFormat_;
-        clearValue.DepthStencil.Depth = 1.0f;
-        clearValue.DepthStencil.Stencil = 0;
-
-        ThrowIfFailed(device_.NativeDevice()->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &resourceDesc,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE,
-            &clearValue,
-            IID_PPV_ARGS(&depth_)),
-            "DX12: Create depth buffer failed");
-
-        D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc{};
-        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-        viewDesc.Format = depthFormat_;
-        viewDesc.Flags = D3D12_DSV_FLAG_NONE;
-        viewDesc.Texture2D.MipSlice = 0;
-
-        device_.NativeDevice()->CreateDepthStencilView(depth_.Get(), &viewDesc, dsv);
-        dsv_ = dsv;
-    }
+    // Depth+Stencil (swapchain depth as regular RHI texture; typeless + SRV + DSV).
+    depthTexture_ = device_.CreateTexture2D(chainSwapDesc_.base.extent, depthFormat_);
 
     backBufferStates_.resize(backBuffers_.size());
     ResetBackBufferStates(D3D12_RESOURCE_STATE_PRESENT);
@@ -125,6 +78,16 @@ FrameBufferHandle DX12SwapChain::GetCurrentBackBuffer() const
 }
 
 
+TextureHandle DX12SwapChain::GetDepthTexture() const
+{
+    return depthTexture_;
+}
+
+DX12SwapChain::~DX12SwapChain()
+{
+    device_.DestroyTexture(depthTexture_);
+    depthTexture_ = TextureHandle{};
+}
 
 void DX12SwapChain::Resize(Extent2D newExtent)
 {
@@ -149,7 +112,8 @@ void DX12SwapChain::Resize(Extent2D newExtent)
     {
         bb.Reset();
     }
-    depth_.Reset();
+    device_.DestroyTexture(depthTexture_);
+    depthTexture_ = TextureHandle{};
 
     const UINT bufferCount = static_cast<UINT>(backBuffers_.size());
 
@@ -172,47 +136,8 @@ void DX12SwapChain::Resize(Extent2D newExtent)
         device_.NativeDevice()->CreateRenderTargetView(backBuffers_[i].Get(), nullptr, descHandle);
     }
 
-    // Recreate depth-stencil buffer + DSV.
-    {
-        D3D12_CPU_DESCRIPTOR_HANDLE dsv = dsvHeap_->GetCPUDescriptorHandleForHeapStart();
-
-        D3D12_HEAP_PROPERTIES heapProps{};
-        heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
-
-        D3D12_RESOURCE_DESC resourceDesc{};
-        resourceDesc.Dimension = D3D12_RESOURCE_DIMENSION_TEXTURE2D;
-        resourceDesc.Width = static_cast<UINT64>(newExtent.width);
-        resourceDesc.Height = static_cast<UINT>(newExtent.height);
-        resourceDesc.DepthOrArraySize = 1;
-        resourceDesc.MipLevels = 1;
-        resourceDesc.Format = depthFormat_;
-        resourceDesc.SampleDesc.Count = 1;
-        resourceDesc.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
-        resourceDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_DEPTH_STENCIL;
-
-        D3D12_CLEAR_VALUE clearValue{};
-        clearValue.Format = depthFormat_;
-        clearValue.DepthStencil.Depth = 1.0f;
-        clearValue.DepthStencil.Stencil = 0;
-
-        ThrowIfFailed(device_.NativeDevice()->CreateCommittedResource(
-            &heapProps,
-            D3D12_HEAP_FLAG_NONE,
-            &resourceDesc,
-            D3D12_RESOURCE_STATE_DEPTH_WRITE,
-            &clearValue,
-            IID_PPV_ARGS(&depth_)),
-            "DX12: Create depth buffer failed (Resize)");
-
-        D3D12_DEPTH_STENCIL_VIEW_DESC viewDesc{};
-        viewDesc.ViewDimension = D3D12_DSV_DIMENSION_TEXTURE2D;
-        viewDesc.Format = depthFormat_;
-        viewDesc.Flags = D3D12_DSV_FLAG_NONE;
-        viewDesc.Texture2D.MipSlice = 0;
-
-        device_.NativeDevice()->CreateDepthStencilView(depth_.Get(), &viewDesc, dsv);
-        dsv_ = dsv;
-    }
+    // Recreate depth-stencil texture (typeless + SRV + DSV).
+    depthTexture_ = device_.CreateTexture2D(newExtent, depthFormat_);
 
     chainSwapDesc_.base.extent = newExtent;
 

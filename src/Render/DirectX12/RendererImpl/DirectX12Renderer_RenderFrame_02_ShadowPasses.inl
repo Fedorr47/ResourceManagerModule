@@ -10,7 +10,6 @@
 
 				renderGraph::PassAttachments att{};
 				att.useSwapChainBackbuffer = false;
-				att.color = std::nullopt;
 				att.depth = shadowRG;
 				att.clearDesc = clear;
 
@@ -86,7 +85,6 @@
 
 					renderGraph::PassAttachments att{};
 					att.useSwapChainBackbuffer = false;
-					att.color = std::nullopt;
 					att.depth = rg;
 					att.clearDesc = clear;
 
@@ -177,7 +175,7 @@
 
 						renderGraph::PassAttachments att{};
 						att.useSwapChainBackbuffer = false;
-						att.color = cube;
+						att.colors = { cube };
 						att.colorCubeAllFaces = true;
 						att.depth = depth;
 						att.clearDesc = clear;
@@ -222,7 +220,7 @@
 
 						renderGraph::PassAttachments att{};
 						att.useSwapChainBackbuffer = false;
-						att.color = cube;
+						att.colors = { cube };
 						att.colorCubeAllFaces = true;
 						att.depth = depth;
 						att.clearDesc = clear;
@@ -274,7 +272,7 @@
 
 							renderGraph::PassAttachments att{};
 							att.useSwapChainBackbuffer = false;
-							att.color = cube;
+							att.colors = { cube };
 							att.colorCubeFace = static_cast<std::uint32_t>(face);
 							att.depth = depth;
 							att.clearDesc = clear;

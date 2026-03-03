@@ -145,7 +145,7 @@ if (settings_.enableReflectionCapture && psoReflectionCapture_ && !reflectiveOwn
 			{
 				renderGraph::PassAttachments att{};
 				att.useSwapChainBackbuffer = false;
-				att.color = cubeRG;
+				att.colors = { cubeRG };
 				att.colorCubeFace = static_cast<std::uint32_t>(face);
 				att.depth = depthTmp;
 				att.clearDesc = clearColorDepth;
@@ -186,7 +186,7 @@ if (settings_.enableReflectionCapture && psoReflectionCapture_ && !reflectiveOwn
 		{
 			renderGraph::PassAttachments att{};
 			att.useSwapChainBackbuffer = false;
-			att.color = cubeRG;
+			att.colors = { cubeRG };
 			att.colorCubeAllFaces = true;
 			att.depth = depthCubeRG;
 			att.clearDesc = meshClear;
@@ -245,7 +245,7 @@ if (settings_.enableReflectionCapture && psoReflectionCapture_ && !reflectiveOwn
 		{
 			renderGraph::PassAttachments att{};
 			att.useSwapChainBackbuffer = false;
-			att.color = cubeRG;
+			att.colors = { cubeRG };
 			att.colorCubeAllFaces = true;
 			att.depth = depthCubeRG;
 			att.clearDesc = meshClear;
@@ -306,7 +306,7 @@ if (settings_.enableReflectionCapture && psoReflectionCapture_ && !reflectiveOwn
 			{
 				renderGraph::PassAttachments att{};
 				att.useSwapChainBackbuffer = false;
-				att.color = cubeRG;
+				att.colors = { cubeRG };
 				att.colorCubeFace = static_cast<std::uint32_t>(face);
 				att.depth = depthTmp;
 				att.clearDesc = meshClear;

@@ -308,18 +308,40 @@
         {
             FrameBufferHandle frameBuffer{ ++nextFBId_ };
             FramebufferEntry frameBufEntry{};
-            frameBufEntry.color = color;
+            if (color.id != 0)
+            {
+                frameBufEntry.colors[0] = color;
+                frameBufEntry.colorCount = 1u;
+            }
             frameBufEntry.depth = depth;
             framebuffers_[frameBuffer.id] = frameBufEntry;
             return frameBuffer;
         }
 
 
+        FrameBufferHandle CreateFramebufferMRT(std::span<const TextureHandle> colors, TextureHandle depth) override
+        {
+            FrameBufferHandle frameBuffer{ ++nextFBId_ };
+            FramebufferEntry frameBufEntry{};
+            const std::size_t count = std::min<std::size_t>(colors.size(), FramebufferEntry::kMaxColorAttachments);
+            frameBufEntry.colorCount = static_cast<std::uint32_t>(count);
+
+            for (std::size_t i = 0; i < count; ++i)
+            {
+                frameBufEntry.colors[i] = colors[i];
+            }
+
+            frameBufEntry.depth = depth;
+            framebuffers_[frameBuffer.id] = frameBufEntry;
+            return frameBuffer;
+        }
+
         FrameBufferHandle CreateFramebufferCube(TextureHandle colorCube, TextureHandle depthCube) override
         {
             FrameBufferHandle frameBuffer{ ++nextFBId_ };
             FramebufferEntry frameBufEntry{};
-            frameBufEntry.color = colorCube;
+            frameBufEntry.colors[0] = colorCube;
+            frameBufEntry.colorCount = 1u;
             frameBufEntry.depth = depthCube;
             frameBufEntry.colorCubeAllFaces = true;
             framebuffers_[frameBuffer.id] = frameBufEntry;
@@ -330,7 +352,8 @@
         {
             FrameBufferHandle frameBuffer{ ++nextFBId_ };
             FramebufferEntry frameBufEntry{};
-            frameBufEntry.color = colorCube;
+            frameBufEntry.colors[0] = colorCube;
+            frameBufEntry.colorCount = 1u;
             frameBufEntry.depth = depth;
             frameBufEntry.colorCubeFace = faceIndex;
             framebuffers_[frameBuffer.id] = frameBufEntry;

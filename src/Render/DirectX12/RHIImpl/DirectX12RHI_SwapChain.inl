@@ -8,10 +8,11 @@ class DX12SwapChain final : public IRHISwapChain
 {
 public:
     DX12SwapChain(DX12Device& device, DX12SwapChainDesc desc);
-    ~DX12SwapChain() override = default;
+    ~DX12SwapChain() override;
 
     SwapChainDesc GetDesc() const override;
     FrameBufferHandle GetCurrentBackBuffer() const override;
+    TextureHandle GetDepthTexture() const override;
     void Present() override;
     void Resize(Extent2D newExtent) override;
 
@@ -25,11 +26,7 @@ public:
         return handle;
     }
 
-    ID3D12Resource* DepthBuffer() const { return depth_.Get(); }
-    D3D12_CPU_DESCRIPTOR_HANDLE DSV() const { return dsv_; }
-
     DXGI_FORMAT BackBufferFormat() const { return bbFormat_; }
-    DXGI_FORMAT DepthFormat() const { return depthFormat_; }
 
     D3D12_RESOURCE_STATES& CurrentBackBufferState()
     {
@@ -63,11 +60,8 @@ private:
     std::vector<ComPtr<ID3D12Resource>> backBuffers_;
     UINT currBackBuffer_{ 0 };
     DXGI_FORMAT bbFormat_{ DXGI_FORMAT_B8G8R8A8_UNORM };
-
-    ComPtr<ID3D12Resource> depth_;
-    ComPtr<ID3D12DescriptorHeap> dsvHeap_;
-    D3D12_CPU_DESCRIPTOR_HANDLE dsv_{};
-    DXGI_FORMAT depthFormat_{ DXGI_FORMAT_D32_FLOAT };
+    TextureHandle depthTexture_{};
+    Format depthFormat_{ Format::D24_UNORM_S8_UINT };
 
     std::vector<D3D12_RESOURCE_STATES> backBufferStates_;
 };
