@@ -76,16 +76,25 @@
                         {
                             if (cmd.slot < boundTex.size())
                             {
-                                TextureHandle handle = ResolveTextureHandleFromDesc(cmd.texture);
-                                if (!handle)
+                                const UINT idx = static_cast<UINT>(cmd.texture);
+                                if (idx == 0 || idx >= kSrvHeapNumDescriptors)
                                 {
-                                    // null SRV
+                                    // null SRV (slot0)
                                     boundTex[cmd.slot] = srvHeap_->GetGPUDescriptorHandleForHeapStart();
                                     return;
                                 }
 
-                                TransitionTexture(handle, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                                boundTex[cmd.slot] = GetTextureSRV(handle);
+                                // Still do transition based on mapping (needed for correct barriers).
+                                TextureHandle handle = ResolveTextureHandleFromDesc(cmd.texture);
+                                if (handle)
+                                {
+                                    TransitionTexture(handle, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                                }
+
+                                // Bind SRV heap slot directly (TextureDescIndex is now heap slot).
+                                D3D12_GPU_DESCRIPTOR_HANDLE gpu = srvHeap_->GetGPUDescriptorHandleForHeapStart();
+                                gpu.ptr += static_cast<UINT64>(idx) * static_cast<UINT64>(srvInc_);
+                                boundTex[cmd.slot] = gpu;
                             }
                         }
                         else if constexpr (std::is_same_v<T, CommandBindStructuredBufferSRV>)

@@ -3,6 +3,7 @@
             // Root signature layout:
             //  [0]  CBV(b0)   - per-draw constants
             //  [1+] SRV(t0+)  - individual SRV descriptor tables (1 descriptor each)
+            // [LAST] SRV(t0, space1) - bindless SRV table for SM6 deferred/bindless materials
             //
             // We deliberately use one-descriptor tables per register to allow binding arbitrary
             // SRV heap entries without requiring contiguous descriptor ranges.
@@ -30,17 +31,30 @@
             //  s1 - comparison sampler for shadow maps (clamp)
             //  s2 - point clamp (used by point shadows)
             //  s3 - linear clamp (used by skybox/env cubemaps)
-            std::array<D3D12_DESCRIPTOR_RANGE, kMaxSRVSlots> ranges{};
+            
+            //
+            // NOTE: we move to RS 1.1 so we can define an "unbounded-style" bindless range in space1.
+            
+            std::array<D3D12_DESCRIPTOR_RANGE1, kMaxSRVSlots> ranges{};
             for (UINT i = 0; i < kMaxSRVSlots; ++i)
             {
                 ranges[i].RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
                 ranges[i].NumDescriptors = 1;
                 ranges[i].BaseShaderRegister = i; // ti
                 ranges[i].RegisterSpace = 0;
+                ranges[i].Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_STATIC;
                 ranges[i].OffsetInDescriptorsFromTableStart = D3D12_DESCRIPTOR_RANGE_OFFSET_APPEND;
             }
-
-            std::array<D3D12_ROOT_PARAMETER, 1 + kMaxSRVSlots> rootParams{};
+            
+            D3D12_DESCRIPTOR_RANGE1 bindlessRange{};
+            bindlessRange.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SRV;
+            bindlessRange.NumDescriptors = UINT_MAX;     // unbounded-style
+            bindlessRange.BaseShaderRegister = 0;        // t0
+            bindlessRange.RegisterSpace = 1;             // space1
+            bindlessRange.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DESCRIPTORS_VOLATILE;
+            bindlessRange.OffsetInDescriptorsFromTableStart = 0;
+            
+            std::array<D3D12_ROOT_PARAMETER1, 1 + kMaxSRVSlots + 1> rootParams{};
 
             // b0
             rootParams[0].ParameterType = D3D12_ROOT_PARAMETER_TYPE_CBV;
@@ -55,6 +69,15 @@
                 rootParams[1 + i].DescriptorTable.NumDescriptorRanges = 1;
                 rootParams[1 + i].DescriptorTable.pDescriptorRanges = &ranges[i];
                 rootParams[1 + i].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
+            }
+
+            // bindless SRV table: t0.. (space1)
+            {
+                const UINT bindlessParam = 1 + kMaxSRVSlots;
+                rootParams[bindlessParam].ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+                rootParams[bindlessParam].DescriptorTable.NumDescriptorRanges = 1;
+                rootParams[bindlessParam].DescriptorTable.pDescriptorRanges = &bindlessRange;
+                rootParams[bindlessParam].ShaderVisibility = D3D12_SHADER_VISIBILITY_PIXEL;
             }
 
             D3D12_STATIC_SAMPLER_DESC samplers[4]{};
@@ -125,19 +148,22 @@
                 D3D12_COMPARISON_FUNC_ALWAYS,
                 D3D12_STATIC_BORDER_COLOR_OPAQUE_BLACK);
 
-            D3D12_ROOT_SIGNATURE_DESC rootSigDesc{};
-            rootSigDesc.NumParameters = static_cast<UINT>(rootParams.size());
-            rootSigDesc.pParameters = rootParams.data();
-            rootSigDesc.NumStaticSamplers = 4;
-            rootSigDesc.pStaticSamplers = samplers;
-            rootSigDesc.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+            D3D12_ROOT_SIGNATURE_DESC1 rootSigDesc1{};
+            rootSigDesc1.NumParameters = static_cast<UINT>(rootParams.size());
+            rootSigDesc1.pParameters = rootParams.data();
+            rootSigDesc1.NumStaticSamplers = 4;
+            rootSigDesc1.pStaticSamplers = samplers;
+            rootSigDesc1.Flags = D3D12_ROOT_SIGNATURE_FLAG_ALLOW_INPUT_ASSEMBLER_INPUT_LAYOUT;
+
+            D3D12_VERSIONED_ROOT_SIGNATURE_DESC ver{};
+            ver.Version = D3D_ROOT_SIGNATURE_VERSION_1_1;
+            ver.Desc_1_1 = rootSigDesc1;
 
             ComPtr<ID3DBlob> serialized;
             ComPtr<ID3DBlob> error;
 
-            HRESULT hr = D3D12SerializeRootSignature(
-                &rootSigDesc,
-                D3D_ROOT_SIGNATURE_VERSION_1,
+            HRESULT hr = D3D12SerializeVersionedRootSignature(
+                &ver,
                 serialized.GetAddressOf(),
                 error.GetAddressOf());
 

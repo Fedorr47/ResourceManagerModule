@@ -212,6 +212,14 @@
                     srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
                 }
 
+                const D3D12_RESOURCE_DESC resourceDesc = newRes->GetDesc();
+                it->second.extent = Extent2D{
+                    static_cast<std::uint32_t>(resourceDesc.Width),
+                    static_cast<std::uint32_t>(resourceDesc.Height) };
+                it->second.resourceFormat = resourceDesc.Format;
+                it->second.srvFormat = fmt;
+                it->second.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
                 NativeDevice()->CreateShaderResourceView(it->second.resource.Get(), &srvDesc, cpu);
             }
             else
@@ -231,17 +239,18 @@
             TextureHandle textureHandle{ ++nextTexId_ };
             TextureEntry textureEntry{};
 
-            // Fill extent from resource desc
             const D3D12_RESOURCE_DESC resourceDesc = res->GetDesc();
             textureEntry.extent = Extent2D{
                 static_cast<std::uint32_t>(resourceDesc.Width),
                 static_cast<std::uint32_t>(resourceDesc.Height) };
-            textureEntry.format = rhi::Format::RGBA8_UNORM; // internal book-keeping only (engine side)
+            textureEntry.format = rhi::Format::RGBA8_UNORM;
 
-            // Take ownership (AddRef)
+            textureEntry.resourceFormat = resourceDesc.Format;
+            textureEntry.srvFormat = fmt;
+            textureEntry.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
             textureEntry.resource = res;
 
-            // Allocate SRV in our shader-visible heap
             AllocateSRV(textureEntry, fmt, mipLevels);
 
             textures_[textureHandle.id] = std::move(textureEntry);
@@ -265,7 +274,10 @@
             textureEntry.format = rhi::Format::RGBA8_UNORM;
             textureEntry.type = TextureEntry::Type::Cube;
 
-            // Take ownership (AddRef)
+            textureEntry.resourceFormat = resourceDesc.Format;
+            textureEntry.srvFormat = fmt;
+            textureEntry.state = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+
             textureEntry.resource = res;
 
             AllocateSRV(textureEntry, fmt, mipLevels);
