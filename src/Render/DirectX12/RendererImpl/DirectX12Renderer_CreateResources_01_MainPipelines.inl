@@ -1,294 +1,298 @@
-			// Main pipeline permutations (UseTex / UseShadow)
+// Main pipeline permutations (UseTex / UseShadow)
+{
+	auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
+		{
+			std::vector<std::string> defines;
+			if (useTex)
 			{
-				auto MakeDefines = [](bool useTex, bool useShadow) -> std::vector<std::string>
-					{
-						std::vector<std::string> defines;
-						if (useTex)
-						{
-							defines.push_back("USE_TEX=1");
-						}
-						if (useShadow)
-						{
-							defines.push_back("USE_SHADOW=1");
-						}
-						return defines;
-					};
-			
-				for (std::uint32_t idx = 0; idx < 4; ++idx)
-				{
-					const bool useTex = (idx & 1u) != 0;
-					const bool useShadow = (idx & 2u) != 0;
-					const auto defs = MakeDefines(useTex, useShadow);
-			
-					const auto vs = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Vertex,
-						.name = "VSMain",
-						.filePath = shaderPath.string(),
-						.defines = defs
-						});
-					const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Pixel,
-						.name = "PSMain",
-						.filePath = shaderPath.string(),
-						.defines = defs
-						});
-			
-					std::string psoName = "PSO_Mesh";
-					if (useTex)
-					{
-						psoName += "_Tex";
-					}
-					if (useShadow)
-					{
-						psoName += "_Shadow";
-					}
-			
-					psoMain_[idx] = psoCache_.GetOrCreate(psoName, vs, ps);
-
-					// Planar reflection variant: same shader but with CORE_PLANAR_CLIP enabled (VS outputs SV_ClipDistance0).
-					{
-						auto planarDefs = defs;
-						planarDefs.push_back("CORE_PLANAR_CLIP=1");
-						const auto vsPlanar = shaderLibrary_.GetOrCreateShader(ShaderKey{
-							.stage = rhi::ShaderStage::Vertex,
-							.name = "VSMain",
-							.filePath = shaderPath.string(),
-							.defines = planarDefs
-							});
-						const auto psPlanar = shaderLibrary_.GetOrCreateShader(ShaderKey{
-							.stage = rhi::ShaderStage::Pixel,
-							.name = "PSMain",
-							.filePath = shaderPath.string(),
-							.defines = planarDefs
-							});
-						psoPlanar_[idx] = psoCache_.GetOrCreate(psoName + "_Planar", vsPlanar, psPlanar);
-					}
-				}
-
-				// Editor selection highlight overlay (unlit).
-				{
-					const std::vector<std::string> hiDefs = { "CORE_HIGHLIGHT=1" };
-					const auto vsHi = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Vertex,
-						.name = "VSMain",
-						.filePath = shaderPath.string(),
-						.defines = hiDefs
-						});
-					const auto psHi = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Pixel,
-						.name = "PSMain",
-						.filePath = shaderPath.string(),
-						.defines = hiDefs
-						});
-					psoHighlight_ = psoCache_.GetOrCreate("PSO_Mesh_Highlight", vsHi, psHi);
-
-					auto outlineDefs = hiDefs;
-					outlineDefs.push_back("CORE_OUTLINE=1");
-					const auto vsOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Vertex,
-						.name = "VSMain",
-						.filePath = shaderPath.string(),
-						.defines = outlineDefs
-						});
-					const auto psOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Pixel,
-						.name = "PSMain",
-						.filePath = shaderPath.string(),
-						.defines = outlineDefs
-						});
-					psoOutline_ = psoCache_.GetOrCreate("PSO_Mesh_Outline", vsOutline, psOutline);
-				}
-			
-				state_.depth.testEnable = true;
-				state_.depth.writeEnable = true;
-				state_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
-				state_.rasterizer.cullMode = rhi::CullMode::Back;
-				state_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
-				state_.blend.enable = false;
-				transparentState_ = state_;
-				transparentState_.depth.writeEnable = false;
-				transparentState_.blend.enable = true;
-				transparentState_.rasterizer.cullMode = rhi::CullMode::None;
-			
-				// Depth pre-pass state: same raster as opaque, depth test+write enabled.
-				preDepthState_ = state_;
-			
-				// Main pass state when running after a depth pre-pass: keep depth read-only.
-				mainAfterPreDepthState_ = state_;
-				mainAfterPreDepthState_.depth.writeEnable = false;
-
-				// Highlight pass: translucent overlay, depth-tested but depth read-only.
-				highlightState_ = state_;
-				highlightState_.blend.enable = true;
-				highlightState_.depth.writeEnable = false;
-				highlightState_.rasterizer.cullMode = rhi::CullMode::None;
-
-				// Outline mark pass: write stencil where the selected object is visible, keep color untouched
-				// by drawing with alpha=0 under standard alpha blending.
-				outlineMarkState_ = state_;
-				outlineMarkState_.blend.enable = true;
-				outlineMarkState_.depth.writeEnable = false;
-				outlineMarkState_.rasterizer.cullMode = rhi::CullMode::None;
-				outlineMarkState_.depth.stencil.enable = true;
-				outlineMarkState_.depth.stencil.readMask = 0xFFu;
-				outlineMarkState_.depth.stencil.writeMask = 0xFFu;
-				outlineMarkState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
-				outlineMarkState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
-				outlineMarkState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
-				outlineMarkState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
-				outlineMarkState_.depth.stencil.back = outlineMarkState_.depth.stencil.front;
-
-				// Outline shell pass: render an inflated version of the selected mesh only where the
-				// stencil is NOT equal to the selected-object mark. Front-face culling keeps the shell
-				// mostly on the silhouette.
-				outlineState_ = state_;
-				outlineState_.blend.enable = true;
-				outlineState_.depth.writeEnable = false;
-				outlineState_.rasterizer.cullMode = rhi::CullMode::Front;
-				outlineState_.depth.stencil.enable = true;
-				outlineState_.depth.stencil.readMask = 0xFFu;
-				outlineState_.depth.stencil.writeMask = 0x00u;
-				outlineState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
-				outlineState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
-				outlineState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
-				outlineState_.depth.stencil.front.compareOp = rhi::CompareOp::NotEqual;
-				outlineState_.depth.stencil.back = outlineState_.depth.stencil.front;
-
-				// Planar reflection stencil mask (writes stencil, keeps color untouched via depth-only PSO).
-				planarMaskState_ = preDepthState_;
-				planarMaskState_.rasterizer.cullMode = rhi::CullMode::Front;
-				planarMaskState_.depth.testEnable = true;
-				planarMaskState_.depth.writeEnable = false;
-				planarMaskState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
-				planarMaskState_.blend.enable = false;
-				planarMaskState_.rasterizer.cullMode = rhi::CullMode::None;
-				planarMaskState_.depth.stencil.enable = true;
-				planarMaskState_.depth.stencil.readMask = 0xFFu;
-				planarMaskState_.depth.stencil.writeMask = 0xFFu;
-				planarMaskState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
-				planarMaskState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
-				planarMaskState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
-				planarMaskState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
-				planarMaskState_.depth.stencil.back = planarMaskState_.depth.stencil.front;
-
-				// Reflected scene pass: stencil-gated overlay inside visible mirror pixels (MVP path).
-				planarReflectedState_ = state_;
-				// Reflected scene overlay: stencil-gated, depth-tested against the main depth buffer.
-				planarReflectedState_.depth.testEnable = true;
-				planarReflectedState_.depth.writeEnable = true;
-				planarReflectedState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
-				// Robust option: disable culling for the reflected pass (avoids winding issues when the view is mirrored).
-				planarReflectedState_.rasterizer.cullMode = rhi::CullMode::Back;
-				planarReflectedState_.rasterizer.frontFace = rhi::FrontFace::Clockwise;
-				planarReflectedState_.blend.enable = false;
-				planarReflectedState_.depth.stencil.enable = true;
-				planarReflectedState_.depth.stencil.readMask = 0xFFu;
-				planarReflectedState_.depth.stencil.writeMask = 0x00u;
-				planarReflectedState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
-				planarReflectedState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
-				planarReflectedState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
-				planarReflectedState_.depth.stencil.front.compareOp = rhi::CompareOp::Equal;
-				planarReflectedState_.depth.stencil.back = planarReflectedState_.depth.stencil.front;
+				defines.push_back("USE_TEX=1");
 			}
-			
-			// Debug cubemap atlas pipeline (fullscreen triangle with a tiny VB).
+			if (useShadow)
 			{
-				const auto dbgPath = corefs::ResolveAsset("shaders\\DebugCubeAtlas_dx12.hlsl");
-			
-				const auto vsDbg = shaderLibrary_.GetOrCreateShader(ShaderKey{
-					.stage = rhi::ShaderStage::Vertex,
-					.name = "VSMain",
-					.filePath = dbgPath.string(),
-					.defines = {}
-					});
-				const auto psDbg = shaderLibrary_.GetOrCreateShader(ShaderKey{
-					.stage = rhi::ShaderStage::Pixel,
-					.name = "PSMain",
-					.filePath = dbgPath.string(),
-					.defines = {}
-					});
-			
-				psoDebugCubeAtlas_ = psoCache_.GetOrCreate("PSO_DebugCubeAtlas", vsDbg, psDbg);
-			
-				debugCubeAtlasState_ = {};
-				debugCubeAtlasState_.depth.testEnable = false;
-				debugCubeAtlasState_.depth.writeEnable = false;
-				debugCubeAtlasState_.blend.enable = false;
-				debugCubeAtlasState_.rasterizer.cullMode = rhi::CullMode::None;
-				debugCubeAtlasState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
-			
-				// Input layout: POSITION.xy + TEXCOORD0.xy
-				rhi::InputLayoutDesc il{};
-				il.strideBytes = 16;
-				il.attributes = {
-					rhi::VertexAttributeDesc{.semantic = rhi::VertexSemantic::Position, .semanticIndex = 0, .format = rhi::VertexFormat::R32G32_FLOAT, .inputSlot = 0, .offsetBytes = 0 },
-					rhi::VertexAttributeDesc{.semantic = rhi::VertexSemantic::TexCoord, .semanticIndex = 0, .format = rhi::VertexFormat::R32G32_FLOAT, .inputSlot = 0, .offsetBytes = 8 },
-				};
-				debugCubeAtlasLayout_ = device_.CreateInputLayout(il);
-			
-				struct DebugFSVertex { float px, py; float ux, uy; };
-				const DebugFSVertex tri[3] = {
-					{ -1.0f, -1.0f, 0.0f, 0.0f },
-					{ -1.0f,  3.0f, 0.0f, 2.0f },
-					{  3.0f, -1.0f, 2.0f, 0.0f },
-				};
-			
-				rhi::BufferDesc vbDesc{};
-				vbDesc.bindFlag = rhi::BufferBindFlag::VertexBuffer;
-				vbDesc.usageFlag = rhi::BufferUsageFlag::Default;
-				vbDesc.sizeInBytes = sizeof(tri);
-				vbDesc.debugName = "DebugCubeAtlasVB";
-				debugCubeAtlasVB_ = device_.CreateBuffer(vbDesc);
-				if (debugCubeAtlasVB_)
-				{
-					device_.UpdateBuffer(debugCubeAtlasVB_, std::as_bytes(std::span{ tri, 3 }));
-					debugCubeAtlasVBStrideBytes_ = 16;
-				}
-				// Deferred rendering (DX12): GBuffer writer + fullscreen resolve.
-				{
-					const auto gbufPath = corefs::ResolveAsset("shaders\\DeferredGBuffer_dx12.hlsl");
-					const auto lightPath = corefs::ResolveAsset("shaders\\DeferredLighting_dx12.hlsl");
-
-					const auto vsG = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Vertex,
-						.name = "VS_GBuffer",
-						.filePath = gbufPath.string(),
-						.defines = {}
-						});
-					const auto psG = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Pixel,
-						.name = "PS_GBuffer",
-						.filePath = gbufPath.string(),
-						.defines = {}
-						});
-					psoDeferredGBuffer_ = psoCache_.GetOrCreate("PSO_Deferred_GBuffer", vsG, psG);
-
-					const auto vsFS = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Vertex,
-						.name = "VS_Fullscreen",
-						.filePath = lightPath.string(),
-						.defines = {}
-						});
-					const auto psFS = shaderLibrary_.GetOrCreateShader(ShaderKey{
-						.stage = rhi::ShaderStage::Pixel,
-						.name = "PS_DeferredLighting",
-						.filePath = lightPath.string(),
-						.defines = {}
-						});
-					psoDeferredLighting_ = psoCache_.GetOrCreate("PSO_Deferred_Lighting", vsFS, psFS);
-
-					// Empty input layout for fullscreen triangle (SV_VertexID only).
-					rhi::InputLayoutDesc il{};
-					il.strideBytes = 0;
-					il.attributes = {};
-					il.debugName = "Fullscreen_NoInput";
-					fullscreenLayout_ = device_.CreateInputLayout(il);
-
-					deferredLightingState_ = {};
-					deferredLightingState_.depth.testEnable = false;
-					deferredLightingState_.depth.writeEnable = false;
-					deferredLightingState_.blend.enable = false;
-					deferredLightingState_.rasterizer.cullMode = rhi::CullMode::None;
-					deferredLightingState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
-				}
+				defines.push_back("USE_SHADOW=1");
 			}
+			return defines;
+		};
+
+	for (std::uint32_t idx = 0; idx < 4; ++idx)
+	{
+		const bool useTex = (idx & 1u) != 0;
+		const bool useShadow = (idx & 2u) != 0;
+		const auto defs = MakeDefines(useTex, useShadow);
+
+		const auto vs = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Vertex,
+			.name = "VSMain",
+			.filePath = shaderPath.string(),
+			.defines = defs
+			});
+		const auto ps = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Pixel,
+			.name = "PSMain",
+			.filePath = shaderPath.string(),
+			.defines = defs
+			});
+
+		std::string psoName = "PSO_Mesh";
+		if (useTex)
+		{
+			psoName += "_Tex";
+		}
+		if (useShadow)
+		{
+			psoName += "_Shadow";
+		}
+
+		psoMain_[idx] = psoCache_.GetOrCreate(psoName, vs, ps);
+
+		// Planar reflection variant: same shader but with CORE_PLANAR_CLIP enabled (VS outputs SV_ClipDistance0).
+		{
+			auto planarDefs = defs;
+			planarDefs.push_back("CORE_PLANAR_CLIP=1");
+			const auto vsPlanar = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VSMain",
+				.filePath = shaderPath.string(),
+				.defines = planarDefs
+				});
+			const auto psPlanar = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PSMain",
+				.filePath = shaderPath.string(),
+				.defines = planarDefs
+				});
+			psoPlanar_[idx] = psoCache_.GetOrCreate(psoName + "_Planar", vsPlanar, psPlanar);
+		}
+	}
+
+	// Editor selection highlight overlay (unlit).
+	{
+		const std::vector<std::string> hiDefs = { "CORE_HIGHLIGHT=1" };
+		const auto vsHi = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Vertex,
+			.name = "VSMain",
+			.filePath = shaderPath.string(),
+			.defines = hiDefs
+			});
+		const auto psHi = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Pixel,
+			.name = "PSMain",
+			.filePath = shaderPath.string(),
+			.defines = hiDefs
+			});
+		psoHighlight_ = psoCache_.GetOrCreate("PSO_Mesh_Highlight", vsHi, psHi);
+
+		auto outlineDefs = hiDefs;
+		outlineDefs.push_back("CORE_OUTLINE=1");
+		const auto vsOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Vertex,
+			.name = "VSMain",
+			.filePath = shaderPath.string(),
+			.defines = outlineDefs
+			});
+		const auto psOutline = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Pixel,
+			.name = "PSMain",
+			.filePath = shaderPath.string(),
+			.defines = outlineDefs
+			});
+		psoOutline_ = psoCache_.GetOrCreate("PSO_Mesh_Outline", vsOutline, psOutline);
+	}
+
+	state_.depth.testEnable = true;
+	state_.depth.writeEnable = true;
+	state_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+	state_.rasterizer.cullMode = rhi::CullMode::Back;
+	state_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+	state_.blend.enable = false;
+	transparentState_ = state_;
+	transparentState_.depth.writeEnable = false;
+	transparentState_.blend.enable = true;
+	transparentState_.rasterizer.cullMode = rhi::CullMode::None;
+
+	// Depth pre-pass state: same raster as opaque, depth test+write enabled.
+	preDepthState_ = state_;
+
+	// Main pass state when running after a depth pre-pass: keep depth read-only.
+	mainAfterPreDepthState_ = state_;
+	mainAfterPreDepthState_.depth.writeEnable = false;
+
+	// Highlight pass: translucent overlay, depth-tested but depth read-only.
+	highlightState_ = state_;
+	highlightState_.blend.enable = true;
+	highlightState_.depth.writeEnable = false;
+	highlightState_.rasterizer.cullMode = rhi::CullMode::None;
+
+	// Outline mark pass: write stencil where the selected object is visible, keep color untouched
+	// by drawing with alpha=0 under standard alpha blending.
+	outlineMarkState_ = state_;
+	outlineMarkState_.blend.enable = true;
+	outlineMarkState_.depth.writeEnable = false;
+	outlineMarkState_.rasterizer.cullMode = rhi::CullMode::None;
+	outlineMarkState_.depth.stencil.enable = true;
+	outlineMarkState_.depth.stencil.readMask = 0xFFu;
+	outlineMarkState_.depth.stencil.writeMask = 0xFFu;
+	outlineMarkState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+	outlineMarkState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+	outlineMarkState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
+	outlineMarkState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
+	outlineMarkState_.depth.stencil.back = outlineMarkState_.depth.stencil.front;
+
+	// Outline shell pass: render an inflated version of the selected mesh only where the
+	// stencil is NOT equal to the selected-object mark. Front-face culling keeps the shell
+	// mostly on the silhouette.
+	outlineState_ = state_;
+	outlineState_.blend.enable = true;
+	outlineState_.depth.writeEnable = false;
+	outlineState_.rasterizer.cullMode = rhi::CullMode::Front;
+	outlineState_.depth.stencil.enable = true;
+	outlineState_.depth.stencil.readMask = 0xFFu;
+	outlineState_.depth.stencil.writeMask = 0x00u;
+	outlineState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+	outlineState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+	outlineState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
+	outlineState_.depth.stencil.front.compareOp = rhi::CompareOp::NotEqual;
+	outlineState_.depth.stencil.back = outlineState_.depth.stencil.front;
+
+	// Planar reflection stencil mask (writes stencil, keeps color untouched via depth-only PSO).
+	planarMaskState_ = preDepthState_;
+	planarMaskState_.rasterizer.cullMode = rhi::CullMode::Front;
+	planarMaskState_.depth.testEnable = true;
+	planarMaskState_.depth.writeEnable = false;
+	planarMaskState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+	planarMaskState_.blend.enable = false;
+	planarMaskState_.rasterizer.cullMode = rhi::CullMode::None;
+	planarMaskState_.depth.stencil.enable = true;
+	planarMaskState_.depth.stencil.readMask = 0xFFu;
+	planarMaskState_.depth.stencil.writeMask = 0xFFu;
+	planarMaskState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+	planarMaskState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+	planarMaskState_.depth.stencil.front.passOp = rhi::StencilOp::Replace;
+	planarMaskState_.depth.stencil.front.compareOp = rhi::CompareOp::Always;
+	planarMaskState_.depth.stencil.back = planarMaskState_.depth.stencil.front;
+
+	// Reflected scene pass: stencil-gated overlay inside visible mirror pixels (MVP path).
+	planarReflectedState_ = state_;
+	// Reflected scene overlay: stencil-gated, depth-tested against the main depth buffer.
+	planarReflectedState_.depth.testEnable = true;
+	planarReflectedState_.depth.writeEnable = true;
+	planarReflectedState_.depth.depthCompareOp = rhi::CompareOp::LessEqual;
+	// Robust option: disable culling for the reflected pass (avoids winding issues when the view is mirrored).
+	planarReflectedState_.rasterizer.cullMode = rhi::CullMode::Back;
+	planarReflectedState_.rasterizer.frontFace = rhi::FrontFace::Clockwise;
+	planarReflectedState_.blend.enable = false;
+	planarReflectedState_.depth.stencil.enable = true;
+	planarReflectedState_.depth.stencil.readMask = 0xFFu;
+	planarReflectedState_.depth.stencil.writeMask = 0x00u;
+	planarReflectedState_.depth.stencil.front.failOp = rhi::StencilOp::Keep;
+	planarReflectedState_.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
+	planarReflectedState_.depth.stencil.front.passOp = rhi::StencilOp::Keep;
+	planarReflectedState_.depth.stencil.front.compareOp = rhi::CompareOp::Equal;
+	planarReflectedState_.depth.stencil.back = planarReflectedState_.depth.stencil.front;
+							}
+
+// Debug cubemap atlas pipeline (fullscreen triangle with a tiny VB).
+{
+	const auto dbgPath = corefs::ResolveAsset("shaders\\DebugCubeAtlas_dx12.hlsl");
+
+	const auto vsDbg = shaderLibrary_.GetOrCreateShader(ShaderKey{
+		.stage = rhi::ShaderStage::Vertex,
+		.name = "VSMain",
+		.filePath = dbgPath.string(),
+		.defines = {}
+		});
+	const auto psDbg = shaderLibrary_.GetOrCreateShader(ShaderKey{
+		.stage = rhi::ShaderStage::Pixel,
+		.name = "PSMain",
+		.filePath = dbgPath.string(),
+		.defines = {}
+		});
+
+	psoDebugCubeAtlas_ = psoCache_.GetOrCreate("PSO_DebugCubeAtlas", vsDbg, psDbg);
+
+	debugCubeAtlasState_ = {};
+	debugCubeAtlasState_.depth.testEnable = false;
+	debugCubeAtlasState_.depth.writeEnable = false;
+	debugCubeAtlasState_.blend.enable = false;
+	debugCubeAtlasState_.rasterizer.cullMode = rhi::CullMode::None;
+	debugCubeAtlasState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+
+	// Input layout: POSITION.xy + TEXCOORD0.xy
+	rhi::InputLayoutDesc il{};
+	il.strideBytes = 16;
+	il.attributes = {
+		rhi::VertexAttributeDesc{.semantic = rhi::VertexSemantic::Position, .semanticIndex = 0, .format = rhi::VertexFormat::R32G32_FLOAT, .inputSlot = 0, .offsetBytes = 0 },
+		rhi::VertexAttributeDesc{.semantic = rhi::VertexSemantic::TexCoord, .semanticIndex = 0, .format = rhi::VertexFormat::R32G32_FLOAT, .inputSlot = 0, .offsetBytes = 8 },
+	};
+	debugCubeAtlasLayout_ = device_.CreateInputLayout(il);
+
+	struct DebugFSVertex { float px, py; float ux, uy; };
+	const DebugFSVertex tri[3] = {
+		{ -1.0f, -1.0f, 0.0f, 0.0f },
+		{ -1.0f,  3.0f, 0.0f, 2.0f },
+		{  3.0f, -1.0f, 2.0f, 0.0f },
+	};
+
+	rhi::BufferDesc vbDesc{};
+	vbDesc.bindFlag = rhi::BufferBindFlag::VertexBuffer;
+	vbDesc.usageFlag = rhi::BufferUsageFlag::Default;
+	vbDesc.sizeInBytes = sizeof(tri);
+	vbDesc.debugName = "DebugCubeAtlasVB";
+	debugCubeAtlasVB_ = device_.CreateBuffer(vbDesc);
+	if (debugCubeAtlasVB_)
+	{
+		device_.UpdateBuffer(debugCubeAtlasVB_, std::as_bytes(std::span{ tri, 3 }));
+		debugCubeAtlasVBStrideBytes_ = 16;
+	}
+	// Deferred rendering (DX12): GBuffer writer + fullscreen resolve.
+	{
+		const auto gbufPath = corefs::ResolveAsset("shaders\\DeferredGBuffer_dx12.hlsl");
+		const auto lightPath = corefs::ResolveAsset("shaders\\DeferredLighting_dx12.hlsl");
+
+		const auto vsG = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Vertex,
+			.name = "VS_GBuffer",
+			.filePath = gbufPath.string(),
+			.defines = {},
+			.shaderModel = rhi::ShaderModel::SM6_1
+			});
+		const auto psG = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Pixel,
+			.name = "PS_GBuffer",
+			.filePath = gbufPath.string(),
+			.defines = {},
+			.shaderModel = rhi::ShaderModel::SM6_1
+			});
+		psoDeferredGBuffer_ = psoCache_.GetOrCreate("PSO_Deferred_GBuffer", vsG, psG);
+
+		const auto vsFS = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Vertex,
+			.name = "VS_Fullscreen",
+			.filePath = lightPath.string(),
+			.defines = {},
+			.shaderModel = rhi::ShaderModel::SM6_1
+			});
+		const auto psFS = shaderLibrary_.GetOrCreateShader(ShaderKey{
+			.stage = rhi::ShaderStage::Pixel,
+			.name = "PS_DeferredLighting",
+			.filePath = lightPath.string(),
+			.defines = {},
+			.shaderModel = rhi::ShaderModel::SM6_1
+			});
+		psoDeferredLighting_ = psoCache_.GetOrCreate("PSO_Deferred_Lighting", vsFS, psFS);
+
+		// Empty input layout for fullscreen triangle (SV_VertexID only).
+		rhi::InputLayoutDesc il{};
+		il.strideBytes = 0;
+		il.attributes = {};
+		il.debugName = "Fullscreen_NoInput";
+		fullscreenLayout_ = device_.CreateInputLayout(il);
+
+		deferredLightingState_ = {};
+		deferredLightingState_.depth.testEnable = false;
+		deferredLightingState_.depth.writeEnable = false;
+		deferredLightingState_.blend.enable = false;
+		deferredLightingState_.rasterizer.cullMode = rhi::CullMode::None;
+		deferredLightingState_.rasterizer.frontFace = rhi::FrontFace::CounterClockwise;
+	}
+}

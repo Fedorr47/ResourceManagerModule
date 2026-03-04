@@ -79,19 +79,19 @@
                                 const UINT idx = static_cast<UINT>(cmd.texture);
                                 if (idx == 0 || idx >= kSrvHeapNumDescriptors)
                                 {
-                                    // null SRV (slot0)
+                                    // null SRV
                                     boundTex[cmd.slot] = srvHeap_->GetGPUDescriptorHandleForHeapStart();
                                     return;
                                 }
 
-                                // Still do transition based on mapping (needed for correct barriers).
+                                // Transition based on descriptor mapping (keeps barriers correct).
                                 TextureHandle handle = ResolveTextureHandleFromDesc(cmd.texture);
                                 if (handle)
                                 {
                                     TransitionTexture(handle, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                                 }
 
-                                // Bind SRV heap slot directly (TextureDescIndex is now heap slot).
+                                // TextureDescIndex is a real SRV heap index.
                                 D3D12_GPU_DESCRIPTOR_HANDLE gpu = srvHeap_->GetGPUDescriptorHandleForHeapStart();
                                 gpu.ptr += static_cast<UINT64>(idx) * static_cast<UINT64>(srvInc_);
                                 boundTex[cmd.slot] = gpu;
@@ -103,7 +103,7 @@
                             {
                                 boundTex[cmd.slot] = GetBufferSRV(cmd.buffer);
                             }
-                        }
+                            }
                         else if constexpr (std::is_same_v<T, CommandSetUniformInt> ||
                             std::is_same_v<T, CommandUniformFloat4> ||
                             std::is_same_v<T, CommandUniformMat4>)
@@ -123,4 +123,4 @@
                             {
                                 std::memcpy(perDrawBytes.data(), cmd.data.data(), perDrawSize);
                             }
-                            }
+                        }

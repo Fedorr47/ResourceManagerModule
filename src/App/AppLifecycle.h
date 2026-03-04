@@ -32,12 +32,14 @@ namespace appLifecycle
         appWin32::Win32Window window{};
 #if defined(CORE_USE_DX12)
         appWin32::Win32Window debugWindow{};
-        std::unique_ptr<rhi::IRHISwapChain> debugSwapChain;
 #endif
 
         rendern::Win32Input win32Input{};
         std::unique_ptr<rhi::IRHIDevice> device;
         std::unique_ptr<rhi::IRHISwapChain> swapChain;
+#if defined(CORE_USE_DX12)
+        std::unique_ptr<rhi::IRHISwapChain> debugSwapChain;
+#endif
 
         StbTextureDecoder textureDecoder{};
         std::unique_ptr<rendern::JobSystemThreadPool> jobSystem;

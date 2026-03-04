@@ -55,11 +55,18 @@ if (canDeferred)
 		.debugName = "GBuffer1_NormalMetal"
 		});
 
+	const auto gbuf2 = graph.CreateTexture(renderGraph::RGTextureDesc{
+		.extent = scDesc.extent,
+		.format = rhi::Format::RGBA8_UNORM,
+		.usage = renderGraph::ResourceUsage::RenderTarget,
+		.debugName = "GBuffer2_EmissiveAO"
+		});
+
 	// --- GBuffer pass (opaque) ---
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { gbuf0, gbuf1 };
+		att.colors = { gbuf0, gbuf1, gbuf2 };
 		att.depth = depthRG;
 
 		att.clearDesc.clearColor = true;
@@ -70,7 +77,7 @@ if (canDeferred)
 		att.clearDesc.stencil = 0;
 
 		graph.AddPass("GBufferPass", std::move(att),
-			[this, &scene, dirLightViewProj, lightCount, mainBatches, instStride, gbuf0, gbuf1](renderGraph::PassContext& ctx)
+			[this, &scene, dirLightViewProj, lightCount, mainBatches, instStride, gbuf0, gbuf1, gbuf2](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
 
@@ -146,14 +153,6 @@ if (canDeferred)
 						flags |= kFlagUseEmissiveTex;
 					}
 
-					// Material textures via descriptors (same slots as forward).
-					ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
-					ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
-					ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
-					ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
-					ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
-					ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
-
 					PerBatchConstants constants{};
 					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
 					const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
@@ -170,6 +169,19 @@ if (canDeferred)
 					constants.uShadowBias = { 0.0f, 0.0f, 0.0f, 0.0f };
 					constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
 					constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+					constants.uTexIndices0 = {
+						static_cast<float>(batch.material.albedoDescIndex),
+						static_cast<float>(batch.material.normalDescIndex),
+						static_cast<float>(batch.material.metalnessDescIndex),
+						static_cast<float>(batch.material.roughnessDescIndex)
+					};
+					constants.uTexIndices1 = {
+						static_cast<float>(batch.material.aoDescIndex),
+						static_cast<float>(batch.material.emissiveDescIndex),
+						0.0f,
+						0.0f
+					};
 
 					// IA (instanced)
 					ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
@@ -192,7 +204,7 @@ if (canDeferred)
 		clear.color = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 		graph.AddSwapChainPass("DeferredLighting", clear,
-			[this, gbuf0, gbuf1, depthRG, deferredConstants](renderGraph::PassContext& ctx)
+			[this, gbuf0, gbuf1, gbuf2, depthRG, deferredConstants](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
 
@@ -204,12 +216,12 @@ if (canDeferred)
 				ctx.commandList.BindPipeline(psoDeferredLighting_);
 				ctx.commandList.BindInputLayout(fullscreenLayout_);
 				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
-
-				// t0..t3 for DeferredLighting_dx12.hlsl
+				// t0..t4 for DeferredLighting_dx12.hlsl
 				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(gbuf0)); // t0
 				ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(gbuf1)); // t1
-				ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_); // t2 StructuredBuffer<GPULight>
+				ctx.commandList.BindTexture2D(2, ctx.resources.GetTexture(gbuf2)); // t2
 				ctx.commandList.BindTexture2D(3, ctx.resources.GetTexture(depthRG)); // t3 depth SRV
+				ctx.commandList.BindStructuredBufferSRV(4, lightsBuffer_); // t4 StructuredBuffer<GPULight>
 
 				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &deferredConstants, 1 }));
 				ctx.commandList.Draw(3);
@@ -259,7 +271,252 @@ if (canDeferred)
 					ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0);
 				}
 			});
+
 	}
+	// --- Forward transparent pass after deferred (hybrid) ---
+	// Opaque was rendered via GBuffer+Lighting. Transparent is still rendered forward on top.
+	if (!transparentDraws.empty())
+	{
+		rhi::ClearDesc clear{};
+		clear.clearColor = false;
+		clear.clearDepth = false;
+		clear.clearStencil = false;
+
+		graph.AddSwapChainPass("DeferredTransparent", clear,
+			[this,
+			&scene,
+			shadowRG,
+			dirLightViewProj,
+			lightCount,
+			spotShadows,
+			pointShadows,
+			transparentDraws,
+			instStride](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+
+				ctx.commandList.SetViewport(0, 0,
+					static_cast<int>(extent.width),
+					static_cast<int>(extent.height));
+
+				ctx.commandList.SetState(transparentState_);
+
+				// Ensure the forward root signature is active before binding global SRVs.
+				ctx.commandList.BindPipeline(MainPipelineFor(MaterialPerm::UseShadow));
+
+				const float aspect = extent.height
+					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
+					: 1.0f;
+
+				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+				const mathUtils::Vec3 camPosLocal = scene.camera.position;
+				const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+				const mathUtils::Mat4 viewProj = proj * view;
+
+				// Bind directional shadow map at slot 1 (t1).
+				{
+					const auto shadowTex = ctx.resources.GetTexture(shadowRG);
+					ctx.commandList.BindTexture2D(1, shadowTex);
+				}
+
+				// Bind Spot shadow maps at t3..t6 and Point shadow cubemaps at t7..t10.
+				for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
+				{
+					const auto tex = ctx.resources.GetTexture(spotShadows[spotShadowIndex].tex);
+					ctx.commandList.BindTexture2D(3 + static_cast<std::uint32_t>(spotShadowIndex), tex);
+				}
+				for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
+				{
+					const auto tex = ctx.resources.GetTexture(pointShadows[pointShadowIndex].cube);
+					ctx.commandList.BindTexture2DArray(7 + static_cast<std::uint32_t>(pointShadowIndex), tex);
+				}
+
+				// Bind shadow metadata SB at t11.
+				ctx.commandList.BindStructuredBufferSRV(11, shadowDataBuffer_);
+
+				// Bind lights (t2 StructuredBuffer SRV).
+				ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
+
+				// Flags must match GlobalShaderInstanced_dx12.hlsl.
+				constexpr std::uint32_t kFlagUseTex = 1u << 0;
+				constexpr std::uint32_t kFlagUseShadow = 1u << 1;
+				constexpr std::uint32_t kFlagUseNormal = 1u << 2;
+				constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
+				constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
+				constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
+				constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
+				constexpr std::uint32_t kFlagUseEnv = 1u << 7;
+				constexpr std::uint32_t kFlagEnvFlipZ = 1u << 8;
+				constexpr std::uint32_t kFlagEnvForceMip0 = 1u << 9;
+
+				for (const TransparentDraw& batchTransparent : transparentDraws)
+				{
+					if (!batchTransparent.mesh)
+					{
+						continue;
+					}
+
+					MaterialPerm perm = MaterialPerm::UseShadow;
+					if (batchTransparent.materialHandle.id != 0)
+					{
+						perm = EffectivePerm(scene.GetMaterial(batchTransparent.materialHandle));
+					}
+					else
+					{
+						if (batchTransparent.material.albedoDescIndex != 0)
+						{
+							perm = perm | MaterialPerm::UseTex;
+						}
+					}
+
+					const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
+					const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+
+					ctx.commandList.BindPipeline(MainPipelineFor(perm));
+					ctx.commandList.BindTextureDesc(0, batchTransparent.material.albedoDescIndex);
+					ctx.commandList.BindTextureDesc(12, batchTransparent.material.normalDescIndex);
+					ctx.commandList.BindTextureDesc(13, batchTransparent.material.metalnessDescIndex);
+					ctx.commandList.BindTextureDesc(14, batchTransparent.material.roughnessDescIndex);
+					ctx.commandList.BindTextureDesc(15, batchTransparent.material.aoDescIndex);
+					ctx.commandList.BindTextureDesc(16, batchTransparent.material.emissiveDescIndex);
+
+					bool usingReflectionProbeEnv = false;
+					rhi::TextureHandle envArrayTexture{};
+					rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
+					if (batchTransparent.materialHandle.id != 0)
+					{
+						const auto& mat = scene.GetMaterial(batchTransparent.materialHandle);
+
+						if (mat.envSource == EnvSource::ReflectionCapture && settings_.enableReflectionCapture)
+						{
+							if (reflectionCubeDescIndex_ != 0 && reflectionCube_)
+							{
+								envDescIndex = reflectionCubeDescIndex_;
+								envArrayTexture = reflectionCube_;
+								usingReflectionProbeEnv = true;
+							}
+						}
+					}
+					ctx.commandList.BindTextureDesc(17, envDescIndex);
+
+					if (usingReflectionProbeEnv && envArrayTexture)
+					{
+						ctx.commandList.BindTexture2DArray(18, envArrayTexture);
+					}
+
+					std::uint32_t flags = 0;
+					if (useTex)
+					{
+						flags |= kFlagUseTex;
+					}
+					if (useShadow)
+					{
+						flags |= kFlagUseShadow;
+					}
+					if (batchTransparent.material.normalDescIndex != 0)
+					{
+						flags |= kFlagUseNormal;
+					}
+					if (batchTransparent.material.metalnessDescIndex != 0)
+					{
+						flags |= kFlagUseMetalTex;
+					}
+					if (batchTransparent.material.roughnessDescIndex != 0)
+					{
+						flags |= kFlagUseRoughTex;
+					}
+					if (batchTransparent.material.aoDescIndex != 0)
+					{
+						flags |= kFlagUseAOTex;
+					}
+					if (batchTransparent.material.emissiveDescIndex != 0)
+					{
+						flags |= kFlagUseEmissiveTex;
+					}
+					if (envDescIndex != 0)
+					{
+						flags |= kFlagUseEnv;
+						// Dynamic reflection captures update only mip0. Force mip0 sampling in the shader to avoid seams/garbage.
+						if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
+						{
+							flags |= kFlagEnvForceMip0;
+							flags |= kFlagEnvFlipZ;
+						}
+					}
+
+					PerBatchConstants constants{};
+					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
+					const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
+
+					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+					std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+
+					constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.22f };
+					constants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
+					constants.uBaseColor = {
+						batchTransparent.material.baseColor.x,
+						batchTransparent.material.baseColor.y,
+						batchTransparent.material.baseColor.z,
+						batchTransparent.material.baseColor.w };
+
+					const float materialBiasTexels = batchTransparent.material.shadowBias;
+					constants.uMaterialFlags = { 0.0f, 0.0f, materialBiasTexels, AsFloatBits(flags) };
+
+					constants.uPbrParams = {
+						batchTransparent.material.metallic,
+						batchTransparent.material.roughness,
+						batchTransparent.material.ao,
+						batchTransparent.material.emissiveStrength };
+
+					constants.uCounts = {
+						static_cast<float>(lightCount),
+						static_cast<float>(spotShadows.size()),
+						static_cast<float>(pointShadows.size()),
+						0.0f
+					};
+
+					constants.uShadowBias = {
+						settings_.dirShadowBaseBiasTexels,
+						settings_.spotShadowBaseBiasTexels,
+						settings_.pointShadowBaseBiasTexels,
+						settings_.shadowSlopeScaleTexels
+					};
+					constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
+					constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+					ctx.commandList.BindInputLayout(batchTransparent.mesh->layoutInstanced);
+					ctx.commandList.BindVertexBuffer(0, batchTransparent.mesh->vertexBuffer, batchTransparent.mesh->vertexStrideBytes, 0);
+					ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batchTransparent.instanceOffset * instStride);
+					ctx.commandList.BindIndexBuffer(batchTransparent.mesh->indexBuffer, batchTransparent.mesh->indexType, 0);
+
+					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+
+					// IMPORTANT: transparent = one object per draw (instanceCount = 1).
+					ctx.commandList.DrawIndexed(batchTransparent.mesh->indexCount, batchTransparent.mesh->indexType, 0, 0, 1, 0);
+				}
+			});
+		}
+
+		// --- ImGui overlay (optional) ---
+		if (imguiDrawData)
+		{
+			rhi::ClearDesc clear{};
+			clear.clearColor = false;
+			clear.clearDepth = false;
+			clear.clearStencil = false;
+
+			graph.AddSwapChainPass("DeferredImGui", clear,
+				[this, imguiDrawData](renderGraph::PassContext& ctx)
+				{
+					const auto extent = ctx.passExtent;
+					ctx.commandList.SetViewport(0, 0,
+						static_cast<int>(extent.width),
+						static_cast<int>(extent.height));
+					ctx.commandList.DX12ImGuiRender(imguiDrawData);
+				},
+				false);
+		}
 }
 else
 {

@@ -6,7 +6,7 @@
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV;
-            heapDesc.NumDescriptors = 256;
+            heapDesc.NumDescriptors = 1024;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&rtvHeap_)),
                 "DX12: Create RTV heap failed");
@@ -23,7 +23,7 @@
             }
             D3D12_DESCRIPTOR_HEAP_DESC heapDesc{};
             heapDesc.Type = D3D12_DESCRIPTOR_HEAP_TYPE_DSV;
-            heapDesc.NumDescriptors = 256;
+            heapDesc.NumDescriptors = 1024;
             heapDesc.Flags = D3D12_DESCRIPTOR_HEAP_FLAG_NONE;
             ThrowIfFailed(NativeDevice()->CreateDescriptorHeap(&heapDesc, IID_PPV_ARGS(&dsvHeap_)),
                 "DX12: Create DSV heap failed");
@@ -46,7 +46,7 @@
             }
             outIndex = idx;
 
-            if (idx >= 256u)
+            if (idx >= 1024u)
             {
                 throw std::runtime_error("DX12: RTV heap exhausted (increase EnsureRTVHeap() NumDescriptors).");
             }
@@ -145,7 +145,7 @@
             }
             outIndex = idx;
 
-            if (idx >= 256u)
+            if (idx >= 1024u)
             {
                 throw std::runtime_error("DX12: DSV heap exhausted (increase EnsureDSVHeap() NumDescriptors).");
             }
@@ -180,7 +180,7 @@
             }
             outIndex = idx;
 
-            if (idx >= 256u)
+            if (idx >= 1024u)
             {
                 throw std::runtime_error("DX12: DSV heap exhausted (increase EnsureDSVHeap() NumDescriptors).");
             }

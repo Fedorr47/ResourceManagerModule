@@ -271,8 +271,15 @@ export namespace rendern
 		// Used for parallax-corrected (box-projected) reflection probes when sampling dynamic env cubemaps.
 		std::array<float, 4> uEnvProbeBoxMin{};
 		std::array<float, 4> uEnvProbeBoxMax{};
+
+		// Bindless material texture descriptor indices (DX12 SM6 deferred).
+		// Packed as float4 to keep the constant buffer simple across backends.
+		// x=albedo, y=normal, z=metalness, w=roughness
+		std::array<float, 4> uTexIndices0{};
+		// x=ao, y=emissive, z,w unused
+		std::array<float, 4> uTexIndices1{};
 	};
-	static_assert(sizeof(PerBatchConstants) == 272);
+	static_assert(sizeof(PerBatchConstants) == 304);
 
 	struct EditorSelectionDraw
 	{

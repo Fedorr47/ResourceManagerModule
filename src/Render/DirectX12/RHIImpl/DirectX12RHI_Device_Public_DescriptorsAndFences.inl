@@ -14,21 +14,21 @@
         {
             if (idx == 0)
             {
-                // 0 = null
+                // 0 is always null.
                 return;
             }
-            if (idx >= static_cast<TextureDescIndex>(kSrvHeapNumDescriptors))
+            if (static_cast<UINT>(idx) >= kSrvHeapNumDescriptors)
             {
                 throw std::runtime_error("DX12: UpdateTextureDescriptor: index out of SRV heap range");
             }
 
-            // Keep mapping for transitions / debug.
+            // Keep mapping for transitions / validation.
             descToTex_[idx] = tex;
 
             D3D12_CPU_DESCRIPTOR_HANDLE dst = srvHeap_->GetCPUDescriptorHandleForHeapStart();
             dst.ptr += static_cast<SIZE_T>(idx) * srvInc_;
 
-            // If tex is null -> write null texture SRV (copy from slot0)
+            // Null texture -> copy null Texture2D SRV from slot 0.
             if (!tex)
             {
                 D3D12_CPU_DESCRIPTOR_HANDLE src = srvHeap_->GetCPUDescriptorHandleForHeapStart(); // slot 0
@@ -47,39 +47,52 @@
             {
                 throw std::runtime_error("DX12: UpdateTextureDescriptor: texture has no resource");
             }
-            if (!te.hasSRV || te.srvCpu.ptr == 0)
+            if (te.srvFormat == DXGI_FORMAT_UNKNOWN)
             {
-                throw std::runtime_error("DX12: UpdateTextureDescriptor: texture has no SRV");
+                throw std::runtime_error("DX12: UpdateTextureDescriptor: texture has no SRV format");
             }
 
-            if (dst.ptr != te.srvCpu.ptr)
+            D3D12_SHADER_RESOURCE_VIEW_DESC srvDesc{};
+            srvDesc.Format = te.srvFormat;
+            srvDesc.Shader4ComponentMapping = D3D12_DEFAULT_SHADER_4_COMPONENT_MAPPING;
+
+            if (te.type == TextureEntry::Type::Cube)
             {
-                NativeDevice()->CopyDescriptorsSimple(
-                    1,
-                    dst,
-                    te.srvCpu,
-                    D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURECUBE;
+                srvDesc.TextureCube.MostDetailedMip = 0;
+                srvDesc.TextureCube.MipLevels = 1;
+                srvDesc.TextureCube.ResourceMinLODClamp = 0.0f;
             }
+            else
+            {
+                srvDesc.ViewDimension = D3D12_SRV_DIMENSION_TEXTURE2D;
+                srvDesc.Texture2D.MostDetailedMip = 0;
+                srvDesc.Texture2D.MipLevels = 1;
+                srvDesc.Texture2D.PlaneSlice = 0;
+                srvDesc.Texture2D.ResourceMinLODClamp = 0.0f;
+            }
+
+            NativeDevice()->CreateShaderResourceView(te.resource.Get(), &srvDesc, dst);
         }
 
         void FreeTextureDescriptor(TextureDescIndex index) noexcept override
         {
-            // Reset mapping; slot is recycled deferred-safe via deferredFreeSrv.
             descToTex_.erase(index);
 
-            if (index != 0 && index < static_cast<TextureDescIndex>(kSrvHeapNumDescriptors))
+            if (index == 0 || static_cast<UINT>(index) >= kSrvHeapNumDescriptors)
             {
-                // Overwrite with null tex SRV (copy from slot0)
-                D3D12_CPU_DESCRIPTOR_HANDLE dst = srvHeap_->GetCPUDescriptorHandleForHeapStart();
-                dst.ptr += static_cast<SIZE_T>(index) * srvInc_;
-                D3D12_CPU_DESCRIPTOR_HANDLE src = srvHeap_->GetCPUDescriptorHandleForHeapStart(); // slot0
-                // ^ if you don't have this helper, use srvHeap_->GetCPUDescriptorHandleForHeapStart() like above.
-                src = srvHeap_->GetCPUDescriptorHandleForHeapStart();
-                NativeDevice()->CopyDescriptorsSimple(1, dst, src, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
-
-                // Recycle after fence for safety (same mechanism as textures/buffers).
-                CurrentFrame().deferredFreeSrv.push_back(static_cast<UINT>(index));
+                return;
             }
+
+            // Overwrite freed slot with null Texture2D SRV (slot 0).
+            D3D12_CPU_DESCRIPTOR_HANDLE dst = srvHeap_->GetCPUDescriptorHandleForHeapStart();
+            dst.ptr += static_cast<SIZE_T>(index) * srvInc_;
+
+            D3D12_CPU_DESCRIPTOR_HANDLE src = srvHeap_->GetCPUDescriptorHandleForHeapStart(); // slot 0
+            NativeDevice()->CopyDescriptorsSimple(1, dst, src, D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+
+            // Recycle after GPU fence for safety.
+            CurrentFrame().deferredFreeSrv.push_back(static_cast<UINT>(index));
         }
 
         // ---------------- Fences (minimal impl) ----------------

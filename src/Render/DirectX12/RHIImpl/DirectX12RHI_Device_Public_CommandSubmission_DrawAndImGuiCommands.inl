@@ -60,10 +60,6 @@
                                 cmdList_->IASetIndexBuffer(&ibv);
                             }
 
-                            // Root signature has:
-                            //  [0] CBV(b0), [1..kMaxSRVSlots] per-slot SRVs, [1+kMaxSRVSlots] bindless SRV table (space1)
-                            constexpr UINT kBindlessRootParam = 1 + kMaxSRVSlots;
-
                             // Root bindings: CBV (0) + SRV table (1)
                             WriteCBAndBind();
 
@@ -72,7 +68,7 @@
                                 cmdList_->SetGraphicsRootDescriptorTable(1 + i, boundTex[i]);
                             }
 
-                            // Bind bindless table base (heap start). SM6 shaders in space1 will index into it.
+                            constexpr UINT kBindlessRootParam = 1 + kMaxSRVSlots;
                             cmdList_->SetGraphicsRootDescriptorTable(kBindlessRootParam, srvHeap_->GetGPUDescriptorHandleForHeapStart());
                             cmdList_->DrawIndexedInstanced(cmd.indexCount, cmd.instanceCount, 0, cmd.baseVertex, cmd.firstInstance);
                         }
@@ -121,9 +117,6 @@
                             cmdList_->IASetVertexBuffers(0, numVB, vbv.data());
                             cmdList_->IASetPrimitiveTopology(currentTopology);
 
-                            // Root signature: [0]=CBV(b0), [1..kMaxSRVSlots]=per-slot SRVs, [1+kMaxSRVSlots]=bindless SRV table (space1)
-                            constexpr UINT kBindlessRootParam = 1 + kMaxSRVSlots;
-
                             WriteCBAndBind();
 
                             for (UINT i = 0; i < kMaxSRVSlots; ++i)
@@ -131,6 +124,7 @@
                                 cmdList_->SetGraphicsRootDescriptorTable(1 + i, boundTex[i]);
                             }
 
+                            constexpr UINT kBindlessRootParam = 1 + kMaxSRVSlots;
                             cmdList_->SetGraphicsRootDescriptorTable(kBindlessRootParam, srvHeap_->GetGPUDescriptorHandleForHeapStart());
                             cmdList_->DrawInstanced(cmd.vertexCount, cmd.instanceCount, cmd.firstVertex, cmd.firstInstance);
                             }
