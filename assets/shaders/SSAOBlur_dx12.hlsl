@@ -20,7 +20,8 @@ struct VSOut
 VSOut VS_Fullscreen(uint vid : SV_VertexID)
 {
 	float2 pos = (vid == 0) ? float2(-1.0, -1.0) : (vid == 1) ? float2(-1.0, 3.0) : float2(3.0, -1.0);
-	float2 uv = (vid == 0) ? float2(0.0, 0.0) : (vid == 1) ? float2(0.0, 2.0) : float2(2.0, 0.0);
+	// Texture-space UV (0,0 top-left)
+    float2 uv = float2((pos.x + 1.0f) * 0.5f, 1.0f - (pos.y + 1.0f) * 0.5f);// Texture-space UV (0,0 top-left)
 
 	VSOut o;
 	o.svPos = float4(pos, 0.0, 1.0);

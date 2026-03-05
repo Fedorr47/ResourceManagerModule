@@ -24,7 +24,8 @@ VSOut VS_Fullscreen(uint vid : SV_VertexID)
 {
 	// Fullscreen triangle
 	float2 pos = (vid == 0) ? float2(-1.0, -1.0) : (vid == 1) ? float2(-1.0, 3.0) : float2(3.0, -1.0);
-	float2 uv = (vid == 0) ? float2(0.0, 0.0) : (vid == 1) ? float2(0.0, 2.0) : float2(2.0, 0.0);
+	// Texture-space UV (0,0 top-left)
+    float2 uv = float2((pos.x + 1.0f) * 0.5f, 1.0f - (pos.y + 1.0f) * 0.5f);
 
 	VSOut o;
 	o.svPos = float4(pos, 0.0, 1.0);
@@ -42,7 +43,12 @@ float Hash12(float2 p)
 
 float3 ReconstructWorldPos(float2 uv, float depth)
 {
-	float4 ndc = float4(uv * 2.0f - 1.0f, depth, 1.0f);
+	// uv is texture-space (0,0 top-left) -> flip Y for NDC (Y-up)
+	float4 ndc;
+	ndc.x = uv.x * 2.0f - 1.0f;
+	ndc.y = 1.0f - uv.y * 2.0f;
+	ndc.z = depth;
+	ndc.w = 1.0f;
 	float4 wp = mul(ndc, uInvViewProj);
 	return wp.xyz / max(wp.w, 1e-6f);
 }

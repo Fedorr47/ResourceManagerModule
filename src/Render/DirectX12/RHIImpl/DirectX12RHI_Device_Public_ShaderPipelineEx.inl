@@ -9,19 +9,28 @@
             // Shader Model 6.1 (DXIL) via DXC.
             if (!supportsSM6_1_ || !EnsureDXC_())
             {
-                return {};
+                std::string msg = "DX12: SM6.1 shader requested, but SM6.1/DXC is unavailable (shader='";
+                msg += std::string(debugName);
+                msg += "')";
+                throw std::runtime_error(msg);
             }
 
             const wchar_t* target = (stage == ShaderStage::Vertex) ? L"vs_6_1" : L"ps_6_1";
 
+            std::string lastErr{};
             auto TryCompile = [&](std::string_view entry) -> ComPtr<ID3DBlob>
                 {
                     ComPtr<ID3DBlob> out;
                     std::string err;
                     if (!CompileDXC_(sourceOrBytecode, target, entry, debugName, out, &err))
                     {
+                        if (!err.empty())
+                        {
+                            lastErr = std::move(err);
+                        }
                         return {};
                     }
+                    lastErr.clear();
                     return out;
                 };
 
@@ -38,7 +47,15 @@
 
             if (!code)
             {
-                return {};
+                std::string msg = "DX12: SM6.1 shader compile failed (shader='";
+                msg += std::string(debugName);
+                msg += "')";
+                if (!lastErr.empty())
+                {
+                    msg += ": ";
+                    msg += lastErr;
+                }
+                throw std::runtime_error(msg);
             }
 
             ShaderHandle handle{ ++nextShaderId_ };
@@ -51,7 +68,10 @@
             return handle;
 #else
             // Built without dxcapi.h; cannot compile SM6 shaders.
-            return {};
+            std::string msg = "DX12: SM6.1 shader requested, but this build has CORE_DX12_HAS_DXC=0 (shader='";
+            msg += std::string(debugName);
+            msg += "')";
+            throw std::runtime_error(msg);
 #endif
         }
 
@@ -64,6 +84,32 @@
                 {
                     return {};
                 }
+            }
+
+            if (!vertexShader)
+            {
+                std::string msg = "DX12: CreatePipelineEx: vertex shader is null (pipeline='";
+                msg += std::string(debugName);
+                msg += "')";
+                throw std::runtime_error(msg);
+            }
+            if (shaders_.find(vertexShader.id) == shaders_.end())
+            {
+                std::string msg = "DX12: CreatePipelineEx: vertex shader handle not found (pipeline='";
+                msg += std::string(debugName);
+                msg += "', vs=";
+                msg += std::to_string(vertexShader.id);
+                msg += ")";
+                throw std::runtime_error(msg);
+            }
+            if (pixelShader && shaders_.find(pixelShader.id) == shaders_.end())
+            {
+                std::string msg = "DX12: CreatePipelineEx: pixel shader handle not found (pipeline='";
+                msg += std::string(debugName);
+                msg += "', ps=";
+                msg += std::to_string(pixelShader.id);
+                msg += ")";
+                throw std::runtime_error(msg);
             }
 
             PipelineHandle handle{ ++nextPsoId_ };

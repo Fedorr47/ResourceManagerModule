@@ -178,11 +178,41 @@
                         throw std::runtime_error("DX12: pipeline handle not found");
                     }
 
+                    auto MakeShaderNotFound = [&](const char* which)
+                         {
+                        std::string msg = "DX12: shader handle not found (";
+                        msg += which;
+                        msg += ", pipeline='";
+                        msg += pit->second.debugName;
+                        msg += "', pipe=";
+                        msg += std::to_string(pipelineHandle.id);
+                        msg += ", vs=";
+                        msg += std::to_string(pit->second.vs.id);
+                        msg += ", ps=";
+                        msg += std::to_string(pit->second.ps.id);
+                        msg += ", numRT=";
+                        msg += std::to_string(curNumRT);
+                        msg += ")";
+                        throw std::runtime_error(msg);
+                        };
+                        
                     auto vsIt = shaders_.find(pit->second.vs.id);
-                    auto psIt = shaders_.find(pit->second.ps.id);
-                    if (vsIt == shaders_.end() || psIt == shaders_.end())
+
+                    if (vsIt == shaders_.end())
                     {
-                        throw std::runtime_error("DX12: shader handle not found");
+                        MakeShaderNotFound("vs");
+                    }
+
+                    // Depth-only passes (NumRenderTargets == 0) can omit a pixel shader.
+                    const bool needsPS = (curNumRT > 0);
+                    auto psIt = shaders_.end();
+                    if (needsPS)
+                    {
+                        psIt = shaders_.find(pit->second.ps.id);
+                        if (psIt == shaders_.end())
+                        {
+                            MakeShaderNotFound("ps");
+                        }
                     }
 
                     auto layIt = layouts_.find(layout.id);
@@ -195,7 +225,14 @@
                     pipelineDesc.pRootSignature = rootSig_.Get();
 
                     pipelineDesc.VS = { vsIt->second.blob->GetBufferPointer(), vsIt->second.blob->GetBufferSize() };
-                    pipelineDesc.PS = { psIt->second.blob->GetBufferPointer(), psIt->second.blob->GetBufferSize() };
+                    if (needsPS)
+                    {
+                        pipelineDesc.PS = { psIt->second.blob->GetBufferPointer(), psIt->second.blob->GetBufferSize() };
+                    }
+                    else
+                    {
+                        pipelineDesc.PS = {};
+                    }
 
                     pipelineDesc.BlendState = CD3D12_BLEND_DESC(D3D12_DEFAULT);
                     pipelineDesc.SampleMask = UINT_MAX;

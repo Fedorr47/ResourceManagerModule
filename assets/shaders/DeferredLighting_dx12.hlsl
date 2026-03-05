@@ -92,14 +92,15 @@ struct VSOut
 
 VSOut VS_Fullscreen(uint vid : SV_VertexID)
 {
-    // Fullscreen triangle
-	float2 pos = (vid == 0) ? float2(-1.0, -1.0) : (vid == 1) ? float2(-1.0, 3.0) : float2(3.0, -1.0);
-	float2 uv = (vid == 0) ? float2(0.0, 0.0) : (vid == 1) ? float2(0.0, 2.0) : float2(2.0, 0.0);
 
+	float2 pos = (vid == 0) ? float2(-1.0, -1.0) : (vid == 1) ? float2(-1.0, 3.0) : float2(3.0, -1.0);
+	// IMPORTANT: produce "texture-space" UV where (0,0) is TOP-left for Texture2D sampling.
+	// This matches CopyToSwapChain_dx12.hlsl and fixes the upside-down deferred output.
+	float2 uv = float2((pos.x + 1.0f) * 0.5f, 1.0f - (pos.y + 1.0f) * 0.5f);
 	VSOut o;
-	o.svPos = float4(pos, 0.0, 1.0);
-	o.uv = uv;
-	return o;
+     o.svPos = float4(pos, 0.0, 1.0);
+     o.uv = uv;
+     return o;
 }
 
 // -----------------------------------------------------------------------------
@@ -267,11 +268,14 @@ float SampleDirShadowPCF3x3(ShadowDataSB sd, float3 worldPos, float NdotL, float
 // -----------------------------------------------------------------------------
 float3 ReconstructWorldPos(float2 uv, float depth)
 {
-    // uv in [0..1], depth in [0..1] (RH_ZO)
-	float2 ndc = uv * 2.0f - 1.0f;
-	float4 clip = float4(ndc, depth, 1.0f);
-	float4 worldH = mul(clip, uInvViewProj);
-	return worldH.xyz / max(worldH.w, 1e-6f);
+    // uv is in TEXTURE space (0,0 top-left). For NDC we need Y-up, so flip Y.
+    float4 clip;
+    clip.x = uv.x * 2.0f - 1.0f;
+    clip.y = 1.0f - uv.y * 2.0f;
+    clip.z = depth;
+    clip.w = 1.0f;
+    float4 worldH = mul(clip, uInvViewProj);
+    return worldH.xyz / max(worldH.w, 1e-6f);
 }
 
 // -----------------------------------------------------------------------------
@@ -280,7 +284,9 @@ float3 ReconstructWorldPos(float2 uv, float depth)
 float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
 {
     // Better grazing behavior for rough surfaces.
-	return F0 + (max(float3(1.0f - roughness), F0) - F0) * pow(1.0f - cosTheta, 5.0f);
+    const float oneMinusR = 1.0f - roughness;
+    const float3 oneMinusR3 = float3(oneMinusR, oneMinusR, oneMinusR);
+    return F0 + (max(oneMinusR3, F0) - F0) * pow(1.0f - cosTheta, 5.0f);
 }
 
 float3 SampleEnvPrefiltered(TextureCube env, float3 dir, float roughness)
