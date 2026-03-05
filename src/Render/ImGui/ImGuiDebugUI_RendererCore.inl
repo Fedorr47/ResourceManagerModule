@@ -30,6 +30,56 @@ namespace rendern::ui
         ImGui::Separator();
     }
 
+    static void DrawFogSection(rendern::RendererSettings& rs)
+    {
+        if (!rs.enableDeferred)
+            return;
+
+        if (!ImGui::CollapsingHeader("Fog", ImGuiTreeNodeFlags_DefaultOpen))
+            return;
+
+        ImGui::Checkbox("Enable fog", &rs.enableFog);
+        ImGui::BeginDisabled(!rs.enableFog);
+
+        const char* items[] = { "Linear", "Exp", "Exp2" };
+        int mode = static_cast<int>(rs.fogMode);
+        if (ImGui::Combo("Mode", &mode, items, IM_ARRAYSIZE(items)))
+        {
+            if (mode < 0) mode = 0;
+            if (mode > 2) mode = 2;
+            rs.fogMode = static_cast<std::uint32_t>(mode);
+        }
+
+        if (rs.fogMode == 0u)
+        {
+            ImGui::SliderFloat("Start", &rs.fogStart, 0.0f, 500.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("End", &rs.fogEnd, 0.0f, 500.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+
+            if (rs.fogEnd < rs.fogStart)
+            {
+                std::swap(rs.fogEnd, rs.fogStart);
+            }
+        }
+        else
+        {
+            ImGui::SliderFloat("Density", &rs.fogDensity, 0.0f, 0.25f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+        }
+
+        ImGui::ColorEdit3("Color", rs.fogColor.data());
+
+        if (ImGui::Button("Fog defaults"))
+        {
+            rs.fogMode = 0u;
+            rs.fogStart = 15.0f;
+            rs.fogEnd = 80.0f;
+            rs.fogDensity = 0.02f;
+            rs.fogColor = { 0.60f, 0.70f, 0.80f };
+        }
+
+        ImGui::EndDisabled();
+        ImGui::Separator();
+    }
+
     static void DrawCameraDebugSection(rendern::Scene& scene, rendern::CameraController& camCtl)
     {
         if (!ImGui::CollapsingHeader("Camera", ImGuiTreeNodeFlags_DefaultOpen))
@@ -173,6 +223,9 @@ namespace rendern::ui
         ImGui::Checkbox("Deferred (experimental)", &rs.enableDeferred);
         ImGui::Checkbox("Frustum culling", &rs.enableFrustumCulling);
         ImGui::Checkbox("Debug print draw calls", &rs.debugPrintDrawCalls);
+
+        DrawSSAOSection(rs);
+        DrawFogSection(rs);
 
         DrawCameraDebugSection(scene, camCtl);
         DrawShadowAndDebugSection(rs, scene);

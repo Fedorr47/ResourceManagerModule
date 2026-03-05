@@ -250,6 +250,7 @@
 		const auto lightPath = corefs::ResolveAsset("shaders\\DeferredLighting_dx12.hlsl");
 		const auto ssaoPath = corefs::ResolveAsset("shaders\\SSAO_dx12.hlsl");
 		const auto ssaoBlurPath = corefs::ResolveAsset("shaders\\SSAOBlur_dx12.hlsl");
+		const auto fogPath = corefs::ResolveAsset("shaders\\FogPost_dx12.hlsl");
 		const auto copyPath = corefs::ResolveAsset("shaders\\CopyToSwapChain_dx12.hlsl");
 		const auto planarCompPath = corefs::ResolveAsset("shaders\\PlanarComposite_dx12.hlsl");
 
@@ -319,6 +320,24 @@
 				.shaderModel = rhi::ShaderModel::SM6_1
 				});
 			psoSSAOBlur_ = psoCache_.GetOrCreate("PSO_SSAO_Blur", vsB, psB);
+		}
+		// Fog (post effect): fullscreen pass using SceneColor + depth.
+		{
+			const auto vsFog = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Fullscreen",
+				.filePath = fogPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psFog = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_Fog",
+				.filePath = fogPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoFog_ = psoCache_.GetOrCreate("PSO_Fog", vsFog, psFog);
 		}
 
 		// Copy scene color to swapchain (fullscreen blit).

@@ -349,6 +349,7 @@ export namespace rendern
 		rhi::PipelineHandle psoDeferredLighting_{}; // fullscreen deferred lighting
 		rhi::PipelineHandle psoSSAO_{}; // fullscreen SSAO (R32_FLOAT)
 		rhi::PipelineHandle psoSSAOBlur_{}; // fullscreen SSAO blur (R32_FLOAT)
+		rhi::PipelineHandle psoFog_{}; // fullscreen fog post effect
 		rhi::PipelineHandle psoCopyToSwapChain_{}; // fullscreen copy SceneColor -> swapchain
 		rhi::InputLayoutHandle fullscreenLayout_{}; // empty input layout for fullscreen VS (SV_VertexID)
 		rhi::GraphicsState deferredLightingState_{};

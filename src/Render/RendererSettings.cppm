@@ -2,6 +2,7 @@ module;
 
 #include <filesystem>
 #include <cstdint>
+#include <array>
 
 // Shared, backend-agnostic renderer settings.
 export module core:renderer_settings;
@@ -31,6 +32,14 @@ export namespace rendern
 		float ssaoStrength{ 1.25f };            // intensity multiplier
 		float ssaoPower{ 1.5f };                // contrast curve
 		float ssaoBlurDepthThreshold{ 0.0025f };// depth compare threshold in 0..1 depth space
+
+		// Fog (post effect). Applied after Skybox/Planar, before editor selection + transparents.
+		bool enableFog{ false };
+		std::uint32_t fogMode{ 0u }; // 0=Linear, 1=Exp, 2=Exp2
+		float fogStart{ 15.0f };
+		float fogEnd{ 80.0f };
+		float fogDensity{ 0.02f };
+		std::array<float, 3> fogColor{ 0.60f, 0.70f, 0.80f };
 
 		// Reflection capture (cubemap). Currently used by DX12 backend.
 		bool enableReflectionCapture{ true };

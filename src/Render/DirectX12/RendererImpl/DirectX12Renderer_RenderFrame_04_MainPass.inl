@@ -79,6 +79,8 @@ if (canDeferred)
 		.debugName = "SceneColor_Lit"
 		});
 
+	auto sceneColorAfterFog = sceneColor;
+
 	// --- Editor selection (shared for deferred passes) ---
 	// We keep the exact same selection logic as the forward path:
 	// - Opaque selection outline/highlight is drawn BEFORE transparent objects.
@@ -435,7 +437,7 @@ if (canDeferred)
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { sceneColor };
+		att.colors = { sceneColorAfterFog };
 
 		att.clearDesc.clearColor = true;
 		att.clearDesc.clearDepth = false;
@@ -495,7 +497,8 @@ if (canDeferred)
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { sceneColor };
+		att.colors = { sceneColorAfterFog };
+
 		att.depth = depthRG;
 
 		att.clearDesc.clearColor = false;
@@ -541,12 +544,76 @@ if (canDeferred)
 
 	// --- Planar reflections (mask RT path) ---
 #include "RendererImpl/DirectX12Renderer_RenderFrame_04b_PlanarReflections_MaskRT.inl"
+
+		// --- Fog (post effect): SceneColor + depth -> SceneColor_Fog ---
+	if (settings_.enableFog && psoFog_)
+	{
+		const auto sceneColorFog = graph.CreateTexture(renderGraph::RGTextureDesc{
+			.extent = scDesc.extent,
+			.format = rhi::Format::RGBA8_UNORM,
+			.usage = renderGraph::ResourceUsage::RenderTarget,
+			.debugName = "SceneColor_Fog"
+			});
+
+		struct alignas(16) FogConstants
+		{
+			std::array<float, 16> uInvViewProj{};
+			std::array<float, 4> uCameraPos{}; // xyz + pad
+			std::array<float, 4> uFogParams{}; // start, end, density, mode
+			std::array<float, 4> uFogColor{};  // rgb + enabled(0/1)
+		};
+		static_assert(sizeof(FogConstants) % 16 == 0);
+
+		FogConstants c{};
+		std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
+		c.uCameraPos = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.0f };
+		c.uFogParams = { settings_.fogStart, settings_.fogEnd, settings_.fogDensity, static_cast<float>(settings_.fogMode) };
+		c.uFogColor = {
+			settings_.fogColor[0],
+			settings_.fogColor[1],
+			settings_.fogColor[2],
+			settings_.enableFog ? 1.0f : 0.0f
+		};
+
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { sceneColorFog };
+
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+		const auto sceneColorIn = sceneColorAfterFog;
+		graph.AddPass("DeferredFog", std::move(att),
+			[this, depthRG, sceneColorIn, sceneColorFog, c](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+
+				ctx.commandList.SetViewport(0, 0,
+					static_cast<int>(extent.width),
+					static_cast<int>(extent.height));
+
+				ctx.commandList.SetState(deferredLightingState_);
+				ctx.commandList.BindPipeline(psoFog_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+
+				// t0 = SceneColor, t1 = depth
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(sceneColorIn));
+				ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(depthRG));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3);
+			});
+
+		sceneColorAfterFog = sceneColorFog;
+	}
+
 	// --- Editor selection (opaque) over deferred SceneColor ---
 	if (!selectionOpaque.empty())
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { sceneColor };
+		att.colors = { sceneColorAfterFog };
 		att.depth = depthRG;
 		att.clearDesc.clearColor = false;
 		att.clearDesc.clearDepth = false;
@@ -708,7 +775,7 @@ if (canDeferred)
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { sceneColor };
+		att.colors = { sceneColorAfterFog };
 		att.depth = depthRG;
 
 		att.clearDesc.clearColor = false;
@@ -905,7 +972,7 @@ if (canDeferred)
 	{
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
-		att.colors = { sceneColor };
+		att.colors = { sceneColorAfterFog };
 		att.depth = depthRG;
 		att.clearDesc.clearColor = false;
 		att.clearDesc.clearDepth = false;
@@ -1060,7 +1127,7 @@ if (canDeferred)
 		clear.clearStencil = false;
 
 		graph.AddSwapChainPass("DeferredPresent", clear,
-			[this, sceneColor](renderGraph::PassContext& ctx)
+			[this, sceneColorAfterFog](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
 
@@ -1073,7 +1140,7 @@ if (canDeferred)
 				ctx.commandList.BindPipeline(psoCopyToSwapChain_);
 
 				// t0: SceneColor_Lit				
-				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(sceneColor));
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(sceneColorAfterFog));
 				ctx.commandList.Draw(3, 0);
 			});
 
