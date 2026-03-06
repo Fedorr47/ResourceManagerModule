@@ -510,6 +510,20 @@ uint DecodeReflectionProbeIndex(float probeIdxN, uint probeCount)
 	return min((uint) (n * (float) probeCount), probeCount - 1u);
 }
 
+uint GetReflectionProbeCountFromArray()
+{
+	uint w = 0u, h = 0u, layers = 0u, mips = 1u;
+	gReflEnvArray.GetDimensions(0, w, h, layers, mips);
+
+	// 6 slices per cubemap.
+	return layers / 6u;
+}
+
+uint GetSafeReflectionProbeCount(uint cpuProbeCount)
+{
+	return min(cpuProbeCount, GetReflectionProbeCountFromArray());
+}
+
 float3 SampleEnvArrayProbeMip(uint probeIdx, float3 dir, float lod)
 {
 	CubeFaceUV fu = CubeDirToFaceUV(dir);
@@ -744,7 +758,7 @@ float4 PS_DeferredLighting(VSOut IN) : SV_Target0
     // Indirect lighting (IBL v1)
     // -------------------------------------------------------------------------
 	const bool useRefl = (envSel.x > 0.5f);
-	const uint reflProbeCount = (uint) max(uCounts.w, 0.0f);
+	const uint reflProbeCount = GetSafeReflectionProbeCount((uint) max(uCounts.w, 0.0f));
 	const uint reflProbeIdx = DecodeReflectionProbeIndex(envSel.y, reflProbeCount);
 
 	float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);

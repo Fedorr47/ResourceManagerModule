@@ -32,17 +32,15 @@ if (canDeferred)
 	static_assert(sizeof(DeferredLightingConstants) == 128);
 
 	std::uint32_t activeReflectionProbeCount = 0u;
-	if (settings_.enableReflectionCapture)
+	if (settings_.enableReflectionCapture &&
+		reflectionCube_ &&
+		reflectionCubeDescIndex_ != 0)
 	{
-		for (const Batch& batch : mainBatches)
-		{
-			if (batch.reflectionProbeIndex >= 0)
-			{
-				activeReflectionProbeCount = std::max(
-					activeReflectionProbeCount,
-					static_cast<std::uint32_t>(batch.reflectionProbeIndex + 1));
-			}
-		}
+		// Use the actual probe list, not max(batch.reflectionProbeIndex)+1.
+		// GBuffer3 stores probeIdxN in RGBA8_UNORM, so 255 distinct indices is a sane hard cap here.
+		activeReflectionProbeCount = std::min<std::uint32_t>(
+				static_cast<std::uint32_t>(reflectionProbes_.size()),
+				255u);
 	}
 
 	DeferredLightingConstants deferredConstants{};
