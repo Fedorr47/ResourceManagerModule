@@ -1,0 +1,3587 @@
+From 997105c8dc99beccc80ef285e4b897cf032ebf41 Mon Sep 17 00:00:00 2001
+From: OpenAI <oai@example.com>
+Date: Fri, 6 Mar 2026 20:58:30 +0000
+Subject: [PATCH] 0001 Handle equality and obvious cleanup
+
+---
+ ...X12RHI_Device_Public_CommandSubmission.inl |  884 ++++-----
+ src/Render/RHI.cppm                           | 1652 +++++++++--------
+ .../Level_LevelInstance_PrivateHelpers.inl    | 1020 +++++-----
+ 3 files changed, 1779 insertions(+), 1777 deletions(-)
+
+diff --git a/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device_Public_CommandSubmission.inl b/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device_Public_CommandSubmission.inl
+index 58f2f51..c8119a1 100644
+--- a/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device_Public_CommandSubmission.inl
++++ b/src/Render/DirectX12/RHIImpl/DirectX12RHI_Device_Public_CommandSubmission.inl
+@@ -1,442 +1,442 @@
+-        void SubmitCommandList(CommandList&& commandList) override
+-        {
+-            // Begin frame: wait/recycle per-frame stuff + reset allocator/list
+-            BeginFrame();
+-            hasSubmitted_ = true;
+-
+-            hasSubmitted_ = true;
+-
+-            // Set descriptor heaps (SRV)
+-            ID3D12DescriptorHeap* heaps[] = { NativeSRVHeap() };
+-            cmdList_->SetDescriptorHeaps(1, heaps);
+-
+-            FlushPendingBufferUpdates();
+-
+-            // State while parsing high-level commands
+-            GraphicsState curState{};
+-            PipelineHandle curPipe{};
+-
+-            InputLayoutHandle curLayout{};
+-            D3D_PRIMITIVE_TOPOLOGY currentTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
+-            static constexpr std::uint32_t kMaxVBSlots = 2;
+-            std::array<BufferHandle, kMaxVBSlots> vertexBuffers{};
+-            std::array<std::uint32_t, kMaxVBSlots> vbStrides{};
+-            std::array<std::uint32_t, kMaxVBSlots> vbOffsets{};
+-
+-            BufferHandle indexBuffer{};
+-            IndexType ibType = IndexType::UINT16;
+-            std::uint32_t ibOffset = 0;
+-
+-            // Bound textures by slot (we actuallu use only slot 0)
+-            std::array<D3D12_GPU_DESCRIPTOR_HANDLE, kMaxSRVSlots> boundTex{};
+-            for (auto& t : boundTex)
+-            {
+-                t = srvHeap_->GetGPUDescriptorHandleForHeapStart(); // null SRV slot0
+-            }
+-
+-            // slot 2 (t2) expects StructuredBuffer SRV; point it to null-buffer descriptor (SRV heap index 1).
+-            if (boundTex.size() > 2)
+-            {
+-                boundTex[2].ptr += static_cast<UINT64>(srvInc_);
+-            }
+-
+-            // Per-draw constants (raw bytes).
+-            // The renderer is responsible for packing the layout expected by HLSL.
+-            static constexpr std::uint32_t kMaxPerDrawConstantsBytes = 512;
+-            std::array<std::byte, kMaxPerDrawConstantsBytes> perDrawBytes{};
+-            std::uint32_t perDrawSize = 0;
+-            std::uint32_t perDrawSlot = 0;
+-
+-            auto WriteCBAndBind = [&]()
+-                {
+-                    FrameResource& fr = CurrentFrame();
+-
+-                    const std::uint32_t used = (perDrawSize == 0) ? 1u : perDrawSize;
+-                    const std::uint32_t cbSize = AlignUp(used, 256);
+-
+-                    if (fr.cbCursor + cbSize > kPerFrameCBUploadBytes)
+-                    {
+-                        throw std::runtime_error("DX12: per-frame constant upload ring overflow (increase kPerFrameCBUploadBytes)");
+-                    }
+-
+-                    if (perDrawSize != 0)
+-                    {
+-                        std::memcpy(fr.cbMapped + fr.cbCursor, perDrawBytes.data(), perDrawSize);
+-                    }
+-
+-                    const D3D12_GPU_VIRTUAL_ADDRESS gpuVA = fr.cbUpload->GetGPUVirtualAddress() + fr.cbCursor;
+-                    cmdList_->SetGraphicsRootConstantBufferView(perDrawSlot, gpuVA);
+-
+-                    fr.cbCursor += cbSize;
+-                };
+-
+-#include "DirectX12RHI_Device_Public_CommandSubmission_TransitionAndSrvHelpers.inl"
+-            UINT curNumRT = 0;
+-            std::array<DXGI_FORMAT, 8> curRTVFormats{};
+-            std::fill(curRTVFormats.begin(), curRTVFormats.end(), DXGI_FORMAT_UNKNOWN);
+-            DXGI_FORMAT curDSVFormat = DXGI_FORMAT_UNKNOWN;
+-            bool curPassIsSwapChain = false;
+-            DX12SwapChain* curSwapChain = nullptr;
+-
+-            auto TransitionTexture = [&](TextureHandle tex, D3D12_RESOURCE_STATES desired)
+-                {
+-                    if (!tex)
+-                    {
+-                        return;
+-                    }
+-
+-                    auto it = textures_.find(tex.id);
+-                    if (it == textures_.end())
+-                    {
+-                        return;
+-                    }
+-
+-                    TransitionResource(
+-                        cmdList_.Get(),
+-                        it->second.resource.Get(),
+-                        it->second.state,
+-                        desired);
+-                };
+-
+-            auto TransitionBackBuffer = [&](DX12SwapChain& sc, D3D12_RESOURCE_STATES desired)
+-                {
+-                    TransitionResource(
+-                        cmdList_.Get(),
+-                        sc.CurrentBackBuffer(),
+-                        sc.CurrentBackBufferState(),
+-                        desired);
+-                };
+-
+-            auto EnsurePSO = [&](PipelineHandle pipelineHandle, InputLayoutHandle layout) -> ID3D12PipelineState*
+-                {
+-                    auto PackState = [&](const GraphicsState& s) -> std::uint64_t
+-                        {
+-                            std::uint64_t v = 0;
+-                            std::uint32_t bit = 0;
+-                            auto PackBits = [&](std::uint64_t value, std::uint32_t width)
+-                                {
+-                                    const std::uint64_t mask = (width >= 64u) ? ~0ull : ((1ull << width) - 1ull);
+-                                    v |= (value & mask) << bit;
+-                                    bit += width;
+-                                };
+-
+-                            PackBits(static_cast<std::uint32_t>(s.rasterizer.cullMode), 2);             // 0..2
+-                            PackBits(static_cast<std::uint32_t>(s.rasterizer.frontFace), 1);            // 2
+-                            PackBits(s.depth.testEnable ? 1u : 0u, 1);                                  // 3
+-                            PackBits(s.depth.writeEnable ? 1u : 0u, 1);                                 // 4
+-                            PackBits(static_cast<std::uint32_t>(s.depth.depthCompareOp), 3);            // 5..7
+-                            PackBits(s.blend.enable ? 1u : 0u, 1);                                      // 8
+-
+-                            PackBits(s.depth.stencil.enable ? 1u : 0u, 1);                              // 9
+-                            PackBits(static_cast<std::uint32_t>(s.depth.stencil.readMask), 8);          // 10..17
+-                            PackBits(static_cast<std::uint32_t>(s.depth.stencil.writeMask), 8);         // 18..25
+-
+-                            auto PackStencilFace = [&](const StencilFaceState& face)
+-                                {
+-                                    PackBits(static_cast<std::uint32_t>(face.failOp), 3);
+-                                    PackBits(static_cast<std::uint32_t>(face.depthFailOp), 3);
+-                                    PackBits(static_cast<std::uint32_t>(face.passOp), 3);
+-                                    PackBits(static_cast<std::uint32_t>(face.compareOp), 3);
+-                                };
+-                            PackStencilFace(s.depth.stencil.front);                                     // 26..37
+-                            PackStencilFace(s.depth.stencil.back);                                      // 38..49
+-                            return v;
+-                        };
+-
+-                    auto Fnv1a64 = [](std::uint64_t h, std::uint64_t v) -> std::uint64_t
+-                        {
+-                            constexpr std::uint64_t kPrime = 1099511628211ull;
+-                            for (int i = 0; i < 8; ++i)
+-                            {
+-                                const std::uint8_t byte = static_cast<std::uint8_t>((v >> (i * 8)) & 0xffu);
+-                                h ^= byte;
+-                                h *= kPrime;
+-                            }
+-                            return h;
+-                        };
+-
+-                    // PSO cache key MUST include: shaders, state, layout, and render-target formats.
+-                    std::uint64_t key = 1469598103934665603ull; // FNV-1a offset basis
+-                    key = Fnv1a64(key, static_cast<std::uint64_t>(pipelineHandle.id));
+-                    key = Fnv1a64(key, static_cast<std::uint64_t>(layout.id));
+-                    key = Fnv1a64(key, static_cast<std::uint64_t>(PackState(curState)));
+-                    key = Fnv1a64(key, static_cast<std::uint64_t>(curNumRT));
+-                    key = Fnv1a64(key, static_cast<std::uint64_t>(curDSVFormat));
+-                    for (std::size_t i = 0; i < curRTVFormats.size(); ++i)
+-                    {
+-                        key = Fnv1a64(key, static_cast<std::uint64_t>(curRTVFormats[i]));
+-                    }
+-
+-                    if (auto it = psoCache_.find(key); it != psoCache_.end())
+-                    {
+-                        return it->second.Get();
+-                    }
+-
+-                    auto pit = pipelines_.find(pipelineHandle.id);
+-                    if (pit == pipelines_.end())
+-                    {
+-                        throw std::runtime_error("DX12: pipeline handle not found");
+-                    }
+-
+-                    auto MakeShaderNotFound = [&](const char* which)
+-                         {
+-                        std::string msg = "DX12: shader handle not found (";
+-                        msg += which;
+-                        msg += ", pipeline='";
+-                        msg += pit->second.debugName;
+-                        msg += "', pipe=";
+-                        msg += std::to_string(pipelineHandle.id);
+-                        msg += ", vs=";
+-                        msg += std::to_string(pit->second.vs.id);
+-                        msg += ", ps=";
+-                        msg += std::to_string(pit->second.ps.id);
+-                        msg += ", numRT=";
+-                        msg += std::to_string(curNumRT);
+-                        msg += ")";
+-                        throw std::runtime_error(msg);
+-                        };
+-                        
+-                    auto vsIt = shaders_.find(pit->second.vs.id);
+-
+-                    if (vsIt == shaders_.end())
+-                    {
+-                        MakeShaderNotFound("vs");
+-                    }
+-
+-                    // Depth-only passes (NumRenderTargets == 0) can omit a pixel shader.
+-                    const bool needsPS = (curNumRT > 0);
+-                    auto psIt = shaders_.end();
+-                    if (needsPS)
+-                    {
+-                        psIt = shaders_.find(pit->second.ps.id);
+-                        if (psIt == shaders_.end())
+-                        {
+-                            MakeShaderNotFound("ps");
+-                        }
+-                    }
+-
+-                    auto layIt = layouts_.find(layout.id);
+-                    if (layIt == layouts_.end())
+-                    {
+-                        throw std::runtime_error("DX12: input layout handle not found");
+-                    }
+-
+-                    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineDesc{};
+-                    pipelineDesc.pRootSignature = rootSig_.Get();
+-
+-                    pipelineDesc.VS = { vsIt->second.blob->GetBufferPointer(), vsIt->second.blob->GetBufferSize() };
+-                    if (needsPS)
+-                    {
+-                        pipelineDesc.PS = { psIt->second.blob->GetBufferPointer(), psIt->second.blob->GetBufferSize() };
+-                    }
+-                    else
+-                    {
+-                        pipelineDesc.PS = {};
+-                    }
+-
+-                    pipelineDesc.BlendState = CD3D12_BLEND_DESC(D3D12_DEFAULT);
+-                    pipelineDesc.SampleMask = UINT_MAX;
+-
+-                    // Blend
+-                    if (curState.blend.enable)
+-                    {
+-                        D3D12_BLEND_DESC blendDesc = CD3D12_BLEND_DESC(D3D12_DEFAULT);
+-                        blendDesc.AlphaToCoverageEnable = FALSE;
+-                        blendDesc.IndependentBlendEnable = FALSE;
+-
+-                        D3D12_RENDER_TARGET_BLEND_DESC renderTartget{};
+-                        renderTartget.BlendEnable = TRUE;
+-                        renderTartget.LogicOpEnable = FALSE;
+-                        renderTartget.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+-                        renderTartget.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+-                        renderTartget.BlendOp = D3D12_BLEND_OP_ADD;
+-                        renderTartget.SrcBlendAlpha = D3D12_BLEND_ONE;
+-                        renderTartget.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+-                        renderTartget.BlendOpAlpha = D3D12_BLEND_OP_ADD;
+-                        renderTartget.LogicOp = D3D12_LOGIC_OP_NOOP;
+-                        renderTartget.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+-
+-                        for (UINT i = 0; i < 8; ++i)
+-                        {
+-                            blendDesc.RenderTarget[i] = renderTartget;
+-                        }
+-
+-                        pipelineDesc.BlendState = blendDesc;
+-                    }
+-
+-                    // Rasterizer from current state
+-                    pipelineDesc.RasterizerState = CD3D12_RASTERIZER_DESC(D3D12_DEFAULT);
+-                    pipelineDesc.RasterizerState.CullMode = ToD3DCull(curState.rasterizer.cullMode);
+-                    pipelineDesc.RasterizerState.FrontCounterClockwise = (curState.rasterizer.frontFace == FrontFace::CounterClockwise) ? TRUE : FALSE;
+-
+-                    // Depth / Stencil
+-                    pipelineDesc.DepthStencilState = CD3D12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
+-                    pipelineDesc.DepthStencilState.DepthEnable = curState.depth.testEnable ? TRUE : FALSE;
+-                    pipelineDesc.DepthStencilState.DepthWriteMask = curState.depth.writeEnable ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
+-                    pipelineDesc.DepthStencilState.DepthFunc = ToD3DCompare(curState.depth.depthCompareOp);
+-                    pipelineDesc.DepthStencilState.StencilEnable = curState.depth.stencil.enable ? TRUE : FALSE;
+-                    pipelineDesc.DepthStencilState.StencilReadMask = curState.depth.stencil.readMask;
+-                    pipelineDesc.DepthStencilState.StencilWriteMask = curState.depth.stencil.writeMask;
+-                    pipelineDesc.DepthStencilState.FrontFace.StencilFailOp = ToD3DStencilOp(curState.depth.stencil.front.failOp);
+-                    pipelineDesc.DepthStencilState.FrontFace.StencilDepthFailOp = ToD3DStencilOp(curState.depth.stencil.front.depthFailOp);
+-                    pipelineDesc.DepthStencilState.FrontFace.StencilPassOp = ToD3DStencilOp(curState.depth.stencil.front.passOp);
+-                    pipelineDesc.DepthStencilState.FrontFace.StencilFunc = ToD3DCompare(curState.depth.stencil.front.compareOp);
+-                    pipelineDesc.DepthStencilState.BackFace.StencilFailOp = ToD3DStencilOp(curState.depth.stencil.back.failOp);
+-                    pipelineDesc.DepthStencilState.BackFace.StencilDepthFailOp = ToD3DStencilOp(curState.depth.stencil.back.depthFailOp);
+-                    pipelineDesc.DepthStencilState.BackFace.StencilPassOp = ToD3DStencilOp(curState.depth.stencil.back.passOp);
+-                    pipelineDesc.DepthStencilState.BackFace.StencilFunc = ToD3DCompare(curState.depth.stencil.back.compareOp);
+-
+-                    pipelineDesc.InputLayout = { layIt->second.elems.data(), static_cast<UINT>(layIt->second.elems.size()) };
+-                    pipelineDesc.PrimitiveTopologyType = ToD3DTopologyType(pit->second.topologyType);
+-
+-                    pipelineDesc.NumRenderTargets = curNumRT;
+-                    for (UINT i = 0; i < curNumRT; ++i)
+-                    {
+-                        pipelineDesc.RTVFormats[i] = curRTVFormats[i];
+-                    }
+-                    pipelineDesc.DSVFormat = curDSVFormat;
+-
+-                    pipelineDesc.SampleDesc.Count = 1;
+-
+-                    ComPtr<ID3D12PipelineState> pso;
+-                    
+-                    if (pit->second.viewInstanceCount > 1)
+-                    {
+-                        if (!device2_)
+-                        {
+-                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
+-                            return nullptr;
+-                        }
+-                        // Build PSO via Pipeline State Stream to enable View Instancing.
+-
+-                        using SO_RootSig = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, ID3D12RootSignature*>;
+-                        using SO_VS = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS, D3D12_SHADER_BYTECODE>;
+-                        using SO_PS = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_SHADER_BYTECODE>;
+-                        using SO_Blend = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, D3D12_BLEND_DESC>;
+-                        using SO_SampleMask = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, UINT>;
+-                        using SO_Raster = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, D3D12_RASTERIZER_DESC>;
+-                        using SO_Depth = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC>;
+-                        using SO_Input = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT, D3D12_INPUT_LAYOUT_DESC>;
+-                        using SO_Topo = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE>;
+-                        using SO_RTVFmts = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY>;
+-                        using SO_DSVFmt = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, DXGI_FORMAT>;
+-                        using SO_SampleDesc = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC>;
+-                        using SO_ViewInst = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING, D3D12_VIEW_INSTANCING_DESC>;
+-
+-                        // Each stream subobject must be pointer-aligned, and its size should be a multiple of sizeof(void*)
+-                        // so the next Type is correctly aligned in the byte stream.
+-                        static_assert(sizeof(SO_RootSig) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_VS) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_PS) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_Blend) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_SampleMask) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_Raster) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_Depth) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_Input) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_Topo) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_RTVFmts) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_DSVFmt) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_SampleDesc) % sizeof(void*) == 0);
+-                        static_assert(sizeof(SO_ViewInst) % sizeof(void*) == 0);
+-
+-                        const std::uint32_t viewCount = pit->second.viewInstanceCount;
+-                        std::array<D3D12_VIEW_INSTANCE_LOCATION, 8> locations{};
+-                        if (viewCount > locations.size())
+-                        {
+-                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
+-                            return nullptr;
+-                        }
+-                        for (std::uint32_t i = 0; i < viewCount; ++i)
+-                        {
+-                            locations[i].RenderTargetArrayIndex = i;
+-                            locations[i].ViewportArrayIndex = 0;
+-                        }
+-
+-                        D3D12_VIEW_INSTANCING_DESC viDesc{};
+-                        viDesc.ViewInstanceCount = viewCount;
+-                        viDesc.pViewInstanceLocations = locations.data();
+-                        viDesc.Flags = D3D12_VIEW_INSTANCING_FLAG_NONE;
+-
+-                        D3D12_RT_FORMAT_ARRAY rtFmts{};
+-                        rtFmts.NumRenderTargets = curNumRT;
+-                        for (UINT i = 0; i < curNumRT; ++i)
+-                        {
+-                            rtFmts.RTFormats[i] = curRTVFormats[i];
+-                        }
+-
+-                        struct alignas(void*) PSOStream
+-                        {
+-                            SO_RootSig    rootSig;
+-                            SO_VS         vs;
+-                            SO_PS         ps;
+-                            SO_Blend      blend;
+-                            SO_SampleMask sampleMask;
+-                            SO_Raster     raster;
+-                            SO_Depth      depth;
+-                            SO_Input      input;
+-                            SO_Topo       topo;
+-                            SO_RTVFmts    rtvFmts;
+-                            SO_DSVFmt     dsvFmt;
+-                            SO_SampleDesc sampleDesc;
+-                            SO_ViewInst   viewInst;
+-                        } stream{};
+-
+-                        stream.rootSig.data = rootSig_.Get();
+-                        stream.vs.data = pipelineDesc.VS;
+-                        stream.ps.data = pipelineDesc.PS;
+-                        stream.blend.data = pipelineDesc.BlendState;
+-                        stream.sampleMask.data = pipelineDesc.SampleMask;
+-                        stream.raster.data = pipelineDesc.RasterizerState;
+-                        stream.depth.data = pipelineDesc.DepthStencilState;
+-                        stream.input.data = pipelineDesc.InputLayout;
+-                        stream.topo.data = pipelineDesc.PrimitiveTopologyType;
+-                        stream.rtvFmts.data = rtFmts;
+-                        stream.dsvFmt.data = pipelineDesc.DSVFormat;
+-                        stream.sampleDesc.data = pipelineDesc.SampleDesc;
+-                        stream.viewInst.data = viDesc;
+-
+-                        D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{};
+-                        streamDesc.SizeInBytes = sizeof(stream);
+-                        streamDesc.pPipelineStateSubobjectStream = &stream;
+-
+-                        const HRESULT hr = device2_->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pso));
+-                        if (FAILED(hr))
+-                        {
+-                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
+-                            ThrowIfFailed(NativeDevice()->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&pso)),
+-                                "DX12: CreateGraphicsPipelineState failed");
+-                        }
+-                    }
+-                    else
+-                    {
+-                        ThrowIfFailed(NativeDevice()->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&pso)),
+-                            "DX12: CreateGraphicsPipelineState failed");
+-                    }
+-
+-                    if (!pso)
+-                    {
+-                        return nullptr;
+-                    }
+-
+-                    psoCache_[key] = pso;
+-                    return pso.Get();
+-                };
+-
+-            // Parse high-level commands and record native D3D12
+-            for (auto& command : commandList.commands)
+-            {
+-                std::visit([&](auto&& cmd)
+-                    {
+-                        using T = std::decay_t<decltype(cmd)>;
+-
+-#include "DirectX12RHI_Device_Public_CommandSubmission_PassCommands.inl"                        
+-#include "DirectX12RHI_Device_Public_CommandSubmission_StateAndBindingCommands.inl"                  
+-#include "DirectX12RHI_Device_Public_CommandSubmission_DrawAndImGuiCommands.inl"                        
+-
+-                    }, command);
+-            }
+-
+-            // Close + execute + signal fence for the current frame resource
+-            EndFrame();
+-        }
+-
++        void SubmitCommandList(CommandList&& commandList) override
++        {
++            // Begin frame: wait/recycle per-frame stuff + reset allocator/list
++            BeginFrame();
++            hasSubmitted_ = true;
++
++            hasSubmitted_ = true;
++
++            // Set descriptor heaps (SRV)
++            ID3D12DescriptorHeap* heaps[] = { NativeSRVHeap() };
++            cmdList_->SetDescriptorHeaps(1, heaps);
++
++            FlushPendingBufferUpdates();
++
++            // State while parsing high-level commands
++            GraphicsState curState{};
++            PipelineHandle curPipe{};
++
++            InputLayoutHandle curLayout{};
++            D3D_PRIMITIVE_TOPOLOGY currentTopology = D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST;
++            static constexpr std::uint32_t kMaxVBSlots = 2;
++            std::array<BufferHandle, kMaxVBSlots> vertexBuffers{};
++            std::array<std::uint32_t, kMaxVBSlots> vbStrides{};
++            std::array<std::uint32_t, kMaxVBSlots> vbOffsets{};
++
++            BufferHandle indexBuffer{};
++            IndexType ibType = IndexType::UINT16;
++            std::uint32_t ibOffset = 0;
++
++            // Bound textures by slot (we actuallu use only slot 0)
++            std::array<D3D12_GPU_DESCRIPTOR_HANDLE, kMaxSRVSlots> boundTex{};
++            for (auto& t : boundTex)
++            {
++                t = srvHeap_->GetGPUDescriptorHandleForHeapStart(); // null SRV slot0
++            }
++
++            // slot 2 (t2) expects StructuredBuffer SRV; point it to null-buffer descriptor (SRV heap index 1).
++            if (boundTex.size() > 2)
++            {
++                boundTex[2].ptr += static_cast<UINT64>(srvInc_);
++            }
++
++            // Per-draw constants (raw bytes).
++            // The renderer is responsible for packing the layout expected by HLSL.
++            static constexpr std::uint32_t kMaxPerDrawConstantsBytes = 512;
++            std::array<std::byte, kMaxPerDrawConstantsBytes> perDrawBytes{};
++            std::uint32_t perDrawSize = 0;
++            std::uint32_t perDrawSlot = 0;
++
++            auto WriteCBAndBind = [&]()
++                {
++                    FrameResource& fr = CurrentFrame();
++
++                    const std::uint32_t used = (perDrawSize == 0) ? 1u : perDrawSize;
++                    const std::uint32_t cbSize = AlignUp(used, 256);
++
++                    if (fr.cbCursor + cbSize > kPerFrameCBUploadBytes)
++                    {
++                        throw std::runtime_error("DX12: per-frame constant upload ring overflow (increase kPerFrameCBUploadBytes)");
++                    }
++
++                    if (perDrawSize != 0)
++                    {
++                        std::memcpy(fr.cbMapped + fr.cbCursor, perDrawBytes.data(), perDrawSize);
++                    }
++
++                    const D3D12_GPU_VIRTUAL_ADDRESS gpuVA = fr.cbUpload->GetGPUVirtualAddress() + fr.cbCursor;
++                    cmdList_->SetGraphicsRootConstantBufferView(perDrawSlot, gpuVA);
++
++                    fr.cbCursor += cbSize;
++                };
++
++#include "DirectX12RHI_Device_Public_CommandSubmission_TransitionAndSrvHelpers.inl"
++            UINT curNumRT = 0;
++            std::array<DXGI_FORMAT, 8> curRTVFormats{};
++            std::fill(curRTVFormats.begin(), curRTVFormats.end(), DXGI_FORMAT_UNKNOWN);
++            DXGI_FORMAT curDSVFormat = DXGI_FORMAT_UNKNOWN;
++            bool curPassIsSwapChain = false;
++            DX12SwapChain* curSwapChain = nullptr;
++
++            auto TransitionTexture = [&](TextureHandle tex, D3D12_RESOURCE_STATES desired)
++                {
++                    if (!tex)
++                    {
++                        return;
++                    }
++
++                    auto it = textures_.find(tex.id);
++                    if (it == textures_.end())
++                    {
++                        return;
++                    }
++
++                    TransitionResource(
++                        cmdList_.Get(),
++                        it->second.resource.Get(),
++                        it->second.state,
++                        desired);
++                };
++
++            auto TransitionBackBuffer = [&](DX12SwapChain& sc, D3D12_RESOURCE_STATES desired)
++                {
++                    TransitionResource(
++                        cmdList_.Get(),
++                        sc.CurrentBackBuffer(),
++                        sc.CurrentBackBufferState(),
++                        desired);
++                };
++
++            auto EnsurePSO = [&](PipelineHandle pipelineHandle, InputLayoutHandle layout) -> ID3D12PipelineState*
++                {
++                    auto PackState = [&](const GraphicsState& s) -> std::uint64_t
++                        {
++                            std::uint64_t v = 0;
++                            std::uint32_t bit = 0;
++                            auto PackBits = [&](std::uint64_t value, std::uint32_t width)
++                                {
++                                    const std::uint64_t mask = (width >= 64u) ? ~0ull : ((1ull << width) - 1ull);
++                                    v |= (value & mask) << bit;
++                                    bit += width;
++                                };
++
++                            PackBits(static_cast<std::uint32_t>(s.rasterizer.cullMode), 2);             // 0..2
++                            PackBits(static_cast<std::uint32_t>(s.rasterizer.frontFace), 1);            // 2
++                            PackBits(s.depth.testEnable ? 1u : 0u, 1);                                  // 3
++                            PackBits(s.depth.writeEnable ? 1u : 0u, 1);                                 // 4
++                            PackBits(static_cast<std::uint32_t>(s.depth.depthCompareOp), 3);            // 5..7
++                            PackBits(s.blend.enable ? 1u : 0u, 1);                                      // 8
++
++                            PackBits(s.depth.stencil.enable ? 1u : 0u, 1);                              // 9
++                            PackBits(static_cast<std::uint32_t>(s.depth.stencil.readMask), 8);          // 10..17
++                            PackBits(static_cast<std::uint32_t>(s.depth.stencil.writeMask), 8);         // 18..25
++
++                            auto PackStencilFace = [&](const StencilFaceState& face)
++                                {
++                                    PackBits(static_cast<std::uint32_t>(face.failOp), 3);
++                                    PackBits(static_cast<std::uint32_t>(face.depthFailOp), 3);
++                                    PackBits(static_cast<std::uint32_t>(face.passOp), 3);
++                                    PackBits(static_cast<std::uint32_t>(face.compareOp), 3);
++                                };
++                            PackStencilFace(s.depth.stencil.front);                                     // 26..37
++                            PackStencilFace(s.depth.stencil.back);                                      // 38..49
++                            return v;
++                        };
++
++                    auto Fnv1a64 = [](std::uint64_t h, std::uint64_t v) -> std::uint64_t
++                        {
++                            constexpr std::uint64_t kPrime = 1099511628211ull;
++                            for (int i = 0; i < 8; ++i)
++                            {
++                                const std::uint8_t byte = static_cast<std::uint8_t>((v >> (i * 8)) & 0xffu);
++                                h ^= byte;
++                                h *= kPrime;
++                            }
++                            return h;
++                        };
++
++                    // PSO cache key MUST include: shaders, state, layout, and render-target formats.
++                    std::uint64_t key = 1469598103934665603ull; // FNV-1a offset basis
++                    key = Fnv1a64(key, static_cast<std::uint64_t>(pipelineHandle.id));
++                    key = Fnv1a64(key, static_cast<std::uint64_t>(layout.id));
++                    key = Fnv1a64(key, static_cast<std::uint64_t>(PackState(curState)));
++                    key = Fnv1a64(key, static_cast<std::uint64_t>(curNumRT));
++                    key = Fnv1a64(key, static_cast<std::uint64_t>(curDSVFormat));
++                    for (std::size_t i = 0; i < curRTVFormats.size(); ++i)
++                    {
++                        key = Fnv1a64(key, static_cast<std::uint64_t>(curRTVFormats[i]));
++                    }
++
++                    if (auto it = psoCache_.find(key); it != psoCache_.end())
++                    {
++                        return it->second.Get();
++                    }
++
++                    auto pit = pipelines_.find(pipelineHandle.id);
++                    if (pit == pipelines_.end())
++                    {
++                        throw std::runtime_error("DX12: pipeline handle not found");
++                    }
++
++                    auto MakeShaderNotFound = [&](const char* which)
++                         {
++                        std::string msg = "DX12: shader handle not found (";
++                        msg += which;
++                        msg += ", pipeline='";
++                        msg += pit->second.debugName;
++                        msg += "', pipe=";
++                        msg += std::to_string(pipelineHandle.id);
++                        msg += ", vs=";
++                        msg += std::to_string(pit->second.vs.id);
++                        msg += ", ps=";
++                        msg += std::to_string(pit->second.ps.id);
++                        msg += ", numRT=";
++                        msg += std::to_string(curNumRT);
++                        msg += ")";
++                        throw std::runtime_error(msg);
++                        };
++                        
++                    auto vsIt = shaders_.find(pit->second.vs.id);
++
++                    if (vsIt == shaders_.end())
++                    {
++                        MakeShaderNotFound("vs");
++                    }
++
++                    // Depth-only passes (NumRenderTargets == 0) can omit a pixel shader.
++                    const bool needsPS = (curNumRT > 0);
++                    auto psIt = shaders_.end();
++                    if (needsPS)
++                    {
++                        psIt = shaders_.find(pit->second.ps.id);
++                        if (psIt == shaders_.end())
++                        {
++                            MakeShaderNotFound("ps");
++                        }
++                    }
++
++                    auto layIt = layouts_.find(layout.id);
++                    if (layIt == layouts_.end())
++                    {
++                        throw std::runtime_error("DX12: input layout handle not found");
++                    }
++
++                    D3D12_GRAPHICS_PIPELINE_STATE_DESC pipelineDesc{};
++                    pipelineDesc.pRootSignature = rootSig_.Get();
++
++                    pipelineDesc.VS = { vsIt->second.blob->GetBufferPointer(), vsIt->second.blob->GetBufferSize() };
++                    if (needsPS)
++                    {
++                        pipelineDesc.PS = { psIt->second.blob->GetBufferPointer(), psIt->second.blob->GetBufferSize() };
++                    }
++                    else
++                    {
++                        pipelineDesc.PS = {};
++                    }
++
++                    pipelineDesc.BlendState = CD3D12_BLEND_DESC(D3D12_DEFAULT);
++                    pipelineDesc.SampleMask = UINT_MAX;
++
++                    // Blend
++                    if (curState.blend.enable)
++                    {
++                        D3D12_BLEND_DESC blendDesc = CD3D12_BLEND_DESC(D3D12_DEFAULT);
++                        blendDesc.AlphaToCoverageEnable = FALSE;
++                        blendDesc.IndependentBlendEnable = FALSE;
++
++                        D3D12_RENDER_TARGET_BLEND_DESC renderTartget{};
++                        renderTartget.BlendEnable = TRUE;
++                        renderTartget.LogicOpEnable = FALSE;
++                        renderTartget.SrcBlend = D3D12_BLEND_SRC_ALPHA;
++                        renderTartget.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
++                        renderTartget.BlendOp = D3D12_BLEND_OP_ADD;
++                        renderTartget.SrcBlendAlpha = D3D12_BLEND_ONE;
++                        renderTartget.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
++                        renderTartget.BlendOpAlpha = D3D12_BLEND_OP_ADD;
++                        renderTartget.LogicOp = D3D12_LOGIC_OP_NOOP;
++                        renderTartget.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
++
++                        for (UINT i = 0; i < 8; ++i)
++                        {
++                            blendDesc.RenderTarget[i] = renderTartget;
++                        }
++
++                        pipelineDesc.BlendState = blendDesc;
++                    }
++
++                    // Rasterizer from current state
++                    pipelineDesc.RasterizerState = CD3D12_RASTERIZER_DESC(D3D12_DEFAULT);
++                    pipelineDesc.RasterizerState.CullMode = ToD3DCull(curState.rasterizer.cullMode);
++                    pipelineDesc.RasterizerState.FrontCounterClockwise = (curState.rasterizer.frontFace == FrontFace::CounterClockwise) ? TRUE : FALSE;
++
++                    // Depth / Stencil
++                    pipelineDesc.DepthStencilState = CD3D12_DEPTH_STENCIL_DESC(D3D12_DEFAULT);
++                    pipelineDesc.DepthStencilState.DepthEnable = curState.depth.testEnable ? TRUE : FALSE;
++                    pipelineDesc.DepthStencilState.DepthWriteMask = curState.depth.writeEnable ? D3D12_DEPTH_WRITE_MASK_ALL : D3D12_DEPTH_WRITE_MASK_ZERO;
++                    pipelineDesc.DepthStencilState.DepthFunc = ToD3DCompare(curState.depth.depthCompareOp);
++                    pipelineDesc.DepthStencilState.StencilEnable = curState.depth.stencil.enable ? TRUE : FALSE;
++                    pipelineDesc.DepthStencilState.StencilReadMask = curState.depth.stencil.readMask;
++                    pipelineDesc.DepthStencilState.StencilWriteMask = curState.depth.stencil.writeMask;
++                    pipelineDesc.DepthStencilState.FrontFace.StencilFailOp = ToD3DStencilOp(curState.depth.stencil.front.failOp);
++                    pipelineDesc.DepthStencilState.FrontFace.StencilDepthFailOp = ToD3DStencilOp(curState.depth.stencil.front.depthFailOp);
++                    pipelineDesc.DepthStencilState.FrontFace.StencilPassOp = ToD3DStencilOp(curState.depth.stencil.front.passOp);
++                    pipelineDesc.DepthStencilState.FrontFace.StencilFunc = ToD3DCompare(curState.depth.stencil.front.compareOp);
++                    pipelineDesc.DepthStencilState.BackFace.StencilFailOp = ToD3DStencilOp(curState.depth.stencil.back.failOp);
++                    pipelineDesc.DepthStencilState.BackFace.StencilDepthFailOp = ToD3DStencilOp(curState.depth.stencil.back.depthFailOp);
++                    pipelineDesc.DepthStencilState.BackFace.StencilPassOp = ToD3DStencilOp(curState.depth.stencil.back.passOp);
++                    pipelineDesc.DepthStencilState.BackFace.StencilFunc = ToD3DCompare(curState.depth.stencil.back.compareOp);
++
++                    pipelineDesc.InputLayout = { layIt->second.elems.data(), static_cast<UINT>(layIt->second.elems.size()) };
++                    pipelineDesc.PrimitiveTopologyType = ToD3DTopologyType(pit->second.topologyType);
++
++                    pipelineDesc.NumRenderTargets = curNumRT;
++                    for (UINT i = 0; i < curNumRT; ++i)
++                    {
++                        pipelineDesc.RTVFormats[i] = curRTVFormats[i];
++                    }
++                    pipelineDesc.DSVFormat = curDSVFormat;
++
++                    pipelineDesc.SampleDesc.Count = 1;
++
++                    ComPtr<ID3D12PipelineState> pso;
++                    
++                    if (pit->second.viewInstanceCount > 1)
++                    {
++                        if (!device2_)
++                        {
++                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
++                            return nullptr;
++                        }
++                        // Build PSO via Pipeline State Stream to enable View Instancing.
++
++                        using SO_RootSig = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_ROOT_SIGNATURE, ID3D12RootSignature*>;
++                        using SO_VS = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VS, D3D12_SHADER_BYTECODE>;
++                        using SO_PS = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PS, D3D12_SHADER_BYTECODE>;
++                        using SO_Blend = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_BLEND, D3D12_BLEND_DESC>;
++                        using SO_SampleMask = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_MASK, UINT>;
++                        using SO_Raster = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RASTERIZER, D3D12_RASTERIZER_DESC>;
++                        using SO_Depth = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL, D3D12_DEPTH_STENCIL_DESC>;
++                        using SO_Input = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_INPUT_LAYOUT, D3D12_INPUT_LAYOUT_DESC>;
++                        using SO_Topo = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_PRIMITIVE_TOPOLOGY, D3D12_PRIMITIVE_TOPOLOGY_TYPE>;
++                        using SO_RTVFmts = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_RENDER_TARGET_FORMATS, D3D12_RT_FORMAT_ARRAY>;
++                        using SO_DSVFmt = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_DEPTH_STENCIL_FORMAT, DXGI_FORMAT>;
++                        using SO_SampleDesc = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_SAMPLE_DESC, DXGI_SAMPLE_DESC>;
++                        using SO_ViewInst = PSOSubobject<D3D12_PIPELINE_STATE_SUBOBJECT_TYPE_VIEW_INSTANCING, D3D12_VIEW_INSTANCING_DESC>;
++
++                        // Each stream subobject must be pointer-aligned, and its size should be a multiple of sizeof(void*)
++                        // so the next Type is correctly aligned in the byte stream.
++                        static_assert(sizeof(SO_RootSig) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_VS) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_PS) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_Blend) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_SampleMask) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_Raster) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_Depth) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_Input) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_Topo) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_RTVFmts) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_DSVFmt) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_SampleDesc) % sizeof(void*) == 0);
++                        static_assert(sizeof(SO_ViewInst) % sizeof(void*) == 0);
++
++                        const std::uint32_t viewCount = pit->second.viewInstanceCount;
++                        std::array<D3D12_VIEW_INSTANCE_LOCATION, 8> locations{};
++                        if (viewCount > locations.size())
++                        {
++                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
++                            return nullptr;
++                        }
++                        for (std::uint32_t i = 0; i < viewCount; ++i)
++                        {
++                            locations[i].RenderTargetArrayIndex = i;
++                            locations[i].ViewportArrayIndex = 0;
++                        }
++
++                        D3D12_VIEW_INSTANCING_DESC viDesc{};
++                        viDesc.ViewInstanceCount = viewCount;
++                        viDesc.pViewInstanceLocations = locations.data();
++                        viDesc.Flags = D3D12_VIEW_INSTANCING_FLAG_NONE;
++
++                        D3D12_RT_FORMAT_ARRAY rtFmts{};
++                        rtFmts.NumRenderTargets = curNumRT;
++                        for (UINT i = 0; i < curNumRT; ++i)
++                        {
++                            rtFmts.RTFormats[i] = curRTVFormats[i];
++                        }
++
++                        struct alignas(void*) PSOStream
++                        {
++                            SO_RootSig    rootSig;
++                            SO_VS         vs;
++                            SO_PS         ps;
++                            SO_Blend      blend;
++                            SO_SampleMask sampleMask;
++                            SO_Raster     raster;
++                            SO_Depth      depth;
++                            SO_Input      input;
++                            SO_Topo       topo;
++                            SO_RTVFmts    rtvFmts;
++                            SO_DSVFmt     dsvFmt;
++                            SO_SampleDesc sampleDesc;
++                            SO_ViewInst   viewInst;
++                        } stream{};
++
++                        stream.rootSig.data = rootSig_.Get();
++                        stream.vs.data = pipelineDesc.VS;
++                        stream.ps.data = pipelineDesc.PS;
++                        stream.blend.data = pipelineDesc.BlendState;
++                        stream.sampleMask.data = pipelineDesc.SampleMask;
++                        stream.raster.data = pipelineDesc.RasterizerState;
++                        stream.depth.data = pipelineDesc.DepthStencilState;
++                        stream.input.data = pipelineDesc.InputLayout;
++                        stream.topo.data = pipelineDesc.PrimitiveTopologyType;
++                        stream.rtvFmts.data = rtFmts;
++                        stream.dsvFmt.data = pipelineDesc.DSVFormat;
++                        stream.sampleDesc.data = pipelineDesc.SampleDesc;
++                        stream.viewInst.data = viDesc;
++
++                        D3D12_PIPELINE_STATE_STREAM_DESC streamDesc{};
++                        streamDesc.SizeInBytes = sizeof(stream);
++                        streamDesc.pPipelineStateSubobjectStream = &stream;
++
++                        const HRESULT hr = device2_->CreatePipelineState(&streamDesc, IID_PPV_ARGS(&pso));
++                        if (FAILED(hr))
++                        {
++                            // View instancing is optional; fail softly so the renderer can fallback to 6-pass.
++                            ThrowIfFailed(NativeDevice()->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&pso)),
++                                "DX12: CreateGraphicsPipelineState failed");
++                        }
++                    }
++                    else
++                    {
++                        ThrowIfFailed(NativeDevice()->CreateGraphicsPipelineState(&pipelineDesc, IID_PPV_ARGS(&pso)),
++                            "DX12: CreateGraphicsPipelineState failed");
++                    }
++
++                    if (!pso)
++                    {
++                        return nullptr;
++                    }
++
++                    psoCache_[key] = pso;
++                    return pso.Get();
++                };
++
++            // Parse high-level commands and record native D3D12
++            for (auto& command : commandList.commands)
++            {
++                std::visit([&](auto&& cmd)
++                    {
++                        using T = std::decay_t<decltype(cmd)>;
++
++#include "DirectX12RHI_Device_Public_CommandSubmission_PassCommands.inl"                        
++#include "DirectX12RHI_Device_Public_CommandSubmission_StateAndBindingCommands.inl"                  
++#include "DirectX12RHI_Device_Public_CommandSubmission_DrawAndImGuiCommands.inl"                        
++
++                    }, command);
++            }
++
++            // Close + execute + signal fence for the current frame resource
++            EndFrame();
++        }
++
+diff --git a/src/Render/RHI.cppm b/src/Render/RHI.cppm
+index efd72be..e3b56a8 100644
+--- a/src/Render/RHI.cppm
++++ b/src/Render/RHI.cppm
+@@ -1,826 +1,828 @@
+-module;
+-
+-#include <cstdint>
+-#include <cstddef>
+-#include <vector>
+-#include <string>
+-#include <memory>
+-#include <array>
+-#include <variant>
+-#include <span>
+-#include <unordered_map>
+-#include <cstring>
+-#include <stdexcept>
+-
+-export module core:rhi;
+-
+-export namespace rhi
+-{
+-	enum class Backend
+-	{
+-		Null,
+-		OpenGL,
+-		DirectX12
+-	};
+-
+-	template <typename Tag>
+-	struct Handle
+-	{
+-		std::uint32_t id{ 0 };
+-		explicit operator bool() const noexcept { return id != 0; }
+-	};
+-
+-	struct BufferTag {};
+-	struct TextureTag {};
+-	struct ShaderTag {};
+-	struct PipelineTag {};
+-	struct FrameBufferTag {};
+-	struct FenceTag {};
+-	struct InputLayoutTag {};
+-
+-	using BufferHandle = Handle<BufferTag>;
+-	using TextureHandle = Handle<TextureTag>;
+-	using ShaderHandle = Handle<ShaderTag>;
+-	using PipelineHandle = Handle<PipelineTag>;
+-	using FrameBufferHandle = Handle<FrameBufferTag>;
+-	using FenceHandle = Handle<FenceTag>;
+-	using InputLayoutHandle = Handle<InputLayoutTag>;
+-
+-	enum class Format : std::uint8_t
+-	{
+-		Unknown,
+-		RGBA8_UNORM,
+-		BGRA8_UNORM,
+-		R32_FLOAT,
+-		D32_FLOAT,
+-		D24_UNORM_S8_UINT
+-	};
+-
+-	enum class IndexType : std::uint8_t
+-	{
+-		UINT16,
+-		UINT32
+-	};
+-
+-	enum class PrimitiveTopologyType : std::uint8_t
+-	{
+-		Triangle,
+-		Line
+-	};
+-
+-	enum class PrimitiveTopology : std::uint8_t
+-	{
+-		TriangleList,
+-		LineList
+-	};
+-
+-	enum class BufferBindFlag : std::uint8_t
+-	{
+-		VertexBuffer,
+-		IndexBuffer,
+-		ConstantBuffer,
+-		UniformBuffer,
+-		StructuredBuffer
+-	};
+-
+-	enum class BufferUsageFlag : std::uint8_t
+-	{
+-		Default,
+-		Static,
+-		Dynamic,
+-		Stream
+-	};
+-
+-	enum class CompareOp : std::uint8_t
+-	{
+-		Never,
+-		Less,
+-		Equal,
+-		LessEqual,
+-		Greater,
+-		NotEqual,
+-		GreaterEqual,
+-		Always
+-	};
+-
+-	enum class StencilOp : std::uint8_t
+-	{
+-		Keep,
+-		Zero,
+-		Replace,
+-		IncrementClamp,
+-		DecrementClamp,
+-		Invert,
+-		IncrementWrap,
+-		DecrementWrap
+-	};
+-
+-	enum class VertexFormat : std::uint8_t
+-	{
+-		R32G32B32_FLOAT,
+-		R32G32_FLOAT,
+-		R32G32B32A32_FLOAT,
+-		R8G8B8A8_UNORM
+-	};
+-
+-	enum class VertexSemantic : std::uint8_t
+-	{
+-		Position,
+-		Normal,
+-		TexCoord,
+-		Color,
+-		Tangent
+-	};
+-
+-	enum class CullMode : std::uint8_t
+-	{
+-		None,
+-		Back,
+-		Front
+-	};
+-
+-	enum class FrontFace : std::uint8_t
+-	{
+-		CounterClockwise,
+-		Clockwise
+-	};
+-
+-	enum class ShaderStage : std::uint8_t
+-	{
+-		Vertex,
+-		Pixel, // Fragment
+-		Geometry,
+-		Compute
+-	};
+-
+-	enum class ShaderModel : std::uint8_t
+-	{
+-		SM5_1,
+-		SM6_1
+-	};
+-
+-	// Vulkan/DX12 backends can map these indices into global descriptor tables.
+-	// The OpenGL backend emulates them by keeping a small mapping.
+-	using TextureDescIndex = std::uint32_t;
+-
+-	struct Extent2D
+-	{
+-		std::uint32_t width{};
+-		std::uint32_t height{};
+-	};
+-
+-	struct SwapChainDesc
+-	{
+-		Extent2D extent{};
+-		Format backbufferFormat{ Format::BGRA8_UNORM };
+-		bool vsync{ true };
+-	};
+-
+-	struct BufferDesc
+-	{
+-		BufferBindFlag bindFlag{ BufferBindFlag::VertexBuffer };
+-		BufferUsageFlag usageFlag{ BufferUsageFlag::Default };
+-		std::size_t sizeInBytes{ 0 };
+-		std::uint32_t structuredStrideBytes{ 0 }; // For StructuredBuffer SRV (bytes per element)
+-		std::string debugName{};
+-	};
+-
+-	struct VertexAttributeDesc
+-	{
+-		VertexSemantic semantic{};
+-		std::uint8_t semanticIndex{ 0 };
+-		VertexFormat format{};
+-		std::uint32_t inputSlot{ 0 };
+-		std::uint32_t offsetBytes{ 0 };
+-		bool normalized{ false };
+-	};
+-
+-	struct StencilFaceState
+-	{
+-		StencilOp failOp{ StencilOp::Keep };
+-		StencilOp depthFailOp{ StencilOp::Keep };
+-		StencilOp passOp{ StencilOp::Keep };
+-		CompareOp compareOp{ CompareOp::Always };
+-	};
+-
+-	struct StencilState
+-	{
+-		bool enable{ false };
+-		std::uint8_t readMask{ 0xFF };
+-		std::uint8_t writeMask{ 0xFF };
+-		StencilFaceState front{};
+-		StencilFaceState back{};
+-	};
+-
+-	struct DepthState
+-	{
+-		bool testEnable{ true };
+-		bool writeEnable{ true };
+-		CompareOp depthCompareOp{ CompareOp::LessEqual };
+-		StencilState stencil{};
+-	};
+-
+-	struct RasterizerState
+-	{
+-		CullMode cullMode{ CullMode::Back };
+-		FrontFace frontFace{ FrontFace::CounterClockwise };
+-	};
+-
+-	struct BlendState
+-	{
+-		bool enable{ false };
+-	};
+-
+-	struct GraphicsState
+-	{
+-		DepthState depth{};
+-		RasterizerState rasterizer{};
+-		BlendState blend{};
+-	};
+-
+-	struct ClearDesc
+-	{
+-		bool clearColor{ true };
+-		bool clearDepth{ false };
+-		bool clearStencil{ false };
+-		std::array<float, 4> color{ 0.0f, 0.0f, 0.0f, 1.0f };
+-		float depth{ 1.0f };
+-		std::uint8_t stencil{ 0 };
+-	};
+-
+-	class IRHISwapChain;
+-
+-	struct BeginPassDesc {
+-		FrameBufferHandle frameBuffer{};
+-		Extent2D extent{};
+-		ClearDesc clearDesc{};
+-		// Optional: when frameBuffer.id == 0 (swapchain backbuffer), this selects which swapchain.
+-		IRHISwapChain* swapChain{ nullptr };
+-		// If false, depth-stencil is not bound (useful for fullscreen passes that sample depth as SRV).
+-		bool bindDepthStencil{ true };
+-	};
+-
+-	struct InputLayoutDesc
+-	{
+-		std::vector<VertexAttributeDesc> attributes;
+-		std::uint32_t strideBytes{ 0 };
+-		std::string debugName{};
+-	};
+-
+-	//------------------------ Command Stream ------------------------/
+-
+-	struct CommandBeginPass
+-	{
+-		BeginPassDesc desc{};
+-	};
+-	struct CommandEndPass
+-	{
+-	};
+-	struct CommandSetViewport
+-	{
+-		int x{ 0 };
+-		int y{ 0 };
+-		int width{ 0 };
+-		int height{ 0 };
+-	};
+-	struct CommandSetState
+-	{
+-		GraphicsState state{};
+-	};
+-	struct CommandSetStencilRef
+-	{
+-		std::uint32_t ref{ 0 };
+-	};
+-	struct CommandSetPrimitiveTopology
+-	{
+-		PrimitiveTopology topology{ PrimitiveTopology::TriangleList };
+-	};
+-	struct CommandBindPipeline
+-	{
+-		PipelineHandle pso{};
+-	};
+-	struct CommandBindInputLayout
+-	{
+-		InputLayoutHandle layout{};
+-	};
+-	struct CommandBindVertexBuffer
+-	{
+-		std::uint32_t slot{ 0 };
+-		BufferHandle buffer{};
+-		std::uint32_t strideBytes{ 0 };
+-		std::uint32_t offsetBytes{ 0 };
+-	};
+-	struct CommandBindIndexBuffer
+-	{
+-		BufferHandle buffer{};
+-		IndexType indexType{ IndexType::UINT16 };
+-		std::uint32_t offsetBytes{ 0 };
+-	};
+-	struct CommnadBindTexture2D
+-	{
+-		std::uint32_t slot{ 0 };
+-		TextureHandle texture{};
+-	};
+-	struct CommandBindTextureCube
+-	{
+-		std::uint32_t slot{ 0 };
+-		TextureHandle texture{};
+-	};
+-	struct CommandTextureDesc
+-	{
+-		std::uint32_t slot{ 0 };
+-		TextureDescIndex texture{};
+-	};
+-	struct CommandBindStructuredBufferSRV
+-	{
+-		std::uint32_t slot{ 0 };
+-		BufferHandle buffer{};
+-	};
+-
+-	struct CommandSetUniformInt
+-	{
+-		std::string name{};
+-		int value{ 0 };
+-	};
+-	struct CommandUniformFloat4
+-	{
+-		std::string name{};
+-		std::array<float, 4> value{};
+-	};
+-	struct CommandUniformMat4
+-	{
+-		std::string name{};
+-		std::array<float, 16> value{};
+-	};
+-
+-	// Backend-agnostic small constant block ("push constants" style).
+-	// DX12 uses it to feed a per-draw constant buffer without interpreting names.
+-	// OpenGL can ignore it or emulate it later via UBOs.
+-	struct CommandSetConstants
+-	{
+-		std::uint32_t slot{ 0 };   // backend-defined slot (DX12 root parameter index)
+-		std::uint32_t size{ 0 };   // bytes used in `data`
+-		std::array<std::byte, 512> data{};
+-	};
+-
+-	// DX12-only: render Dear ImGui draw data into the current render target.
+-	// Other backends may ignore this command.
+-	struct CommandDX12ImGuiRender
+-	{
+-		const void* drawData{ nullptr }; // ImDrawData*
+-	};
+-	struct CommandDrawIndexed
+-	{
+-		std::uint32_t indexCount{ 0 };
+-		IndexType indexType{ IndexType::UINT16 };
+-		std::uint32_t firstIndex{ 0 };
+-		int baseVertex{ 0 };
+-		uint32_t instanceCount{ 1 };
+-		uint32_t firstInstance{ 0 };
+-	};
+-	struct CommandDraw
+-	{
+-		std::uint32_t vertexCount{ 0 };
+-		std::uint32_t firstVertex{ 0 };
+-		uint32_t instanceCount{ 1 };
+-		uint32_t firstInstance{ 0 };
+-	};
+-
+-	struct CommandBindTexture2DArray
+-	{
+-		std::uint32_t slot{ 0 };
+-		TextureHandle texture{};
+-	};
+-
+-	using Command = std::variant<
+-		CommandBeginPass,
+-		CommandEndPass,
+-		CommandSetViewport,
+-		CommandSetState,
+-		CommandSetStencilRef,
+-		CommandSetPrimitiveTopology,
+-		CommandBindPipeline,
+-		CommandBindInputLayout,
+-		CommandBindVertexBuffer,
+-		CommandBindIndexBuffer,
+-		CommnadBindTexture2D,
+-		CommandBindTextureCube,
+-		CommandTextureDesc,
+-		CommandBindStructuredBufferSRV,
+-		CommandSetUniformInt,
+-		CommandUniformFloat4,
+-		CommandUniformMat4,
+-		CommandSetConstants,
+-		CommandDX12ImGuiRender,
+-		CommandDrawIndexed,
+-		CommandDraw,
+-		CommandBindTexture2DArray>;
+-
+-	struct CommandList
+-	{
+-		std::vector<Command> commands;
+-
+-		void BeginPass(const BeginPassDesc& desc)
+-		{
+-			commands.emplace_back(CommandBeginPass{ desc });
+-		}
+-		void EndPass()
+-		{
+-			commands.emplace_back(CommandEndPass{});
+-		}
+-		void SetViewport(int x, int y, int width, int height)
+-		{
+-			commands.emplace_back(CommandSetViewport{ x, y, width, height });
+-		}
+-		void SetState(const GraphicsState& state)
+-		{
+-			commands.emplace_back(CommandSetState{ state });
+-		}
+-		void SetStencilRef(std::uint32_t ref)
+-		{
+-			commands.emplace_back(CommandSetStencilRef{ ref });
+-		}
+-		void SetPrimitiveTopology(PrimitiveTopology topology)
+-		{
+-			commands.emplace_back(CommandSetPrimitiveTopology{ topology });
+-		}
+-		void BindPipeline(PipelineHandle pso)
+-		{
+-			commands.emplace_back(CommandBindPipeline{ pso });
+-		}
+-		void BindInputLayout(InputLayoutHandle layout)
+-		{
+-			commands.emplace_back(CommandBindInputLayout{ layout });
+-		}
+-		void BindVertexBuffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t strideBytes = 0, std::uint32_t offsetBytes = 0)
+-		{
+-			commands.emplace_back(CommandBindVertexBuffer{ slot, buffer, strideBytes, offsetBytes });
+-		}
+-		void BindIndexBuffer(BufferHandle buffer, IndexType indexType, std::uint32_t offsetBytes = 0)
+-		{
+-			commands.emplace_back(CommandBindIndexBuffer{ buffer, indexType, offsetBytes });
+-		}
+-		void BindTexture2D(std::uint32_t slot, TextureHandle texture)
+-		{
+-			commands.emplace_back(CommnadBindTexture2D{ slot, texture });
+-		}
+-		void BindTextureCube(std::uint32_t slot, TextureHandle texture)
+-		{
+-			commands.emplace_back(CommandBindTextureCube{ slot, texture });
+-		}
+-		void BindTextureDesc(std::uint32_t slot, TextureDescIndex textureIndex)
+-		{
+-			commands.emplace_back(CommandTextureDesc{ slot, textureIndex });
+-		}
+-		void SetUniformInt(std::string name, int value)
+-		{
+-			commands.emplace_back(CommandSetUniformInt{ std::move(name), value });
+-		}
+-		void SetUniformFloat4(std::string name, std::array<float, 4> value)
+-		{
+-			commands.emplace_back(CommandUniformFloat4{ std::string(name), value });
+-		}
+-		void SetUniformMat4(std::string_view name, const std::array<float, 16>& v)
+-		{
+-			commands.emplace_back(CommandUniformMat4{ std::string(name), v });
+-		}
+-		void SetConstants(std::uint32_t slot, std::span<const std::byte> bytes)
+-		{
+-			if (bytes.size() > 512)
+-			{
+-				throw std::runtime_error("CommandList::SetConstants: payload too large (max 512 bytes)");
+-			}
+-
+-			CommandSetConstants cmd{};
+-			cmd.slot = slot;
+-			cmd.size = static_cast<std::uint32_t>(bytes.size());
+-			if (!bytes.empty())
+-				std::memcpy(cmd.data.data(), bytes.data(), bytes.size());
+-			commands.emplace_back(std::move(cmd));
+-		}
+-		void DrawIndexed(
+-			std::uint32_t indexCount,
+-			IndexType indexType,
+-			std::uint32_t firstIndex = 0,
+-			int baseVertex = 0,
+-			uint32_t instanceCount = 1,
+-			uint32_t firstInstance = 0)
+-		{
+-			commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex, instanceCount, firstInstance });
+-		}
+-		void Draw(
+-			std::uint32_t vertexCount,
+-			std::uint32_t firstVertex = 0,
+-			uint32_t instanceCount = 1,
+-			uint32_t firstInstance = 0)
+-		{
+-			commands.emplace_back(CommandDraw{ vertexCount, firstVertex, instanceCount, firstInstance });
+-		}
+-		void BindStructuredBufferSRV(std::uint32_t slot, BufferHandle buffer)
+-		{
+-			commands.emplace_back(CommandBindStructuredBufferSRV{ slot, buffer });
+-		}
+-		void DX12ImGuiRender(const void* drawData)
+-		{
+-			commands.emplace_back(CommandDX12ImGuiRender{ drawData });
+-		}
+-		void BindTexture2DArray(std::uint32_t slot, TextureHandle texture)
+-		{
+-			commands.emplace_back(CommandBindTexture2DArray{ slot, texture });
+-		}
+-	};
+-
+-	// ------------------------ RHI interfaces ------------------------ //
+-
+-	class IRHISwapChain
+-	{
+-	public:
+-		virtual ~IRHISwapChain() = default;
+-		virtual SwapChainDesc GetDesc() const = 0;
+-		virtual FrameBufferHandle GetCurrentBackBuffer() const = 0;
+-		virtual TextureHandle GetDepthTexture() const = 0;
+-		virtual void Present() = 0;
+-		virtual void Resize(Extent2D newExtent) = 0;
+-	};
+-
+-	class IRHIDevice
+-	{
+-	public:
+-		virtual ~IRHIDevice() = default;
+-
+-		virtual Backend GetBackend() const noexcept = 0;
+-
+-		virtual std::string_view GetName() const = 0;
+-
+-		// Optional UI hooks (Dear ImGui). Default is no-op.
+-		virtual void InitImGui([[maybe_unused]] void* hwnd, [[maybe_unused]] int framesInFlight, [[maybe_unused]] Format rtvFormat) {}
+-		virtual void ImGuiNewFrame() {}
+-		virtual void ShutdownImGui() {}
+-		virtual void WaitIdle() {}
+-
+-		// Textures
+-		virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;
+-		virtual TextureHandle CreateTextureCube(Extent2D extent, Format format) = 0;
+-		virtual void DestroyTexture(TextureHandle texture) noexcept = 0;
+-
+-		// Framebuffers
+-		virtual FrameBufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
+-		// Multiple render targets (MRT). 0 colors means depth-only pass.
+-		// Default implementation falls back to the single-color CreateFramebuffer() and will throw for colors.size() > 1.
+-		virtual FrameBufferHandle CreateFramebufferMRT(std::span<const TextureHandle> colors, TextureHandle depth)
+-		{
+-			if (colors.empty())
+-			{
+-				return CreateFramebuffer(TextureHandle{}, depth);
+-			}
+-			if (colors.size() == 1)
+-			{
+-				return CreateFramebuffer(colors[0], depth);
+-			}
+-
+-			throw std::runtime_error("CreateFramebufferMRT: backend does not support MRT yet");
+-		}
+-		virtual FrameBufferHandle CreateFramebufferCubeFace(TextureHandle colorCube, std::uint32_t faceIndex, TextureHandle depth) = 0;
+-		virtual FrameBufferHandle CreateFramebufferCube(TextureHandle colorCube, TextureHandle depthCube)
+-		{
+-			return CreateFramebufferCubeFace(colorCube, 0u, depthCube);
+-		}
+-		virtual void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept = 0;
+-
+-		// Buffers
+-		virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
+-		virtual void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) = 0;
+-		virtual void DestroyBuffer(BufferHandle buffer) noexcept = 0;
+-
+-		// Input layouts (API-neutral)
+-		virtual InputLayoutHandle CreateInputLayout(const InputLayoutDesc& desc) = 0;
+-		virtual void DestroyInputLayout(InputLayoutHandle layout) noexcept = 0;
+-
+-		// Shaders and Pipelines
+-		virtual bool SupportsShaderModel6() const { return false; }
+-		virtual bool SupportsViewInstancing() const { return false; }
+-
+-		// Whether the device can set SV_RenderTargetArrayIndex / SV_ViewportArrayIndex from any shader feeding rasterizer.
+-		// This is required for "layered rendering" into Texture2DArray render targets from VS/DS/GS.
+-		virtual bool SupportsVPAndRTArrayIndexFromAnyShader() const { return false; }
+-
+-		virtual ShaderHandle CreateShader(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode) = 0;
+-		virtual ShaderHandle CreateShaderEx(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode, ShaderModel shaderModel)
+-		{
+-			if (shaderModel == ShaderModel::SM5_1)
+-			{
+-				return CreateShader(stage, debugName, sourceOrBytecode);
+-			}
+-			return {};
+-		}
+-		virtual void DestroyShader(ShaderHandle shader) noexcept = 0;
+-
+-		virtual PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle pixelShader, PrimitiveTopologyType topologyType = PrimitiveTopologyType::Triangle) = 0;
+-		virtual PipelineHandle CreatePipelineEx(
+-			std::string_view debugName,
+-			ShaderHandle vertexShader,
+-			ShaderHandle pixelShader,
+-			PrimitiveTopologyType topologyType,
+-			[[maybe_unused]] std::uint32_t viewInstanceCount)
+-		{
+-			return CreatePipeline(debugName, vertexShader, pixelShader, topologyType);
+-		}
+-		virtual void DestroyPipeline(PipelineHandle pso) noexcept = 0;
+-
+-		// Submission
+-		virtual void SubmitCommandList(CommandList&& commandList) = 0;
+-
+-		// Bindless-style descriptor indices
+-		virtual TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) = 0;
+-		virtual void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) = 0;
+-		virtual void FreeTextureDescriptor(TextureDescIndex index) noexcept = 0;
+-
+-		// Synchronization
+-		virtual FenceHandle CreateFence(bool signaled = false) = 0;
+-		virtual void DestroyFence(FenceHandle fence) noexcept = 0;
+-		virtual void SignalFence(FenceHandle fence) = 0;
+-		virtual void WaitFence(FenceHandle fence) = 0;
+-		virtual bool IsFenceSignaled(FenceHandle fence) = 0;
+-	};
+-
+-	std::unique_ptr<IRHIDevice> CreateNullDevice();
+-	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc);
+-}
+-
+-namespace rhi
+-{
+-	class NullSwapChain : public rhi::IRHISwapChain
+-	{
+-	public:
+-		explicit NullSwapChain(SwapChainDesc desc) : desc_(std::move(desc)) {}
+-		~NullSwapChain() override = default;
+-
+-		rhi::SwapChainDesc GetDesc() const override
+-		{
+-			return desc_;
+-		}
+-		FrameBufferHandle GetCurrentBackBuffer() const override
+-		{
+-			return FrameBufferHandle{ 0 };
+-		}
+-		TextureHandle GetDepthTexture() const override
+-		{
+-			return TextureHandle{};
+-		}
+-		void Present() override {}
+-		void Resize(Extent2D newExtent) override
+-		{
+-			desc_.extent = newExtent;
+-		}
+-
+-	private:
+-		SwapChainDesc desc_;
+-	};
+-
+-	class NullDevice : public rhi::IRHIDevice
+-	{
+-	public:
+-		std::string_view GetName() const override
+-		{
+-			return "Null RHI Device";
+-		}
+-
+-		Backend GetBackend() const noexcept override
+-		{
+-			return Backend::Null;
+-		}
+-
+-		TextureHandle CreateTexture2D(Extent2D, Format) override
+-		{
+-			TextureHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		TextureHandle CreateTextureCube(Extent2D, Format) override
+-		{
+-			TextureHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void DestroyTexture(TextureHandle) noexcept override {}
+-
+-		FrameBufferHandle CreateFramebuffer(TextureHandle, TextureHandle) override
+-		{
+-			FrameBufferHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		FrameBufferHandle CreateFramebufferCubeFace(TextureHandle, std::uint32_t, TextureHandle) override
+-		{
+-			FrameBufferHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void DestroyFramebuffer(FrameBufferHandle) noexcept override {}
+-
+-		BufferHandle CreateBuffer(const BufferDesc&) override
+-		{
+-			BufferHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void UpdateBuffer(BufferHandle, std::span<const std::byte>, std::size_t) override {}
+-		void DestroyBuffer(BufferHandle) noexcept override {}
+-
+-		InputLayoutHandle CreateInputLayout(const InputLayoutDesc&) override
+-		{
+-			InputLayoutHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void DestroyInputLayout(InputLayoutHandle) noexcept override {}
+-
+-		virtual void BindInputLayout(InputLayoutHandle layout) {}
+-		virtual void BindVertexBuffer(std::uint32_t slot, BufferHandle vertexBuffer, std::uint32_t strideBytes, std::uint32_t offsetBytes) {}
+-		virtual void BindIndexBuffer(BufferHandle indexBuffer, IndexType indexTtype, std::uint32_t offsetBytes) {}
+-
+-		ShaderHandle CreateShader(ShaderStage stage, std::string_view, std::string_view) override
+-		{
+-			ShaderHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void DestroyShader(ShaderHandle) noexcept override {}
+-
+-		PipelineHandle CreatePipeline(std::string_view, ShaderHandle, ShaderHandle, PrimitiveTopologyType) override
+-		{
+-			PipelineHandle handle{};
+-			handle.id = ++nextId_;
+-			return handle;
+-		}
+-		void DestroyPipeline(PipelineHandle pipeline) noexcept override {}
+-
+-		void SubmitCommandList(CommandList&& commandList) override {}
+-
+-		TextureDescIndex AllocateTextureDesctiptor(TextureHandle tex) override
+-		{
+-			const auto idx = ++nextDescId_;
+-			descToTex_[idx] = tex;
+-			return idx;
+-		}
+-
+-		void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) override
+-		{
+-			descToTex_[index] = texture;
+-		}
+-
+-		void FreeTextureDescriptor(TextureDescIndex index) noexcept override
+-		{
+-			descToTex_.erase(index);
+-		}
+-
+-		FenceHandle CreateFence(bool signaled = false) override
+-		{
+-			FenceHandle handle{};
+-			handle.id = ++nextFenceId_;
+-			fenceSignaled_[handle.id] = signaled;
+-			return handle;
+-		}
+-
+-		void DestroyFence(FenceHandle fence) noexcept override
+-		{
+-			fenceSignaled_.erase(fence.id);
+-		}
+-
+-		void SignalFence(FenceHandle fence) override
+-		{
+-			fenceSignaled_[fence.id] = true;
+-		}
+-
+-		void WaitFence(FenceHandle fence) override
+-		{
+-			// Null backend: always immediate.
+-		}
+-
+-		bool IsFenceSignaled(FenceHandle fence) override
+-		{
+-			if (auto it = fenceSignaled_.find(fence.id); it != fenceSignaled_.end())
+-			{
+-				return it->second;
+-			}
+-			return true;
+-		}
+-
+-	private:
+-		std::uint32_t nextId_{ 100 };
+-		std::uint32_t nextDescId_{ 0 };
+-		std::uint32_t nextFenceId_{ 0 };
+-		std::unordered_map<TextureDescIndex, TextureHandle> descToTex_{};
+-		std::unordered_map<std::uint32_t, bool> fenceSignaled_{};
+-	};
+-
+-	std::unique_ptr<IRHIDevice> CreateNullDevice()
+-	{
+-		return std::make_unique<NullDevice>();
+-	}
+-
+-	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc)
+-	{
+-		return std::make_unique<NullSwapChain>(std::move(desc));
+-	}
++module;
++
++#include <cstdint>
++#include <cstddef>
++#include <vector>
++#include <string>
++#include <memory>
++#include <array>
++#include <variant>
++#include <span>
++#include <unordered_map>
++#include <cstring>
++#include <stdexcept>
++
++export module core:rhi;
++
++export namespace rhi
++{
++	enum class Backend
++	{
++		Null,
++		OpenGL,
++		DirectX12
++	};
++
++	template <typename Tag>
++	struct Handle
++	{
++		std::uint32_t id{ 0 };
++		explicit operator bool() const noexcept { return id != 0; }
++		friend bool operator==(const Handle&, const Handle&) noexcept = default;
++		friend bool operator!=(const Handle&, const Handle&) noexcept = default;
++	};
++
++	struct BufferTag {};
++	struct TextureTag {};
++	struct ShaderTag {};
++	struct PipelineTag {};
++	struct FrameBufferTag {};
++	struct FenceTag {};
++	struct InputLayoutTag {};
++
++	using BufferHandle = Handle<BufferTag>;
++	using TextureHandle = Handle<TextureTag>;
++	using ShaderHandle = Handle<ShaderTag>;
++	using PipelineHandle = Handle<PipelineTag>;
++	using FrameBufferHandle = Handle<FrameBufferTag>;
++	using FenceHandle = Handle<FenceTag>;
++	using InputLayoutHandle = Handle<InputLayoutTag>;
++
++	enum class Format : std::uint8_t
++	{
++		Unknown,
++		RGBA8_UNORM,
++		BGRA8_UNORM,
++		R32_FLOAT,
++		D32_FLOAT,
++		D24_UNORM_S8_UINT
++	};
++
++	enum class IndexType : std::uint8_t
++	{
++		UINT16,
++		UINT32
++	};
++
++	enum class PrimitiveTopologyType : std::uint8_t
++	{
++		Triangle,
++		Line
++	};
++
++	enum class PrimitiveTopology : std::uint8_t
++	{
++		TriangleList,
++		LineList
++	};
++
++	enum class BufferBindFlag : std::uint8_t
++	{
++		VertexBuffer,
++		IndexBuffer,
++		ConstantBuffer,
++		UniformBuffer,
++		StructuredBuffer
++	};
++
++	enum class BufferUsageFlag : std::uint8_t
++	{
++		Default,
++		Static,
++		Dynamic,
++		Stream
++	};
++
++	enum class CompareOp : std::uint8_t
++	{
++		Never,
++		Less,
++		Equal,
++		LessEqual,
++		Greater,
++		NotEqual,
++		GreaterEqual,
++		Always
++	};
++
++	enum class StencilOp : std::uint8_t
++	{
++		Keep,
++		Zero,
++		Replace,
++		IncrementClamp,
++		DecrementClamp,
++		Invert,
++		IncrementWrap,
++		DecrementWrap
++	};
++
++	enum class VertexFormat : std::uint8_t
++	{
++		R32G32B32_FLOAT,
++		R32G32_FLOAT,
++		R32G32B32A32_FLOAT,
++		R8G8B8A8_UNORM
++	};
++
++	enum class VertexSemantic : std::uint8_t
++	{
++		Position,
++		Normal,
++		TexCoord,
++		Color,
++		Tangent
++	};
++
++	enum class CullMode : std::uint8_t
++	{
++		None,
++		Back,
++		Front
++	};
++
++	enum class FrontFace : std::uint8_t
++	{
++		CounterClockwise,
++		Clockwise
++	};
++
++	enum class ShaderStage : std::uint8_t
++	{
++		Vertex,
++		Pixel, // Fragment
++		Geometry,
++		Compute
++	};
++
++	enum class ShaderModel : std::uint8_t
++	{
++		SM5_1,
++		SM6_1
++	};
++
++	// Vulkan/DX12 backends can map these indices into global descriptor tables.
++	// The OpenGL backend emulates them by keeping a small mapping.
++	using TextureDescIndex = std::uint32_t;
++
++	struct Extent2D
++	{
++		std::uint32_t width{};
++		std::uint32_t height{};
++	};
++
++	struct SwapChainDesc
++	{
++		Extent2D extent{};
++		Format backbufferFormat{ Format::BGRA8_UNORM };
++		bool vsync{ true };
++	};
++
++	struct BufferDesc
++	{
++		BufferBindFlag bindFlag{ BufferBindFlag::VertexBuffer };
++		BufferUsageFlag usageFlag{ BufferUsageFlag::Default };
++		std::size_t sizeInBytes{ 0 };
++		std::uint32_t structuredStrideBytes{ 0 }; // For StructuredBuffer SRV (bytes per element)
++		std::string debugName{};
++	};
++
++	struct VertexAttributeDesc
++	{
++		VertexSemantic semantic{};
++		std::uint8_t semanticIndex{ 0 };
++		VertexFormat format{};
++		std::uint32_t inputSlot{ 0 };
++		std::uint32_t offsetBytes{ 0 };
++		bool normalized{ false };
++	};
++
++	struct StencilFaceState
++	{
++		StencilOp failOp{ StencilOp::Keep };
++		StencilOp depthFailOp{ StencilOp::Keep };
++		StencilOp passOp{ StencilOp::Keep };
++		CompareOp compareOp{ CompareOp::Always };
++	};
++
++	struct StencilState
++	{
++		bool enable{ false };
++		std::uint8_t readMask{ 0xFF };
++		std::uint8_t writeMask{ 0xFF };
++		StencilFaceState front{};
++		StencilFaceState back{};
++	};
++
++	struct DepthState
++	{
++		bool testEnable{ true };
++		bool writeEnable{ true };
++		CompareOp depthCompareOp{ CompareOp::LessEqual };
++		StencilState stencil{};
++	};
++
++	struct RasterizerState
++	{
++		CullMode cullMode{ CullMode::Back };
++		FrontFace frontFace{ FrontFace::CounterClockwise };
++	};
++
++	struct BlendState
++	{
++		bool enable{ false };
++	};
++
++	struct GraphicsState
++	{
++		DepthState depth{};
++		RasterizerState rasterizer{};
++		BlendState blend{};
++	};
++
++	struct ClearDesc
++	{
++		bool clearColor{ true };
++		bool clearDepth{ false };
++		bool clearStencil{ false };
++		std::array<float, 4> color{ 0.0f, 0.0f, 0.0f, 1.0f };
++		float depth{ 1.0f };
++		std::uint8_t stencil{ 0 };
++	};
++
++	class IRHISwapChain;
++
++	struct BeginPassDesc {
++		FrameBufferHandle frameBuffer{};
++		Extent2D extent{};
++		ClearDesc clearDesc{};
++		// Optional: when frameBuffer.id == 0 (swapchain backbuffer), this selects which swapchain.
++		IRHISwapChain* swapChain{ nullptr };
++		// If false, depth-stencil is not bound (useful for fullscreen passes that sample depth as SRV).
++		bool bindDepthStencil{ true };
++	};
++
++	struct InputLayoutDesc
++	{
++		std::vector<VertexAttributeDesc> attributes;
++		std::uint32_t strideBytes{ 0 };
++		std::string debugName{};
++	};
++
++	//------------------------ Command Stream ------------------------/
++
++	struct CommandBeginPass
++	{
++		BeginPassDesc desc{};
++	};
++	struct CommandEndPass
++	{
++	};
++	struct CommandSetViewport
++	{
++		int x{ 0 };
++		int y{ 0 };
++		int width{ 0 };
++		int height{ 0 };
++	};
++	struct CommandSetState
++	{
++		GraphicsState state{};
++	};
++	struct CommandSetStencilRef
++	{
++		std::uint32_t ref{ 0 };
++	};
++	struct CommandSetPrimitiveTopology
++	{
++		PrimitiveTopology topology{ PrimitiveTopology::TriangleList };
++	};
++	struct CommandBindPipeline
++	{
++		PipelineHandle pso{};
++	};
++	struct CommandBindInputLayout
++	{
++		InputLayoutHandle layout{};
++	};
++	struct CommandBindVertexBuffer
++	{
++		std::uint32_t slot{ 0 };
++		BufferHandle buffer{};
++		std::uint32_t strideBytes{ 0 };
++		std::uint32_t offsetBytes{ 0 };
++	};
++	struct CommandBindIndexBuffer
++	{
++		BufferHandle buffer{};
++		IndexType indexType{ IndexType::UINT16 };
++		std::uint32_t offsetBytes{ 0 };
++	};
++	struct CommnadBindTexture2D
++	{
++		std::uint32_t slot{ 0 };
++		TextureHandle texture{};
++	};
++	struct CommandBindTextureCube
++	{
++		std::uint32_t slot{ 0 };
++		TextureHandle texture{};
++	};
++	struct CommandTextureDesc
++	{
++		std::uint32_t slot{ 0 };
++		TextureDescIndex texture{};
++	};
++	struct CommandBindStructuredBufferSRV
++	{
++		std::uint32_t slot{ 0 };
++		BufferHandle buffer{};
++	};
++
++	struct CommandSetUniformInt
++	{
++		std::string name{};
++		int value{ 0 };
++	};
++	struct CommandUniformFloat4
++	{
++		std::string name{};
++		std::array<float, 4> value{};
++	};
++	struct CommandUniformMat4
++	{
++		std::string name{};
++		std::array<float, 16> value{};
++	};
++
++	// Backend-agnostic small constant block ("push constants" style).
++	// DX12 uses it to feed a per-draw constant buffer without interpreting names.
++	// OpenGL can ignore it or emulate it later via UBOs.
++	struct CommandSetConstants
++	{
++		std::uint32_t slot{ 0 };   // backend-defined slot (DX12 root parameter index)
++		std::uint32_t size{ 0 };   // bytes used in `data`
++		std::array<std::byte, 512> data{};
++	};
++
++	// DX12-only: render Dear ImGui draw data into the current render target.
++	// Other backends may ignore this command.
++	struct CommandDX12ImGuiRender
++	{
++		const void* drawData{ nullptr }; // ImDrawData*
++	};
++	struct CommandDrawIndexed
++	{
++		std::uint32_t indexCount{ 0 };
++		IndexType indexType{ IndexType::UINT16 };
++		std::uint32_t firstIndex{ 0 };
++		int baseVertex{ 0 };
++		uint32_t instanceCount{ 1 };
++		uint32_t firstInstance{ 0 };
++	};
++	struct CommandDraw
++	{
++		std::uint32_t vertexCount{ 0 };
++		std::uint32_t firstVertex{ 0 };
++		uint32_t instanceCount{ 1 };
++		uint32_t firstInstance{ 0 };
++	};
++
++	struct CommandBindTexture2DArray
++	{
++		std::uint32_t slot{ 0 };
++		TextureHandle texture{};
++	};
++
++	using Command = std::variant<
++		CommandBeginPass,
++		CommandEndPass,
++		CommandSetViewport,
++		CommandSetState,
++		CommandSetStencilRef,
++		CommandSetPrimitiveTopology,
++		CommandBindPipeline,
++		CommandBindInputLayout,
++		CommandBindVertexBuffer,
++		CommandBindIndexBuffer,
++		CommnadBindTexture2D,
++		CommandBindTextureCube,
++		CommandTextureDesc,
++		CommandBindStructuredBufferSRV,
++		CommandSetUniformInt,
++		CommandUniformFloat4,
++		CommandUniformMat4,
++		CommandSetConstants,
++		CommandDX12ImGuiRender,
++		CommandDrawIndexed,
++		CommandDraw,
++		CommandBindTexture2DArray>;
++
++	struct CommandList
++	{
++		std::vector<Command> commands;
++
++		void BeginPass(const BeginPassDesc& desc)
++		{
++			commands.emplace_back(CommandBeginPass{ desc });
++		}
++		void EndPass()
++		{
++			commands.emplace_back(CommandEndPass{});
++		}
++		void SetViewport(int x, int y, int width, int height)
++		{
++			commands.emplace_back(CommandSetViewport{ x, y, width, height });
++		}
++		void SetState(const GraphicsState& state)
++		{
++			commands.emplace_back(CommandSetState{ state });
++		}
++		void SetStencilRef(std::uint32_t ref)
++		{
++			commands.emplace_back(CommandSetStencilRef{ ref });
++		}
++		void SetPrimitiveTopology(PrimitiveTopology topology)
++		{
++			commands.emplace_back(CommandSetPrimitiveTopology{ topology });
++		}
++		void BindPipeline(PipelineHandle pso)
++		{
++			commands.emplace_back(CommandBindPipeline{ pso });
++		}
++		void BindInputLayout(InputLayoutHandle layout)
++		{
++			commands.emplace_back(CommandBindInputLayout{ layout });
++		}
++		void BindVertexBuffer(std::uint32_t slot, BufferHandle buffer, std::uint32_t strideBytes = 0, std::uint32_t offsetBytes = 0)
++		{
++			commands.emplace_back(CommandBindVertexBuffer{ slot, buffer, strideBytes, offsetBytes });
++		}
++		void BindIndexBuffer(BufferHandle buffer, IndexType indexType, std::uint32_t offsetBytes = 0)
++		{
++			commands.emplace_back(CommandBindIndexBuffer{ buffer, indexType, offsetBytes });
++		}
++		void BindTexture2D(std::uint32_t slot, TextureHandle texture)
++		{
++			commands.emplace_back(CommnadBindTexture2D{ slot, texture });
++		}
++		void BindTextureCube(std::uint32_t slot, TextureHandle texture)
++		{
++			commands.emplace_back(CommandBindTextureCube{ slot, texture });
++		}
++		void BindTextureDesc(std::uint32_t slot, TextureDescIndex textureIndex)
++		{
++			commands.emplace_back(CommandTextureDesc{ slot, textureIndex });
++		}
++		void SetUniformInt(std::string name, int value)
++		{
++			commands.emplace_back(CommandSetUniformInt{ std::move(name), value });
++		}
++		void SetUniformFloat4(std::string name, std::array<float, 4> value)
++		{
++			commands.emplace_back(CommandUniformFloat4{ std::string(name), value });
++		}
++		void SetUniformMat4(std::string_view name, const std::array<float, 16>& v)
++		{
++			commands.emplace_back(CommandUniformMat4{ std::string(name), v });
++		}
++		void SetConstants(std::uint32_t slot, std::span<const std::byte> bytes)
++		{
++			if (bytes.size() > 512)
++			{
++				throw std::runtime_error("CommandList::SetConstants: payload too large (max 512 bytes)");
++			}
++
++			CommandSetConstants cmd{};
++			cmd.slot = slot;
++			cmd.size = static_cast<std::uint32_t>(bytes.size());
++			if (!bytes.empty())
++				std::memcpy(cmd.data.data(), bytes.data(), bytes.size());
++			commands.emplace_back(std::move(cmd));
++		}
++		void DrawIndexed(
++			std::uint32_t indexCount,
++			IndexType indexType,
++			std::uint32_t firstIndex = 0,
++			int baseVertex = 0,
++			uint32_t instanceCount = 1,
++			uint32_t firstInstance = 0)
++		{
++			commands.emplace_back(CommandDrawIndexed{ indexCount, indexType, firstIndex, baseVertex, instanceCount, firstInstance });
++		}
++		void Draw(
++			std::uint32_t vertexCount,
++			std::uint32_t firstVertex = 0,
++			uint32_t instanceCount = 1,
++			uint32_t firstInstance = 0)
++		{
++			commands.emplace_back(CommandDraw{ vertexCount, firstVertex, instanceCount, firstInstance });
++		}
++		void BindStructuredBufferSRV(std::uint32_t slot, BufferHandle buffer)
++		{
++			commands.emplace_back(CommandBindStructuredBufferSRV{ slot, buffer });
++		}
++		void DX12ImGuiRender(const void* drawData)
++		{
++			commands.emplace_back(CommandDX12ImGuiRender{ drawData });
++		}
++		void BindTexture2DArray(std::uint32_t slot, TextureHandle texture)
++		{
++			commands.emplace_back(CommandBindTexture2DArray{ slot, texture });
++		}
++	};
++
++	// ------------------------ RHI interfaces ------------------------ //
++
++	class IRHISwapChain
++	{
++	public:
++		virtual ~IRHISwapChain() = default;
++		virtual SwapChainDesc GetDesc() const = 0;
++		virtual FrameBufferHandle GetCurrentBackBuffer() const = 0;
++		virtual TextureHandle GetDepthTexture() const = 0;
++		virtual void Present() = 0;
++		virtual void Resize(Extent2D newExtent) = 0;
++	};
++
++	class IRHIDevice
++	{
++	public:
++		virtual ~IRHIDevice() = default;
++
++		virtual Backend GetBackend() const noexcept = 0;
++
++		virtual std::string_view GetName() const = 0;
++
++		// Optional UI hooks (Dear ImGui). Default is no-op.
++		virtual void InitImGui([[maybe_unused]] void* hwnd, [[maybe_unused]] int framesInFlight, [[maybe_unused]] Format rtvFormat) {}
++		virtual void ImGuiNewFrame() {}
++		virtual void ShutdownImGui() {}
++		virtual void WaitIdle() {}
++
++		// Textures
++		virtual TextureHandle CreateTexture2D(Extent2D extendt, Format format) = 0;
++		virtual TextureHandle CreateTextureCube(Extent2D extent, Format format) = 0;
++		virtual void DestroyTexture(TextureHandle texture) noexcept = 0;
++
++		// Framebuffers
++		virtual FrameBufferHandle CreateFramebuffer(TextureHandle color, TextureHandle depth) = 0;
++		// Multiple render targets (MRT). 0 colors means depth-only pass.
++		// Default implementation falls back to the single-color CreateFramebuffer() and will throw for colors.size() > 1.
++		virtual FrameBufferHandle CreateFramebufferMRT(std::span<const TextureHandle> colors, TextureHandle depth)
++		{
++			if (colors.empty())
++			{
++				return CreateFramebuffer(TextureHandle{}, depth);
++			}
++			if (colors.size() == 1)
++			{
++				return CreateFramebuffer(colors[0], depth);
++			}
++
++			throw std::runtime_error("CreateFramebufferMRT: backend does not support MRT yet");
++		}
++		virtual FrameBufferHandle CreateFramebufferCubeFace(TextureHandle colorCube, std::uint32_t faceIndex, TextureHandle depth) = 0;
++		virtual FrameBufferHandle CreateFramebufferCube(TextureHandle colorCube, TextureHandle depthCube)
++		{
++			return CreateFramebufferCubeFace(colorCube, 0u, depthCube);
++		}
++		virtual void DestroyFramebuffer(FrameBufferHandle frameBuffer) noexcept = 0;
++
++		// Buffers
++		virtual BufferHandle CreateBuffer(const BufferDesc& desc) = 0;
++		virtual void UpdateBuffer(BufferHandle buffer, std::span<const std::byte> data, std::size_t offsetBytes = 0) = 0;
++		virtual void DestroyBuffer(BufferHandle buffer) noexcept = 0;
++
++		// Input layouts (API-neutral)
++		virtual InputLayoutHandle CreateInputLayout(const InputLayoutDesc& desc) = 0;
++		virtual void DestroyInputLayout(InputLayoutHandle layout) noexcept = 0;
++
++		// Shaders and Pipelines
++		virtual bool SupportsShaderModel6() const { return false; }
++		virtual bool SupportsViewInstancing() const { return false; }
++
++		// Whether the device can set SV_RenderTargetArrayIndex / SV_ViewportArrayIndex from any shader feeding rasterizer.
++		// This is required for "layered rendering" into Texture2DArray render targets from VS/DS/GS.
++		virtual bool SupportsVPAndRTArrayIndexFromAnyShader() const { return false; }
++
++		virtual ShaderHandle CreateShader(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode) = 0;
++		virtual ShaderHandle CreateShaderEx(ShaderStage stage, std::string_view debugName, std::string_view sourceOrBytecode, ShaderModel shaderModel)
++		{
++			if (shaderModel == ShaderModel::SM5_1)
++			{
++				return CreateShader(stage, debugName, sourceOrBytecode);
++			}
++			return {};
++		}
++		virtual void DestroyShader(ShaderHandle shader) noexcept = 0;
++
++		virtual PipelineHandle CreatePipeline(std::string_view debugName, ShaderHandle vertexShader, ShaderHandle pixelShader, PrimitiveTopologyType topologyType = PrimitiveTopologyType::Triangle) = 0;
++		virtual PipelineHandle CreatePipelineEx(
++			std::string_view debugName,
++			ShaderHandle vertexShader,
++			ShaderHandle pixelShader,
++			PrimitiveTopologyType topologyType,
++			[[maybe_unused]] std::uint32_t viewInstanceCount)
++		{
++			return CreatePipeline(debugName, vertexShader, pixelShader, topologyType);
++		}
++		virtual void DestroyPipeline(PipelineHandle pso) noexcept = 0;
++
++		// Submission
++		virtual void SubmitCommandList(CommandList&& commandList) = 0;
++
++		// Bindless-style descriptor indices
++		virtual TextureDescIndex AllocateTextureDesctiptor(TextureHandle texture) = 0;
++		virtual void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) = 0;
++		virtual void FreeTextureDescriptor(TextureDescIndex index) noexcept = 0;
++
++		// Synchronization
++		virtual FenceHandle CreateFence(bool signaled = false) = 0;
++		virtual void DestroyFence(FenceHandle fence) noexcept = 0;
++		virtual void SignalFence(FenceHandle fence) = 0;
++		virtual void WaitFence(FenceHandle fence) = 0;
++		virtual bool IsFenceSignaled(FenceHandle fence) = 0;
++	};
++
++	std::unique_ptr<IRHIDevice> CreateNullDevice();
++	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc);
++}
++
++namespace rhi
++{
++	class NullSwapChain : public rhi::IRHISwapChain
++	{
++	public:
++		explicit NullSwapChain(SwapChainDesc desc) : desc_(std::move(desc)) {}
++		~NullSwapChain() override = default;
++
++		rhi::SwapChainDesc GetDesc() const override
++		{
++			return desc_;
++		}
++		FrameBufferHandle GetCurrentBackBuffer() const override
++		{
++			return FrameBufferHandle{ 0 };
++		}
++		TextureHandle GetDepthTexture() const override
++		{
++			return TextureHandle{};
++		}
++		void Present() override {}
++		void Resize(Extent2D newExtent) override
++		{
++			desc_.extent = newExtent;
++		}
++
++	private:
++		SwapChainDesc desc_;
++	};
++
++	class NullDevice : public rhi::IRHIDevice
++	{
++	public:
++		std::string_view GetName() const override
++		{
++			return "Null RHI Device";
++		}
++
++		Backend GetBackend() const noexcept override
++		{
++			return Backend::Null;
++		}
++
++		TextureHandle CreateTexture2D(Extent2D, Format) override
++		{
++			TextureHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		TextureHandle CreateTextureCube(Extent2D, Format) override
++		{
++			TextureHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void DestroyTexture(TextureHandle) noexcept override {}
++
++		FrameBufferHandle CreateFramebuffer(TextureHandle, TextureHandle) override
++		{
++			FrameBufferHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		FrameBufferHandle CreateFramebufferCubeFace(TextureHandle, std::uint32_t, TextureHandle) override
++		{
++			FrameBufferHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void DestroyFramebuffer(FrameBufferHandle) noexcept override {}
++
++		BufferHandle CreateBuffer(const BufferDesc&) override
++		{
++			BufferHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void UpdateBuffer(BufferHandle, std::span<const std::byte>, std::size_t) override {}
++		void DestroyBuffer(BufferHandle) noexcept override {}
++
++		InputLayoutHandle CreateInputLayout(const InputLayoutDesc&) override
++		{
++			InputLayoutHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void DestroyInputLayout(InputLayoutHandle) noexcept override {}
++
++		virtual void BindInputLayout(InputLayoutHandle layout) {}
++		virtual void BindVertexBuffer(std::uint32_t slot, BufferHandle vertexBuffer, std::uint32_t strideBytes, std::uint32_t offsetBytes) {}
++		virtual void BindIndexBuffer(BufferHandle indexBuffer, IndexType indexTtype, std::uint32_t offsetBytes) {}
++
++		ShaderHandle CreateShader(ShaderStage stage, std::string_view, std::string_view) override
++		{
++			ShaderHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void DestroyShader(ShaderHandle) noexcept override {}
++
++		PipelineHandle CreatePipeline(std::string_view, ShaderHandle, ShaderHandle, PrimitiveTopologyType) override
++		{
++			PipelineHandle handle{};
++			handle.id = ++nextId_;
++			return handle;
++		}
++		void DestroyPipeline(PipelineHandle pipeline) noexcept override {}
++
++		void SubmitCommandList(CommandList&& commandList) override {}
++
++		TextureDescIndex AllocateTextureDesctiptor(TextureHandle tex) override
++		{
++			const auto idx = ++nextDescId_;
++			descToTex_[idx] = tex;
++			return idx;
++		}
++
++		void UpdateTextureDescriptor(TextureDescIndex index, TextureHandle texture) override
++		{
++			descToTex_[index] = texture;
++		}
++
++		void FreeTextureDescriptor(TextureDescIndex index) noexcept override
++		{
++			descToTex_.erase(index);
++		}
++
++		FenceHandle CreateFence(bool signaled = false) override
++		{
++			FenceHandle handle{};
++			handle.id = ++nextFenceId_;
++			fenceSignaled_[handle.id] = signaled;
++			return handle;
++		}
++
++		void DestroyFence(FenceHandle fence) noexcept override
++		{
++			fenceSignaled_.erase(fence.id);
++		}
++
++		void SignalFence(FenceHandle fence) override
++		{
++			fenceSignaled_[fence.id] = true;
++		}
++
++		void WaitFence(FenceHandle fence) override
++		{
++			// Null backend: always immediate.
++		}
++
++		bool IsFenceSignaled(FenceHandle fence) override
++		{
++			if (auto it = fenceSignaled_.find(fence.id); it != fenceSignaled_.end())
++			{
++				return it->second;
++			}
++			return true;
++		}
++
++	private:
++		std::uint32_t nextId_{ 100 };
++		std::uint32_t nextDescId_{ 0 };
++		std::uint32_t nextFenceId_{ 0 };
++		std::unordered_map<TextureDescIndex, TextureHandle> descToTex_{};
++		std::unordered_map<std::uint32_t, bool> fenceSignaled_{};
++	};
++
++	std::unique_ptr<IRHIDevice> CreateNullDevice()
++	{
++		return std::make_unique<NullDevice>();
++	}
++
++	std::unique_ptr<IRHISwapChain> CreateNullSwapChain(IRHIDevice& device, SwapChainDesc desc)
++	{
++		return std::make_unique<NullSwapChain>(std::move(desc));
++	}
+ }
+\ No newline at end of file
+diff --git a/src/Render/Scene/SceneImpl/Level_LevelInstance_PrivateHelpers.inl b/src/Render/Scene/SceneImpl/Level_LevelInstance_PrivateHelpers.inl
+index ba8322d..72e48a0 100644
+--- a/src/Render/Scene/SceneImpl/Level_LevelInstance_PrivateHelpers.inl
++++ b/src/Render/Scene/SceneImpl/Level_LevelInstance_PrivateHelpers.inl
+@@ -1,510 +1,510 @@
+-		rhi::TextureHandle TryGetTextureHandle_(ResourceManager& rm, std::string_view id) const noexcept
+-		{
+-			if (auto texRes = rm.Get<TextureResource>(id))
+-			{
+-				const auto& gpu = texRes->GetResource();
+-				if (gpu.id != 0)
+-				{
+-					return rhi::TextureHandle{ static_cast<std::uint32_t>(gpu.id) };
+-				}
+-			}
+-			return {};
+-		}
+-
+-		rhi::TextureDescIndex GetOrCreateTextureDesc_(
+-			ResourceManager& rm,
+-			BindlessTable& bindless,
+-			std::string_view textureId)
+-		{
+-			const std::string key{ textureId };
+-
+-			if (auto it = textureDesc_.find(key); it != textureDesc_.end())
+-			{
+-				return it->second;
+-			}
+-
+-			const rhi::TextureHandle handle = TryGetTextureHandle_(rm, textureId);
+-			if (!handle)
+-			{
+-				return 0;
+-			}
+-
+-			const rhi::TextureDescIndex index = bindless.RegisterTexture(handle);
+-			textureDesc_.emplace(key, index);
+-			return index;
+-		}
+-
+-		MaterialHandle GetMaterialHandle_(std::string_view materialId) const noexcept
+-		{
+-			if (materialId.empty())
+-			{	
+-				return {};
+-			}
+-
+-			auto it = materialHandles_.find(std::string(materialId));
+-			if (it == materialHandles_.end())
+-			{
+-				return {};
+-			}
+-			return it->second;
+-		}
+-
+-		MeshHandle GetOrLoadMeshHandle_(const LevelAsset& asset, AssetManager& assets, const std::string& meshId) const
+-		{
+-			auto it = asset.meshes.find(meshId);
+-			if (it == asset.meshes.end())
+-			{
+-				throw std::runtime_error("Level: node references unknown meshId: " + meshId);
+-			}
+-
+-			MeshProperties p{};
+-			p.filePath = it->second.path;
+-			p.debugName = it->second.debugName;
+-			return assets.LoadMeshAsync(meshId, std::move(p));
+-		}
+-
+-		EntityHandle GetEntityForNode_(int nodeIndex) const noexcept
+-		{
+-			if (nodeIndex < 0)
+-			{
+-				return kNullEntity;
+-			}
+-
+-			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+-			if (i >= nodeToEntity_.size())
+-			{
+-				return kNullEntity;
+-			}
+-
+-			const EntityHandle e = nodeToEntity_[i];
+-			if (e == kNullEntity)
+-			{
+-				return kNullEntity;
+-			}
+-
+-			if (!ecs_.IsEntityValid(e))
+-			{
+-				return kNullEntity;
+-			}
+-
+-			return e;
+-		}
+-
+-		EntityHandle EnsureEntityForNode_(const LevelAsset& asset, int nodeIndex)
+-		{
+-			if (nodeIndex < 0)
+-			{
+-				return kNullEntity;
+-			}
+-
+-			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+-			if (i >= asset.nodes.size())
+-			{
+-				return kNullEntity;
+-			}
+-
+-			const LevelNode& node = asset.nodes[i];
+-			if (!node.alive)
+-			{
+-				return kNullEntity;
+-			}
+-
+-			if (nodeToEntity_.size() < asset.nodes.size())
+-			{
+-				nodeToEntity_.resize(asset.nodes.size(), kNullEntity);
+-			}
+-
+-			EntityHandle e = nodeToEntity_[i];
+-			if (e == kNullEntity || !ecs_.IsEntityValid(e))
+-			{
+-				e = ecs_.CreateEntity();
+-				nodeToEntity_[i] = e;
+-			}
+-
+-			if (world_.size() < asset.nodes.size())
+-			{
+-				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
+-			}
+-
+-			ecs_.UpsertNodeData(e, nodeIndex, node.parent, node.transform, world_[i], Flags{ .alive = node.alive, .visible = node.visible });
+-			return e;
+-		}
+-
+-		void DestroyEntityForNode_(int nodeIndex)
+-		{
+-			if (nodeIndex < 0)
+-			{
+-				return;
+-			}
+-
+-			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+-			if (i >= nodeToEntity_.size())
+-			{
+-				return;
+-			}
+-
+-			const EntityHandle e = nodeToEntity_[i];
+-			if (e != kNullEntity)
+-			{
+-				ecs_.DestroyEntity(e);
+-			}
+-			nodeToEntity_[i] = kNullEntity;
+-		}
+-
+-		void SyncEntityRenderableForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex)
+-		{
+-			const EntityHandle e = GetEntityForNode_(nodeIndex);
+-			if (e == kNullEntity)
+-			{
+-				return;
+-			}
+-
+-			const int drawIndex = GetNodeDrawIndex(nodeIndex);
+-			if (drawIndex < 0 || static_cast<std::size_t>(drawIndex) >= scene.drawItems.size())
+-			{
+-				if (ecs_.HasRenderable(e))
+-				{
+-					ecs_.RemoveRenderable(e);
+-				}
+-				return;
+-			}
+-
+-			const DrawItem& di = scene.drawItems[static_cast<std::size_t>(drawIndex)];
+-			ecs_.UpsertRenderable(e, Renderable{ .mesh = di.mesh, .material = di.material, .drawIndex = drawIndex });
+-
+-			if (nodeIndex >= 0)
+-			{
+-				const std::size_t i = static_cast<std::size_t>(nodeIndex);
+-				if (i < asset.nodes.size())
+-				{
+-					const LevelNode& node = asset.nodes[i];
+-					ecs_.UpsertNodeData(e, nodeIndex, node.parent, node.transform, world_[i], Flags{ .alive = node.alive, .visible = node.visible });
+-				}
+-			}
+-		}
+-
+-		void EnsureDrawForNode_(const LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex)
+-		{
+-			if (nodeIndex < 0) 
+-			{
+-				return;
+-			}
+-
+-			const std::size_t i = static_cast<std::size_t>(nodeIndex);
+-			if (i >= asset.nodes.size())
+-			{
+-				return;
+-			}
+-
+-			const LevelNode& node = asset.nodes[i];
+-			if (!node.alive || !node.visible || node.mesh.empty())
+-			{
+-				DestroyDrawForNode_(scene, nodeIndex);
+-				return;
+-			}
+-
+-			if (nodeToDraw_.size() < asset.nodes.size())
+-			{	
+-				nodeToDraw_.resize(asset.nodes.size(), -1);
+-			}
+-			if (world_.size() < asset.nodes.size())
+-			{	
+-				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
+-			}
+-
+-			const int existing = nodeToDraw_[i];
+-			if (existing >= 0 && static_cast<std::size_t>(existing) < scene.drawItems.size())
+-			{
+-				DrawItem& item = scene.drawItems[static_cast<std::size_t>(existing)];
+-				item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
+-				item.material = GetMaterialHandle_(node.material);
+-				return;
+-			}
+-
+-			// Spawn new draw item
+-			DrawItem item{};
+-			item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
+-			item.material = GetMaterialHandle_(node.material);
+-			item.transform.useMatrix = true;
+-			item.transform.matrix = world_[i]; // will be updated on next SyncTransformsIfDirty()
+-
+-			const int drawIndex = static_cast<int>(scene.drawItems.size());
+-			scene.AddDraw(item);
+-
+-			// Maintain mapping vectors aligned with scene.drawItems.
+-			if (drawToNode_.size() < scene.drawItems.size())
+-			{	
+-				drawToNode_.resize(scene.drawItems.size(), -1);
+-			}
+-			drawToNode_[static_cast<std::size_t>(drawIndex)] = nodeIndex;
+-			nodeToDraw_[i] = drawIndex;
+-		}
+-
+-		void DestroyDrawForNode_(Scene& scene, int nodeIndex)
+-		{
+-			if (nodeIndex < 0) 
+-			{
+-				return;
+-			}
+-
+-			const std::size_t nodeIdx = static_cast<std::size_t>(nodeIndex);
+-			if (nodeIdx >= nodeToDraw_.size())
+-			{
+-				return;
+-			}
+-
+-			const int di = nodeToDraw_[nodeIdx];
+-			if (di < 0)
+-			{
+-				return;
+-			}
+-
+-			const std::size_t drawIndex = static_cast<std::size_t>(di);
+-			if (drawIndex >= scene.drawItems.size())
+-			{
+-				nodeToDraw_[nodeIdx] = -1;
+-				return;
+-			}
+-
+-			const std::size_t last = scene.drawItems.size() - 1;
+-			if (drawIndex != last)
+-			{
+-				std::swap(scene.drawItems[drawIndex], scene.drawItems[last]);
+-
+-				if (last < drawToNode_.size())
+-				{
+-					const int movedNode = drawToNode_[last];
+-					if (drawIndex < drawToNode_.size())
+-					{
+-						drawToNode_[drawIndex] = movedNode;
+-					}
+-					if (movedNode >= 0 && static_cast<std::size_t>(movedNode) < nodeToDraw_.size())
+-					{
+-						nodeToDraw_[static_cast<std::size_t>(movedNode)] = static_cast<int>(drawIndex);
+-					}
+-
+-					const EntityHandle movedEntity = GetEntityForNode_(movedNode);
+-					if (movedEntity != kNullEntity)
+-					{
+-						ecs_.UpsertRenderable(movedEntity, Renderable{
+-							.mesh = scene.drawItems[drawIndex].mesh,
+-							.material = scene.drawItems[drawIndex].material,
+-							.drawIndex = static_cast<int>(drawIndex)
+-						});
+-					}
+-				}
+-			}
+-
+-			scene.drawItems.pop_back();
+-			if (!drawToNode_.empty())
+-			{	
+-				drawToNode_.pop_back();
+-			}
+-
+-			nodeToDraw_[nodeIdx] = -1;
+-		}
+-
+-		std::vector<int> CollectSubtree_(const LevelAsset& asset, int rootNodeIndex) const
+-		{
+-			std::vector<int> out;
+-			if (rootNodeIndex < 0)
+-				return out;
+-
+-			const std::size_t nodeCount = asset.nodes.size();
+-			if (static_cast<std::size_t>(rootNodeIndex) >= nodeCount)
+-			{	
+-				return out;
+-			}
+-
+-			// children adjacency (alive only)
+-			std::vector<std::vector<int>> children;
+-			children.resize(nodeCount);
+-
+-			for (std::size_t i = 0; i < nodeCount; ++i)
+-			{
+-				const LevelNode& node = asset.nodes[i];
+-				if (!node.alive)
+-					continue;
+-				if (node.parent < 0)
+-					continue;
+-
+-				const std::size_t p = static_cast<std::size_t>(node.parent);
+-				if (p >= nodeCount)
+-					continue;
+-				if (!asset.nodes[p].alive)
+-					continue;
+-
+-				children[p].push_back(static_cast<int>(i));
+-			}
+-
+-			std::vector<int> stack;
+-			stack.push_back(rootNodeIndex);
+-
+-			while (!stack.empty())
+-			{
+-				const int cur = stack.back();
+-				stack.pop_back();
+-
+-				if (cur < 0 || static_cast<std::size_t>(cur) >= nodeCount)
+-					continue;
+-				if (!asset.nodes[static_cast<std::size_t>(cur)].alive)
+-					continue;
+-
+-				out.push_back(cur);
+-
+-				for (int ch : children[static_cast<std::size_t>(cur)])
+-				{
+-					stack.push_back(ch);
+-				}
+-			}
+-
+-			return out;
+-		}
+-
+-		void ValidateRuntimeMappings_(const LevelAsset& asset, const Scene& scene) const noexcept
+-		{
+-#ifndef NDEBUG
+-			auto MatricesNearlyEqual = [](const mathUtils::Mat4& a, const mathUtils::Mat4& b) noexcept
+-				{
+-					for (std::size_t row = 0; row < 4; ++row)
+-					{
+-						for (std::size_t col = 0; col < 4; ++col)
+-						{
+-							if (std::fabs(a(row, col) - b(row, col)) > 1e-4f)
+-							{
+-								return false;
+-							}
+-						}
+-					}
+-					return true;
+-				};
+-
+-			assert(nodeToDraw_.size() >= asset.nodes.size());
+-			assert(nodeToEntity_.size() >= asset.nodes.size());
+-			assert(world_.size() >= asset.nodes.size());
+-			assert(drawToNode_.size() == scene.drawItems.size());
+-			assert(ecs_.GetRenderableCount() == scene.drawItems.size());
+-			assert(scene.editorSelectedDrawItem == GetNodeDrawIndex(scene.editorSelectedNode));
+-			assert(scene.editorReflectionCaptureOwnerDrawItem == GetNodeDrawIndex(scene.editorReflectionCaptureOwnerNode));
+-
+-			for (std::size_t drawIndex = 0; drawIndex < drawToNode_.size(); ++drawIndex)
+-			{
+-				const int nodeIndex = drawToNode_[drawIndex];
+-				assert(nodeIndex >= 0);
+-				assert(static_cast<std::size_t>(nodeIndex) < asset.nodes.size());
+-				assert(nodeToDraw_[static_cast<std::size_t>(nodeIndex)] == static_cast<int>(drawIndex));
+-
+-				const EntityHandle entity = GetEntityForNode_(nodeIndex);
+-				assert(entity != kNullEntity);
+-				assert(ecs_.HasRenderable(entity));
+-				Renderable renderable{};
+-				assert(ecs_.TryGetRenderable(entity, renderable));
+-				assert(renderable.drawIndex == static_cast<int>(drawIndex));
+-				assert(renderable.mesh == scene.drawItems[drawIndex].mesh);
+-				//assert(renderable.material == scene.drawItems[drawIndex].material);
+-			}
+-
+-			for (std::size_t i = 0; i < asset.nodes.size(); ++i)
+-			{
+-				const LevelNode& node = asset.nodes[i];
+-				const int drawIndex = nodeToDraw_[i];
+-				const EntityHandle entity = nodeToEntity_[i];
+-
+-				if (!node.alive)
+-				{
+-					assert(drawIndex == -1);
+-					assert(entity == kNullEntity || !ecs_.IsEntityValid(entity));
+-					continue;
+-				}
+-
+-				if (!node.alive || !node.visible || node.mesh.empty())
+-					assert(entity != kNullEntity);
+-				assert(ecs_.IsEntityValid(entity));
+-
+-				LevelNodeId nodeId{};
+-				ParentIndex parent{};
+-				WorldTransform worldTransform{};
+-				Flags flags{};
+-				assert(ecs_.TryGetLevelNodeId(entity, nodeId));
+-				assert(ecs_.TryGetParentIndex(entity, parent));
+-				assert(ecs_.TryGetWorldTransform(entity, worldTransform));
+-				assert(ecs_.TryGetFlags(entity, flags));
+-				assert(nodeId.index == static_cast<int>(i));
+-				assert(parent.parent == node.parent);
+-				assert(flags.alive == node.alive);
+-				assert(flags.visible == node.visible);
+-				assert(MatricesNearlyEqual(worldTransform.world, world_[i]));
+-
+-				if (!node.visible || node.mesh.empty())
+-				{
+-					assert(drawIndex == -1);
+-					assert(!ecs_.HasRenderable(entity));
+-					continue;
+-				}
+-
+-				assert(drawIndex >= 0);
+-				assert(static_cast<std::size_t>(drawIndex) < scene.drawItems.size());
+-				assert(static_cast<std::size_t>(drawIndex) < drawToNode_.size());
+-				assert(drawToNode_[static_cast<std::size_t>(drawIndex)] == static_cast<int>(i));
+-				assert(ecs_.HasRenderable(entity));
+-
+-				Renderable renderable{};
+-				assert(ecs_.TryGetRenderable(entity, renderable));
+-				assert(renderable.drawIndex == drawIndex);
+-				assert(renderable.mesh == scene.drawItems[static_cast<std::size_t>(drawIndex)].mesh);
+-				//assert(renderable.material == scene.drawItems[static_cast<std::size_t>(drawIndex)].material);
+-			}
+-#endif
+-		}
+-
+-		void RecomputeWorld_(const LevelAsset& asset)
+-		{
+-			const std::size_t n = asset.nodes.size();
+-			world_.resize(n, mathUtils::Mat4(1.0f));
+-
+-			std::vector<std::uint8_t> state;
+-			state.resize(n, 0); // 0=unvisited, 1=visiting, 2=done
+-
+-			auto compute = [&](auto&& self, std::size_t i) -> const mathUtils::Mat4&
+-			{
+-				if (state[i] == 2)
+-					return world_[i];
+-
+-				if (state[i] == 1)
+-				{
+-					// cycle - treat as root
+-					world_[i] = root_ * asset.nodes[i].transform.ToMatrix();
+-					state[i] = 2;
+-					return world_[i];
+-				}
+-
+-				state[i] = 1;
+-
+-				const LevelNode& node = asset.nodes[i];
+-				if (!node.alive)
+-				{
+-					world_[i] = mathUtils::Mat4(1.0f);
+-					state[i] = 2;
+-					return world_[i];
+-				}
+-
+-				mathUtils::Mat4 parentWorld = root_;
+-				if (node.parent >= 0)
+-				{
+-					const std::size_t p = static_cast<std::size_t>(node.parent);
+-					if (p < n && asset.nodes[p].alive)
+-					{
+-						parentWorld = self(self, p);
+-					}
+-				}
+-
+-				world_[i] = parentWorld * node.transform.ToMatrix();
+-				state[i] = 2;
+-				return world_[i];
+-			};
+-
+-			for (std::size_t i = 0; i < n; ++i)
+-			{
+-				compute(compute, i);
+-			}
+-		}
++		rhi::TextureHandle TryGetTextureHandle_(ResourceManager& rm, std::string_view id) const noexcept
++		{
++			if (auto texRes = rm.Get<TextureResource>(id))
++			{
++				const auto& gpu = texRes->GetResource();
++				if (gpu.id != 0)
++				{
++					return rhi::TextureHandle{ static_cast<std::uint32_t>(gpu.id) };
++				}
++			}
++			return {};
++		}
++
++		rhi::TextureDescIndex GetOrCreateTextureDesc_(
++			ResourceManager& rm,
++			BindlessTable& bindless,
++			std::string_view textureId)
++		{
++			const std::string key{ textureId };
++
++			if (auto it = textureDesc_.find(key); it != textureDesc_.end())
++			{
++				return it->second;
++			}
++
++			const rhi::TextureHandle handle = TryGetTextureHandle_(rm, textureId);
++			if (!handle)
++			{
++				return 0;
++			}
++
++			const rhi::TextureDescIndex index = bindless.RegisterTexture(handle);
++			textureDesc_.emplace(key, index);
++			return index;
++		}
++
++		MaterialHandle GetMaterialHandle_(std::string_view materialId) const noexcept
++		{
++			if (materialId.empty())
++			{	
++				return {};
++			}
++
++			auto it = materialHandles_.find(std::string(materialId));
++			if (it == materialHandles_.end())
++			{
++				return {};
++			}
++			return it->second;
++		}
++
++		MeshHandle GetOrLoadMeshHandle_(const LevelAsset& asset, AssetManager& assets, const std::string& meshId) const
++		{
++			auto it = asset.meshes.find(meshId);
++			if (it == asset.meshes.end())
++			{
++				throw std::runtime_error("Level: node references unknown meshId: " + meshId);
++			}
++
++			MeshProperties p{};
++			p.filePath = it->second.path;
++			p.debugName = it->second.debugName;
++			return assets.LoadMeshAsync(meshId, std::move(p));
++		}
++
++		EntityHandle GetEntityForNode_(int nodeIndex) const noexcept
++		{
++			if (nodeIndex < 0)
++			{
++				return kNullEntity;
++			}
++
++			const std::size_t i = static_cast<std::size_t>(nodeIndex);
++			if (i >= nodeToEntity_.size())
++			{
++				return kNullEntity;
++			}
++
++			const EntityHandle e = nodeToEntity_[i];
++			if (e == kNullEntity)
++			{
++				return kNullEntity;
++			}
++
++			if (!ecs_.IsEntityValid(e))
++			{
++				return kNullEntity;
++			}
++
++			return e;
++		}
++
++		EntityHandle EnsureEntityForNode_(const LevelAsset& asset, int nodeIndex)
++		{
++			if (nodeIndex < 0)
++			{
++				return kNullEntity;
++			}
++
++			const std::size_t i = static_cast<std::size_t>(nodeIndex);
++			if (i >= asset.nodes.size())
++			{
++				return kNullEntity;
++			}
++
++			const LevelNode& node = asset.nodes[i];
++			if (!node.alive)
++			{
++				return kNullEntity;
++			}
++
++			if (nodeToEntity_.size() < asset.nodes.size())
++			{
++				nodeToEntity_.resize(asset.nodes.size(), kNullEntity);
++			}
++
++			EntityHandle e = nodeToEntity_[i];
++			if (e == kNullEntity || !ecs_.IsEntityValid(e))
++			{
++				e = ecs_.CreateEntity();
++				nodeToEntity_[i] = e;
++			}
++
++			if (world_.size() < asset.nodes.size())
++			{
++				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
++			}
++
++			ecs_.UpsertNodeData(e, nodeIndex, node.parent, node.transform, world_[i], Flags{ .alive = node.alive, .visible = node.visible });
++			return e;
++		}
++
++		void DestroyEntityForNode_(int nodeIndex)
++		{
++			if (nodeIndex < 0)
++			{
++				return;
++			}
++
++			const std::size_t i = static_cast<std::size_t>(nodeIndex);
++			if (i >= nodeToEntity_.size())
++			{
++				return;
++			}
++
++			const EntityHandle e = nodeToEntity_[i];
++			if (e != kNullEntity)
++			{
++				ecs_.DestroyEntity(e);
++			}
++			nodeToEntity_[i] = kNullEntity;
++		}
++
++		void SyncEntityRenderableForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex)
++		{
++			const EntityHandle e = GetEntityForNode_(nodeIndex);
++			if (e == kNullEntity)
++			{
++				return;
++			}
++
++			const int drawIndex = GetNodeDrawIndex(nodeIndex);
++			if (drawIndex < 0 || static_cast<std::size_t>(drawIndex) >= scene.drawItems.size())
++			{
++				if (ecs_.HasRenderable(e))
++				{
++					ecs_.RemoveRenderable(e);
++				}
++				return;
++			}
++
++			const DrawItem& di = scene.drawItems[static_cast<std::size_t>(drawIndex)];
++			ecs_.UpsertRenderable(e, Renderable{ .mesh = di.mesh, .material = di.material, .drawIndex = drawIndex });
++
++			if (nodeIndex >= 0)
++			{
++				const std::size_t i = static_cast<std::size_t>(nodeIndex);
++				if (i < asset.nodes.size())
++				{
++					const LevelNode& node = asset.nodes[i];
++					ecs_.UpsertNodeData(e, nodeIndex, node.parent, node.transform, world_[i], Flags{ .alive = node.alive, .visible = node.visible });
++				}
++			}
++		}
++
++		void EnsureDrawForNode_(const LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex)
++		{
++			if (nodeIndex < 0) 
++			{
++				return;
++			}
++
++			const std::size_t i = static_cast<std::size_t>(nodeIndex);
++			if (i >= asset.nodes.size())
++			{
++				return;
++			}
++
++			const LevelNode& node = asset.nodes[i];
++			if (!node.alive || !node.visible || node.mesh.empty())
++			{
++				DestroyDrawForNode_(scene, nodeIndex);
++				return;
++			}
++
++			if (nodeToDraw_.size() < asset.nodes.size())
++			{	
++				nodeToDraw_.resize(asset.nodes.size(), -1);
++			}
++			if (world_.size() < asset.nodes.size())
++			{	
++				world_.resize(asset.nodes.size(), mathUtils::Mat4(1.0f));
++			}
++
++			const int existing = nodeToDraw_[i];
++			if (existing >= 0 && static_cast<std::size_t>(existing) < scene.drawItems.size())
++			{
++				DrawItem& item = scene.drawItems[static_cast<std::size_t>(existing)];
++				item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
++				item.material = GetMaterialHandle_(node.material);
++				return;
++			}
++
++			// Spawn new draw item
++			DrawItem item{};
++			item.mesh = GetOrLoadMeshHandle_(asset, assets, node.mesh);
++			item.material = GetMaterialHandle_(node.material);
++			item.transform.useMatrix = true;
++			item.transform.matrix = world_[i]; // will be updated on next SyncTransformsIfDirty()
++
++			const int drawIndex = static_cast<int>(scene.drawItems.size());
++			scene.AddDraw(item);
++
++			// Maintain mapping vectors aligned with scene.drawItems.
++			if (drawToNode_.size() < scene.drawItems.size())
++			{	
++				drawToNode_.resize(scene.drawItems.size(), -1);
++			}
++			drawToNode_[static_cast<std::size_t>(drawIndex)] = nodeIndex;
++			nodeToDraw_[i] = drawIndex;
++		}
++
++		void DestroyDrawForNode_(Scene& scene, int nodeIndex)
++		{
++			if (nodeIndex < 0) 
++			{
++				return;
++			}
++
++			const std::size_t nodeIdx = static_cast<std::size_t>(nodeIndex);
++			if (nodeIdx >= nodeToDraw_.size())
++			{
++				return;
++			}
++
++			const int di = nodeToDraw_[nodeIdx];
++			if (di < 0)
++			{
++				return;
++			}
++
++			const std::size_t drawIndex = static_cast<std::size_t>(di);
++			if (drawIndex >= scene.drawItems.size())
++			{
++				nodeToDraw_[nodeIdx] = -1;
++				return;
++			}
++
++			const std::size_t last = scene.drawItems.size() - 1;
++			if (drawIndex != last)
++			{
++				std::swap(scene.drawItems[drawIndex], scene.drawItems[last]);
++
++				if (last < drawToNode_.size())
++				{
++					const int movedNode = drawToNode_[last];
++					if (drawIndex < drawToNode_.size())
++					{
++						drawToNode_[drawIndex] = movedNode;
++					}
++					if (movedNode >= 0 && static_cast<std::size_t>(movedNode) < nodeToDraw_.size())
++					{
++						nodeToDraw_[static_cast<std::size_t>(movedNode)] = static_cast<int>(drawIndex);
++					}
++
++					const EntityHandle movedEntity = GetEntityForNode_(movedNode);
++					if (movedEntity != kNullEntity)
++					{
++						ecs_.UpsertRenderable(movedEntity, Renderable{
++							.mesh = scene.drawItems[drawIndex].mesh,
++							.material = scene.drawItems[drawIndex].material,
++							.drawIndex = static_cast<int>(drawIndex)
++						});
++					}
++				}
++			}
++
++			scene.drawItems.pop_back();
++			if (!drawToNode_.empty())
++			{	
++				drawToNode_.pop_back();
++			}
++
++			nodeToDraw_[nodeIdx] = -1;
++		}
++
++		std::vector<int> CollectSubtree_(const LevelAsset& asset, int rootNodeIndex) const
++		{
++			std::vector<int> out;
++			if (rootNodeIndex < 0)
++				return out;
++
++			const std::size_t nodeCount = asset.nodes.size();
++			if (static_cast<std::size_t>(rootNodeIndex) >= nodeCount)
++			{	
++				return out;
++			}
++
++			// children adjacency (alive only)
++			std::vector<std::vector<int>> children;
++			children.resize(nodeCount);
++
++			for (std::size_t i = 0; i < nodeCount; ++i)
++			{
++				const LevelNode& node = asset.nodes[i];
++				if (!node.alive)
++					continue;
++				if (node.parent < 0)
++					continue;
++
++				const std::size_t p = static_cast<std::size_t>(node.parent);
++				if (p >= nodeCount)
++					continue;
++				if (!asset.nodes[p].alive)
++					continue;
++
++				children[p].push_back(static_cast<int>(i));
++			}
++
++			std::vector<int> stack;
++			stack.push_back(rootNodeIndex);
++
++			while (!stack.empty())
++			{
++				const int cur = stack.back();
++				stack.pop_back();
++
++				if (cur < 0 || static_cast<std::size_t>(cur) >= nodeCount)
++					continue;
++				if (!asset.nodes[static_cast<std::size_t>(cur)].alive)
++					continue;
++
++				out.push_back(cur);
++
++				for (int ch : children[static_cast<std::size_t>(cur)])
++				{
++					stack.push_back(ch);
++				}
++			}
++
++			return out;
++		}
++
++		void ValidateRuntimeMappings_(const LevelAsset& asset, const Scene& scene) const noexcept
++		{
++#ifndef NDEBUG
++			auto MatricesNearlyEqual = [](const mathUtils::Mat4& a, const mathUtils::Mat4& b) noexcept
++				{
++					for (std::size_t row = 0; row < 4; ++row)
++					{
++						for (std::size_t col = 0; col < 4; ++col)
++						{
++							if (std::fabs(a(row, col) - b(row, col)) > 1e-4f)
++							{
++								return false;
++							}
++						}
++					}
++					return true;
++				};
++
++			assert(nodeToDraw_.size() >= asset.nodes.size());
++			assert(nodeToEntity_.size() >= asset.nodes.size());
++			assert(world_.size() >= asset.nodes.size());
++			assert(drawToNode_.size() == scene.drawItems.size());
++			assert(ecs_.GetRenderableCount() == scene.drawItems.size());
++			assert(scene.editorSelectedDrawItem == GetNodeDrawIndex(scene.editorSelectedNode));
++			assert(scene.editorReflectionCaptureOwnerDrawItem == GetNodeDrawIndex(scene.editorReflectionCaptureOwnerNode));
++
++			for (std::size_t drawIndex = 0; drawIndex < drawToNode_.size(); ++drawIndex)
++			{
++				const int nodeIndex = drawToNode_[drawIndex];
++				assert(nodeIndex >= 0);
++				assert(static_cast<std::size_t>(nodeIndex) < asset.nodes.size());
++				assert(nodeToDraw_[static_cast<std::size_t>(nodeIndex)] == static_cast<int>(drawIndex));
++
++				const EntityHandle entity = GetEntityForNode_(nodeIndex);
++				assert(entity != kNullEntity);
++				assert(ecs_.HasRenderable(entity));
++				Renderable renderable{};
++				assert(ecs_.TryGetRenderable(entity, renderable));
++				assert(renderable.drawIndex == static_cast<int>(drawIndex));
++				assert(renderable.mesh == scene.drawItems[drawIndex].mesh);
++				assert(renderable.material == scene.drawItems[drawIndex].material);
++			}
++
++			for (std::size_t i = 0; i < asset.nodes.size(); ++i)
++			{
++				const LevelNode& node = asset.nodes[i];
++				const int drawIndex = nodeToDraw_[i];
++				const EntityHandle entity = nodeToEntity_[i];
++
++				if (!node.alive)
++				{
++					assert(drawIndex == -1);
++					assert(entity == kNullEntity || !ecs_.IsEntityValid(entity));
++					continue;
++				}
++
++				if (!node.alive || !node.visible || node.mesh.empty())
++					assert(entity != kNullEntity);
++				assert(ecs_.IsEntityValid(entity));
++
++				LevelNodeId nodeId{};
++				ParentIndex parent{};
++				WorldTransform worldTransform{};
++				Flags flags{};
++				assert(ecs_.TryGetLevelNodeId(entity, nodeId));
++				assert(ecs_.TryGetParentIndex(entity, parent));
++				assert(ecs_.TryGetWorldTransform(entity, worldTransform));
++				assert(ecs_.TryGetFlags(entity, flags));
++				assert(nodeId.index == static_cast<int>(i));
++				assert(parent.parent == node.parent);
++				assert(flags.alive == node.alive);
++				assert(flags.visible == node.visible);
++				assert(MatricesNearlyEqual(worldTransform.world, world_[i]));
++
++				if (!node.visible || node.mesh.empty())
++				{
++					assert(drawIndex == -1);
++					assert(!ecs_.HasRenderable(entity));
++					continue;
++				}
++
++				assert(drawIndex >= 0);
++				assert(static_cast<std::size_t>(drawIndex) < scene.drawItems.size());
++				assert(static_cast<std::size_t>(drawIndex) < drawToNode_.size());
++				assert(drawToNode_[static_cast<std::size_t>(drawIndex)] == static_cast<int>(i));
++				assert(ecs_.HasRenderable(entity));
++
++				Renderable renderable{};
++				assert(ecs_.TryGetRenderable(entity, renderable));
++				assert(renderable.drawIndex == drawIndex);
++				assert(renderable.mesh == scene.drawItems[static_cast<std::size_t>(drawIndex)].mesh);
++				assert(renderable.material == scene.drawItems[static_cast<std::size_t>(drawIndex)].material);
++			}
++#endif
++		}
++
++		void RecomputeWorld_(const LevelAsset& asset)
++		{
++			const std::size_t n = asset.nodes.size();
++			world_.resize(n, mathUtils::Mat4(1.0f));
++
++			std::vector<std::uint8_t> state;
++			state.resize(n, 0); // 0=unvisited, 1=visiting, 2=done
++
++			auto compute = [&](auto&& self, std::size_t i) -> const mathUtils::Mat4&
++			{
++				if (state[i] == 2)
++					return world_[i];
++
++				if (state[i] == 1)
++				{
++					// cycle - treat as root
++					world_[i] = root_ * asset.nodes[i].transform.ToMatrix();
++					state[i] = 2;
++					return world_[i];
++				}
++
++				state[i] = 1;
++
++				const LevelNode& node = asset.nodes[i];
++				if (!node.alive)
++				{
++					world_[i] = mathUtils::Mat4(1.0f);
++					state[i] = 2;
++					return world_[i];
++				}
++
++				mathUtils::Mat4 parentWorld = root_;
++				if (node.parent >= 0)
++				{
++					const std::size_t p = static_cast<std::size_t>(node.parent);
++					if (p < n && asset.nodes[p].alive)
++					{
++						parentWorld = self(self, p);
++					}
++				}
++
++				world_[i] = parentWorld * node.transform.ToMatrix();
++				state[i] = 2;
++				return world_[i];
++			};
++
++			for (std::size_t i = 0; i < n; ++i)
++			{
++				compute(compute, i);
++			}
++		}
+-- 
+2.47.3
+

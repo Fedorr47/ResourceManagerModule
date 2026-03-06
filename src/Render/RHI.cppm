@@ -28,6 +28,8 @@ export namespace rhi
 	{
 		std::uint32_t id{ 0 };
 		explicit operator bool() const noexcept { return id != 0; }
+		friend bool operator==(const Handle&, const Handle&) noexcept = default;
+		friend bool operator!=(const Handle&, const Handle&) noexcept = default;
 	};
 
 	struct BufferTag {};
@@ -392,7 +394,7 @@ export namespace rhi
 		TextureHandle texture{};
 	};
 
-	using Command = std::variant<
+	using Command = std::variant <
 		CommandBeginPass,
 		CommandEndPass,
 		CommandSetViewport,
@@ -414,7 +416,7 @@ export namespace rhi
 		CommandDX12ImGuiRender,
 		CommandDrawIndexed,
 		CommandDraw,
-		CommandBindTexture2DArray>;
+		CommandBindTexture2DArray > ;
 
 	struct CommandList
 	{
