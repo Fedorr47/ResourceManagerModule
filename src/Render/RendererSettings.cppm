@@ -55,7 +55,7 @@ export namespace rendern
 
 		// Planar reflections (DX12 MVP): mark mirror materials with MaterialPerm::PlanarMirror.
 		bool enablePlanarReflections{ true };
-		std::uint32_t planarReflectionMaxMirrors{ 1 };
+		std::uint32_t planarReflectionMaxMirrors{ 5 };
 
 		bool drawLightGizmos{ false };
 		bool debugDrawDepthTest{ true };

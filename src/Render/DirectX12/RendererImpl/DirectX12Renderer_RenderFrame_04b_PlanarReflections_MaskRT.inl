@@ -133,50 +133,44 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 					ctx.commandList.SetStencilRef(0u);
 					ctx.commandList.SetState(planarReflectedState_);
 
-					/*
-					// --- Skybox in planar reflection (deferred path) ---
-					// Fill mirror background with skybox first (stencil-gated), then draw reflected meshes over it.
+					// --- Skybox in planar reflection: draw into reflColor (background) ---
+	// reflDepth was cleared to 1.0f, so regular skybox depth-test works here.
 					if (scene.skyboxDescIndex != 0)
 					{
-						// Build view without translation (skybox is directional), then apply the same reflection.
-						mathUtils::Mat4 viewNoTranslation = view;
-						viewNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
+						const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
+						const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
+						const mathUtils::Vec3 camUpRefl = ReflectVector(scene.camera.up, planeN);
+
+						const mathUtils::Mat4 viewRefl = mathUtils::LookAt(
+							camPosRefl,
+							camPosRefl + camFwdRefl,
+							camUpRefl);
+
+						mathUtils::Mat4 viewReflNoTranslation = viewRefl;
+						viewReflNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
 						const mathUtils::Mat4 viewProjSkyReflT =
-							mathUtils::Transpose((proj * viewNoTranslation) * reflectW);
+							mathUtils::Transpose(proj * viewReflNoTranslation);
 
-						SkyboxConstants skyConsts{};
-						std::memcpy(skyConsts.uViewProj.data(),
-							mathUtils::ValuePtr(viewProjSkyReflT),
-							sizeof(float) * 16);
+						SkyboxConstants sky{};
+						std::memcpy(sky.uViewProj.data(), mathUtils::ValuePtr(viewProjSkyReflT), sizeof(float) * 16);
 
 						rhi::GraphicsState skyState = skyboxState_;
-						// Gate skybox to mirror pixels.
-						skyState.depth.stencil.enable = true;
-						skyState.depth.stencil.readMask = 0x01u;
-						skyState.depth.stencil.writeMask = 0x00u;
-						skyState.depth.stencil.front.failOp = rhi::StencilOp::Keep;
-						skyState.depth.stencil.front.depthFailOp = rhi::StencilOp::Keep;
-						skyState.depth.stencil.front.passOp = rhi::StencilOp::Keep;
-						skyState.depth.stencil.front.compareOp = rhi::CompareOp::Equal;
-						skyState.depth.stencil.back = skyState.depth.stencil.front;
+						// No stencil needed here: reflColor will be masked later by maskTex in PlanarComposite.
+						skyState.depth.stencil.enable = false;
 
 						ctx.commandList.SetState(skyState);
-						ctx.commandList.SetStencilRef(0x01u);
-
 						ctx.commandList.BindPipeline(psoSkybox_);
 						ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex);
 						ctx.commandList.BindInputLayout(skyboxMesh_.layout);
 						ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
 						ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &skyConsts, 1 }));
+						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &sky, 1 }));
 						ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0, 1, 0);
 
-						// Restore reflected state for the mesh batches.
+						// Restore for reflected meshes
 						ctx.commandList.SetState(planarReflectedState_);
-						ctx.commandList.SetStencilRef(0x01u);
 					}
-					*/
 
 					// Bind shadows + lights like in the forward main pass.
 					ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(shadowRG));
@@ -334,7 +328,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			att.clearDesc.clearStencil = false;
 
 			graph.AddPass(std::string("PlanarComposite_") + std::to_string(mirrorIndex), std::move(att),
-				[this, maskTex, reflColor](renderGraph::PassContext& ctx)
+				[this, &scene, view, proj, maskTex, reflColor, planeN, planeD](renderGraph::PassContext& ctx)
 				{
 					const auto e = ctx.passExtent;
 					ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));

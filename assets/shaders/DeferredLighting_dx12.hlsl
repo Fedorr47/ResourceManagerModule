@@ -448,7 +448,7 @@ CubeFaceUV CubeDirToFaceUV(float3 dir)
 {
 	float3 a = abs(dir);
 	CubeFaceUV o;
-	float2 st;
+	float2 st; // [-1..1], +Y up
 
 	if (a.x >= a.y && a.x >= a.z)
 	{
@@ -492,43 +492,49 @@ CubeFaceUV CubeDirToFaceUV(float3 dir)
 			st = float2(-dir.x, dir.y) * inv;
 		}
 	}
-
-    // [-1..1] -> [0..1]
-	o.uv = st * 0.5f + 0.5f;
+	
+	// st.y is +up; texture UV is +down in D3D. Also flip X to match FaceView() basis.
+	o.uv = float2(-st.x, -st.y) * 0.5f + 0.5f;
 	return o;
 }
 
-// Simple point shadow: sample normalized distance cubemap (2DArray[6]) with a seam-fade.
-// Stored shadow is (distance / range) in [0..1], with 1 meaning "far" (no occluder).
-float ShadowPoint_SimpleSeam(Texture2DArray<float> shadowCube,
-                            float3 lightPos,
-                            float range,
-                            float3 worldPos,
-                            float biasTexels)
+float SamplePointShadow(Texture2DArray<float> distArr, float3 dir)
 {
-	float3 toP = worldPos - lightPos;
-	float dist = length(toP);
-	if (dist <= 1e-6f)
+	CubeFaceUV fu = CubeDirToFaceUV(dir);
+    // If we are outside the face, treat as "far" (fully lit).
+	if (fu.uv.x < 0.0f || fu.uv.x > 1.0f || fu.uv.y < 0.0f || fu.uv.y > 1.0f)
 		return 1.0f;
 
-	float3 dir = toP / dist;
-	CubeFaceUV fu = CubeDirToFaceUV(dir);
+	uint w, h, layers, mips;
+	distArr.GetDimensions(0, w, h, layers, mips);
 
-	uint w, h, layers;
-	shadowCube.GetDimensions(w, h, layers);
-	float2 texel = 1.0f / float2(max(w, 1u), max(h, 1u));
+	int2 xy = int2(fu.uv * float2((float) w, (float) h));
+	xy = clamp(xy, int2(0, 0), int2((int) w - 1, (int) h - 1));
 
-	float bias = biasTexels * max(texel.x, texel.y);
-	float d = saturate(dist / max(range, 1e-6f));
-	float z = d - bias;
+	return distArr.Load(int4(xy, (int) fu.face, 0)).r;
+}
 
-	float stored = shadowCube.SampleLevel(gPointClamp, float3(fu.uv, fu.face), 0.0f);
-	float shadow = (z <= stored) ? 1.0f : 0.0f;
+float ShadowPoint_SimpleSeam(Texture2DArray<float> distArr,
+                             float3 lightPos, float range,
+                             float3 worldPos,
+                             float biasTexels)
+{
+	float3 v = worldPos - lightPos;
+	float d = length(v);
+	if (d >= range)
+		return 1.0f;
 
-    // Fade near edges of each face to reduce seams.
-	float edge = min(min(fu.uv.x, fu.uv.y), min(1.0f - fu.uv.x, 1.0f - fu.uv.y));
-	float fade = saturate(edge / (2.0f * max(texel.x, texel.y)));
-	return lerp(1.0f, shadow, fade);
+	float3 dir = v / max(d, 1e-6f);
+	float nd = d / max(range, 1e-6f);
+
+	uint w, h, layers, mips;
+	distArr.GetDimensions(0, w, h, layers, mips);
+	const float invRes = 1.0f / float(max(w, h));
+	const float biasNorm = biasTexels * invRes;
+
+	float stored = SamplePointShadow(distArr, dir);
+	const float compare = max(nd - biasNorm, 0.0f);
+	return (compare <= stored) ? 1.0f : 0.0f;
 }
 
 float PointShadowFactor(uint slot, ShadowDataSB sd, float3 worldPos, float biasTexels)

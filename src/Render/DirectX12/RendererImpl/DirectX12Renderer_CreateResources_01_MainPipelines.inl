@@ -306,7 +306,7 @@
 			psoSSAO_ = psoCache_.GetOrCreate("PSO_SSAO", vsSSAO, psSSAO);
 		}
 		{
-			const std::vector<std::string> defs = { "FORWARD_SSAO_FROM_DEPTH=1" };
+			const std::vector<std::string> defs = { "FORWARD_SSAO_FROM_DEPTH=0" };
 
 			const auto vsSSAOForward = shaderLibrary_.GetOrCreateShader(ShaderKey{
 				.stage = rhi::ShaderStage::Vertex,

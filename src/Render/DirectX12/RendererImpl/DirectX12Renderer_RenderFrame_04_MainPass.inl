@@ -1827,6 +1827,26 @@ else
 
 			constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
 
+			float envSourceForGBuffer = 0.0f; // 0 = Skybox, 1 = ReflectionCapture
+			float probeIdxNForGBuffer = 0.0f; // reserved for future multi-probe deferred path
+			if (settings_.enableReflectionCapture &&
+				reflectionCubeDescIndex_ != 0 &&
+				batch.materialHandle.id != 0)
+			{
+				const auto& mat = scene.GetMaterial(batch.materialHandle);
+				if (mat.envSource == EnvSource::ReflectionCapture &&
+					batch.reflectionProbeIndex >= 0)
+				{
+					envSourceForGBuffer = 1.0f;
+					// DeferredLighting_dx12.hlsl currently does not use envSel.y yet,
+					// but keep writing a stable normalized probe index into GBuffer3.y
+					// so the buffer contents are no longer misleading and future multi-probe
+					// work has the data available.
+					probeIdxNForGBuffer =
+						std::min(1.0f, static_cast<float>(batch.reflectionProbeIndex + 1) / 255.0f);
+				}
+			}
+
 			constants.uCounts = {
 				static_cast<float>(lightCount),
 				static_cast<float>(spotShadows.size()),
@@ -1841,8 +1861,9 @@ else
 				settings_.shadowSlopeScaleTexels
 			};
 
-			constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
-			constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+			constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, envSourceForGBuffer };
+			constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, probeIdxNForGBuffer };
+
 			if (usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 &&
 				static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
 			{
