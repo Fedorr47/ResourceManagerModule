@@ -296,4 +296,28 @@ export namespace rendern
 		float outlineWorldOffset = 0.025f;
 		bool isTransparent = false;
 	};
+
+	struct SSAOConstants
+	{
+		std::array<float, 16> uInvViewProj{};
+		mathUtils::Vec4 uParams{};  // radius, bias, strength, power
+		mathUtils::Vec4 uInvSize{}; // 1/w, 1/h, 0,0
+	};
+	static_assert(sizeof(SSAOConstants) % 16 == 0);
+
+	struct SSAOBlurConstants
+	{
+		mathUtils::Vec4 uInvSize{};
+		mathUtils::Vec4 uParams{}; // depthThreshold
+	};
+	static_assert(sizeof(SSAOBlurConstants) % 16 == 0);
+
+	struct alignas(16) FogConstants
+	{
+		std::array<float, 16> uInvViewProj{};
+		std::array<float, 4> uCameraPos{}; // xyz + pad
+		std::array<float, 4> uFogParams{}; // start, end, density, mode
+		std::array<float, 4> uFogColor{};  // rgb + enabled(0/1)
+	};
+	static_assert(sizeof(FogConstants) % 16 == 0);
 }

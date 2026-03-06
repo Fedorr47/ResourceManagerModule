@@ -23,13 +23,6 @@ if (canDeferred)
 	const mathUtils::Vec3 camPosLocal = scene.camera.position;
 	const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
 
-	struct DeferredReflectionProbeGpu
-	{
-		std::array<float, 4> boxMin{};
-		std::array<float, 4> boxMax{};
-		std::array<float, 4> capturePosDesc{}; // xyz = probe position, w = descIndex bits
-	};
-	static_assert(sizeof(DeferredReflectionProbeGpu) == 48);
 	std::vector<DeferredReflectionProbeGpu> deferredReflectionProbes;
 	std::vector<int> deferredReflectionProbeRemap;
 	deferredReflectionProbeRemap.assign(reflectionProbes_.size(), -1);
@@ -250,172 +243,172 @@ if (canDeferred)
 		att.clearDesc.stencil = 0;
 
 		graph.AddPass("GBufferPass", std::move(att),
-			[this, 
-			&scene, 
-			dirLightViewProj, 
-			lightCount, 
-			mainBatches, 
-			instStride, 
-			gbuf0, 
-			gbuf1, 
-			gbuf2, 
-			gbuf3, 
-			activeReflectionProbeCount, 
+			[this,
+			&scene,
+			dirLightViewProj,
+			lightCount,
+			mainBatches,
+			instStride,
+			gbuf0,
+			gbuf1,
+			gbuf2,
+			gbuf3,
+			activeReflectionProbeCount,
 			deferredReflectionProbeRemap](renderGraph::PassContext& ctx)
+		{
+			const auto extent = ctx.passExtent;
+
+			ctx.commandList.SetViewport(0, 0,
+				static_cast<int>(extent.width),
+				static_cast<int>(extent.height));
+
+			ctx.commandList.SetState(state_);
+			ctx.commandList.BindPipeline(psoDeferredGBuffer_);
+
+			const float aspect = extent.height
+				? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
+				: 1.0f;
+
+			const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
+			const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+			const mathUtils::Mat4 viewProj = proj * view;
+
+			const mathUtils::Vec3 camPosLocal = scene.camera.position;
+			const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+
+			// Flags must match shader.
+			constexpr std::uint32_t kFlagUseTex = 1u << 0;
+			constexpr std::uint32_t kFlagUseNormal = 1u << 2;
+			constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
+			constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
+			constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
+			constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
+
+			for (const Batch& batch : mainBatches)
 			{
-				const auto extent = ctx.passExtent;
-
-				ctx.commandList.SetViewport(0, 0,
-					static_cast<int>(extent.width),
-					static_cast<int>(extent.height));
-
-				ctx.commandList.SetState(state_);
-				ctx.commandList.BindPipeline(psoDeferredGBuffer_);
-
-				const float aspect = extent.height
-					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-					: 1.0f;
-
-				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-				const mathUtils::Mat4 viewProj = proj * view;
-
-				const mathUtils::Vec3 camPosLocal = scene.camera.position;
-				const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
-
-				// Flags must match shader.
-				constexpr std::uint32_t kFlagUseTex = 1u << 0;
-				constexpr std::uint32_t kFlagUseNormal = 1u << 2;
-				constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
-				constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
-				constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
-				constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
-
-				for (const Batch& batch : mainBatches)
+				if (!batch.mesh || batch.instanceCount == 0)
 				{
-					if (!batch.mesh || batch.instanceCount == 0)
-					{
-						continue;
-					}
-
-					MaterialPerm perm = MaterialPerm::None;
-					if (batch.materialHandle.id != 0)
-					{
-						perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
-					}
-					else
-					{
-						if (batch.material.albedoDescIndex != 0)
-						{
-							perm = perm | MaterialPerm::UseTex;
-						}
-					}
-
-					std::uint32_t flags = 0u;
-					if (HasFlag(perm, MaterialPerm::UseTex) && batch.material.albedoDescIndex != 0)
-					{
-						flags |= kFlagUseTex;
-					}
-					if (batch.material.normalDescIndex != 0)
-					{
-						flags |= kFlagUseNormal;
-					}
-					if (batch.material.metalnessDescIndex != 0)
-					{
-						flags |= kFlagUseMetalTex;
-					}
-					if (batch.material.roughnessDescIndex != 0)
-					{
-						flags |= kFlagUseRoughTex;
-					}
-					if (batch.material.aoDescIndex != 0)
-					{
-						flags |= kFlagUseAOTex;
-					}
-					if (batch.material.emissiveDescIndex != 0)
-					{
-						flags |= kFlagUseEmissiveTex;
-					}
-
-					float envSourceForGBuffer = 0.0f; // 0 = Skybox, 1 = ReflectionCapture
-					float probeIdxNForGBuffer = 0.0f; // normalized compact probe index in [0..1]
-
-					if (settings_.enableReflectionCapture &&
-						batch.materialHandle.id != 0 &&
-						batch.reflectionProbeIndex >= 0 &&
-						static_cast<std::size_t>(batch.reflectionProbeIndex) < deferredReflectionProbeRemap.size() &&
-						activeReflectionProbeCount > 0u)
-					{
-						const auto& mat = scene.GetMaterial(batch.materialHandle);
-						if (mat.envSource == EnvSource::ReflectionCapture)
-						{
-							const int compactProbeIndex =
-								deferredReflectionProbeRemap[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-							if (compactProbeIndex >= 0)
-							{
-								envSourceForGBuffer = 1.0f;
-								probeIdxNForGBuffer =
-									(static_cast<float>(compactProbeIndex) + 0.5f) /
-									static_cast<float>(activeReflectionProbeCount);
-							}
-						}
-					}
-
-					// Material textures via descriptors (same slots as forward).
-					ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
-					ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
-					ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
-					ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
-					ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
-					ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
-
-					PerBatchConstants constants{};
-					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
-					const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
-					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
-					std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
-
-					constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.0f };
-					constants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
-					constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
-
-					constants.uMaterialFlags = { 0.0f, 0.0f, 0.0f, AsFloatBits(flags) };
-					constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
-					constants.uCounts = {
-						static_cast<float>(lightCount),
-						0.0f,
-						0.0f,
-						static_cast<float>(activeReflectionProbeCount)
-					};
-					constants.uShadowBias = { 0.0f, 0.0f, 0.0f, 0.0f };
-					constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, envSourceForGBuffer };
-					constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, probeIdxNForGBuffer };
-
-
-					// Bindless indices for DeferredGBuffer_dx12.hlsl (space1 SRV heap).
-					constants.uTexIndices0 = {
-						static_cast<float>(batch.material.albedoDescIndex),
-						static_cast<float>(batch.material.normalDescIndex),
-						static_cast<float>(batch.material.metalnessDescIndex),
-						static_cast<float>(batch.material.roughnessDescIndex)
-					};
-					constants.uTexIndices1 = {
-						static_cast<float>(batch.material.aoDescIndex),
-						static_cast<float>(batch.material.emissiveDescIndex),
-						0.0f,
-						0.0f
-					};
-
-					// IA (instanced)
-					ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
-					ctx.commandList.BindVertexBuffer(0, batch.mesh->vertexBuffer, batch.mesh->vertexStrideBytes, 0);
-					ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batch.instanceOffset * instStride);
-					ctx.commandList.BindIndexBuffer(batch.mesh->indexBuffer, batch.mesh->indexType, 0);
-
-					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
-					ctx.commandList.DrawIndexed(batch.mesh->indexCount, batch.mesh->indexType, 0, 0, batch.instanceCount, 0);
+					continue;
 				}
-			});
+
+				MaterialPerm perm = MaterialPerm::None;
+				if (batch.materialHandle.id != 0)
+				{
+					perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
+				}
+				else
+				{
+					if (batch.material.albedoDescIndex != 0)
+					{
+						perm = perm | MaterialPerm::UseTex;
+					}
+				}
+
+				std::uint32_t flags = 0u;
+				if (HasFlag(perm, MaterialPerm::UseTex) && batch.material.albedoDescIndex != 0)
+				{
+					flags |= kFlagUseTex;
+				}
+				if (batch.material.normalDescIndex != 0)
+				{
+					flags |= kFlagUseNormal;
+				}
+				if (batch.material.metalnessDescIndex != 0)
+				{
+					flags |= kFlagUseMetalTex;
+				}
+				if (batch.material.roughnessDescIndex != 0)
+				{
+					flags |= kFlagUseRoughTex;
+				}
+				if (batch.material.aoDescIndex != 0)
+				{
+					flags |= kFlagUseAOTex;
+				}
+				if (batch.material.emissiveDescIndex != 0)
+				{
+					flags |= kFlagUseEmissiveTex;
+				}
+
+				float envSourceForGBuffer = 0.0f; // 0 = Skybox, 1 = ReflectionCapture
+				float probeIdxNForGBuffer = 0.0f; // normalized compact probe index in [0..1]
+
+				if (settings_.enableReflectionCapture &&
+					batch.materialHandle.id != 0 &&
+					batch.reflectionProbeIndex >= 0 &&
+					static_cast<std::size_t>(batch.reflectionProbeIndex) < deferredReflectionProbeRemap.size() &&
+					activeReflectionProbeCount > 0u)
+				{
+					const auto& mat = scene.GetMaterial(batch.materialHandle);
+					if (mat.envSource == EnvSource::ReflectionCapture)
+					{
+						const int compactProbeIndex =
+							deferredReflectionProbeRemap[static_cast<std::size_t>(batch.reflectionProbeIndex)];
+						if (compactProbeIndex >= 0)
+						{
+							envSourceForGBuffer = 1.0f;
+							probeIdxNForGBuffer =
+								(static_cast<float>(compactProbeIndex) + 0.5f) /
+								static_cast<float>(activeReflectionProbeCount);
+						}
+					}
+				}
+
+				// Material textures via descriptors (same slots as forward).
+				ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
+				ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
+				ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
+				ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
+				ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
+				ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
+
+				PerBatchConstants constants{};
+				const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
+				const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
+				std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+				std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+
+				constants.uCameraAmbient = { camPosLocal.x, camPosLocal.y, camPosLocal.z, 0.0f };
+				constants.uCameraForward = { camFLocal.x, camFLocal.y, camFLocal.z, 0.0f };
+				constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
+
+				constants.uMaterialFlags = { 0.0f, 0.0f, 0.0f, AsFloatBits(flags) };
+				constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
+				constants.uCounts = {
+					static_cast<float>(lightCount),
+					0.0f,
+					0.0f,
+					static_cast<float>(activeReflectionProbeCount)
+				};
+				constants.uShadowBias = { 0.0f, 0.0f, 0.0f, 0.0f };
+				constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, envSourceForGBuffer };
+				constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, probeIdxNForGBuffer };
+
+
+				// Bindless indices for DeferredGBuffer_dx12.hlsl (space1 SRV heap).
+				constants.uTexIndices0 = {
+					static_cast<float>(batch.material.albedoDescIndex),
+					static_cast<float>(batch.material.normalDescIndex),
+					static_cast<float>(batch.material.metalnessDescIndex),
+					static_cast<float>(batch.material.roughnessDescIndex)
+				};
+				constants.uTexIndices1 = {
+					static_cast<float>(batch.material.aoDescIndex),
+					static_cast<float>(batch.material.emissiveDescIndex),
+					0.0f,
+					0.0f
+				};
+
+				// IA (instanced)
+				ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
+				ctx.commandList.BindVertexBuffer(0, batch.mesh->vertexBuffer, batch.mesh->vertexStrideBytes, 0);
+				ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batch.instanceOffset * instStride);
+				ctx.commandList.BindIndexBuffer(batch.mesh->indexBuffer, batch.mesh->indexType, 0);
+
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+				ctx.commandList.DrawIndexed(batch.mesh->indexCount, batch.mesh->indexType, 0, 0, batch.instanceCount, 0);
+			}
+		});
 	}
 
 	// --- SSAO (v1): fullscreen AO from depth+normal, then depth-aware blur ---
@@ -432,20 +425,6 @@ if (canDeferred)
 		.debugName = "SSAO_Blur"
 		});
 
-	struct SSAOConstants
-	{
-		std::array<float, 16> uInvViewProj{};
-		mathUtils::Vec4 uParams{};  // radius, bias, strength, power
-		mathUtils::Vec4 uInvSize{}; // 1/w, 1/h, 0,0
-	};
-	static_assert(sizeof(SSAOConstants) % 16 == 0);
-
-	struct SSAOBlurConstants
-	{
-		mathUtils::Vec4 uInvSize{};
-		mathUtils::Vec4 uParams{}; // depthThreshold
-	};
-	static_assert(sizeof(SSAOBlurConstants) % 16 == 0);
 
 	// SSAO
 	{
@@ -667,14 +646,6 @@ if (canDeferred)
 			.debugName = "SceneColor_Fog"
 			});
 
-		struct alignas(16) FogConstants
-		{
-			std::array<float, 16> uInvViewProj{};
-			std::array<float, 4> uCameraPos{}; // xyz + pad
-			std::array<float, 4> uFogParams{}; // start, end, density, mode
-			std::array<float, 4> uFogColor{};  // rgb + enabled(0/1)
-		};
-		static_assert(sizeof(FogConstants) % 16 == 0);
 
 		FogConstants c{};
 		std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
@@ -1323,20 +1294,6 @@ else
 			.debugName = "ForwardSSAO_Blur"
 			});
 
-		struct SSAOConstants
-		{
-			std::array<float, 16> uInvViewProj{};
-			mathUtils::Vec4 uParams{};
-			mathUtils::Vec4 uInvSize{};
-		};
-		static_assert(sizeof(SSAOConstants) % 16 == 0);
-
-		struct SSAOBlurConstants
-		{
-			mathUtils::Vec4 uInvSize{};
-			mathUtils::Vec4 uParams{};
-		};
-		static_assert(sizeof(SSAOBlurConstants) % 16 == 0);
 
 		renderGraph::PassAttachments att{};
 		att.useSwapChainBackbuffer = false;
@@ -1931,7 +1888,7 @@ else
 			constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
 
 			float envSourceForGBuffer = 0.0f; // 0 = Skybox, 1 = ReflectionCapture
-			
+
 			float probeIdxNForGBuffer = 0.0f; // normalized probe index in [0..1]
 			if (settings_.enableReflectionCapture &&
 				batch.materialHandle.id != 0)
@@ -2191,14 +2148,6 @@ else
 		const mathUtils::Mat4 invViewProj = mathUtils::Inverse(viewProj);
 		const mathUtils::Mat4 invViewProjT = mathUtils::Transpose(invViewProj);
 
-		struct alignas(16) FogConstants
-		{
-			std::array<float, 16> uInvViewProj{};
-			std::array<float, 4> uCameraPos{};
-			std::array<float, 4> uFogParams{};
-			std::array<float, 4> uFogColor{};
-		};
-		static_assert(sizeof(FogConstants) % 16 == 0);
 
 		FogConstants c{};
 		std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
