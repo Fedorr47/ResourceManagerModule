@@ -88,6 +88,8 @@ namespace
 
 		return bestAxis;
 	}
+
+#include "SceneImpl/EditorGizmoShared.inl"
 }
 
 export namespace rendern

@@ -320,4 +320,11 @@ export namespace rendern
 		std::array<float, 4> uFogColor{};  // rgb + enabled(0/1)
 	};
 	static_assert(sizeof(FogConstants) % 16 == 0);
+
+	struct ResolvedMaterialEnvBinding
+	{
+		rhi::TextureDescIndex descIndex{};
+		rhi::TextureHandle arrayTexture{};
+		bool usingReflectionProbeEnv = false;
+	};
 }

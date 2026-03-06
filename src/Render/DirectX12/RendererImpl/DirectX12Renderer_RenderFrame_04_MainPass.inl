@@ -228,6 +228,152 @@ auto DrawEditorSelectionGroup = [&](renderGraph::PassContext& ctx,
 	}
 };
 
+constexpr std::uint32_t kMaterialFlagUseTex = 1u << 0;
+constexpr std::uint32_t kMaterialFlagUseShadow = 1u << 1;
+constexpr std::uint32_t kMaterialFlagUseNormal = 1u << 2;
+constexpr std::uint32_t kMaterialFlagUseMetalTex = 1u << 3;
+constexpr std::uint32_t kMaterialFlagUseRoughTex = 1u << 4;
+constexpr std::uint32_t kMaterialFlagUseAOTex = 1u << 5;
+constexpr std::uint32_t kMaterialFlagUseEmissiveTex = 1u << 6;
+constexpr std::uint32_t kMaterialFlagUseEnv = 1u << 7;
+constexpr std::uint32_t kMaterialFlagEnvForceMip0 = 1u << 8;
+constexpr std::uint32_t kMaterialFlagEnvFlipZ = 1u << 9;
+
+auto ResolveMainPassMaterialPerm = [&](const auto& material, const auto& materialHandle) -> MaterialPerm
+{
+	MaterialPerm perm = MaterialPerm::UseShadow;
+	if (materialHandle.id != 0)
+	{
+		perm = EffectivePerm(scene.GetMaterial(materialHandle));
+	}
+	else if (material.albedoDescIndex != 0)
+	{
+		perm = perm | MaterialPerm::UseTex;
+	}
+	return perm;
+};
+
+auto ResolveOpaqueEnvBinding = [&](const auto& materialHandle, int reflectionProbeIndex) -> ResolvedMaterialEnvBinding
+{
+	ResolvedMaterialEnvBinding env{};
+	env.descIndex = scene.skyboxDescIndex;
+
+	if (materialHandle.id == 0)
+	{
+		return env;
+	}
+
+	const auto& mat = scene.GetMaterial(materialHandle);
+	if (mat.envSource != EnvSource::ReflectionCapture || !settings_.enableReflectionCapture)
+	{
+		return env;
+	}
+
+	if (reflectionProbeIndex < 0 ||
+		static_cast<std::size_t>(reflectionProbeIndex) >= reflectionProbes_.size())
+	{
+		return env;
+	}
+
+	const auto& probe = reflectionProbes_[static_cast<std::size_t>(reflectionProbeIndex)];
+	if (probe.cubeDescIndex == 0 || !probe.cube)
+	{
+		return env;
+	}
+
+	env.descIndex = probe.cubeDescIndex;
+	env.arrayTexture = probe.cube;
+	env.usingReflectionProbeEnv = true;
+	return env;
+};
+
+auto ResolveTransparentEnvBinding = [&](const auto& materialHandle) -> ResolvedMaterialEnvBinding
+{
+	ResolvedMaterialEnvBinding env{};
+	env.descIndex = scene.skyboxDescIndex;
+
+	if (materialHandle.id == 0)
+	{
+		return env;
+	}
+
+	const auto& mat = scene.GetMaterial(materialHandle);
+	if (mat.envSource != EnvSource::ReflectionCapture || !settings_.enableReflectionCapture)
+	{
+		return env;
+	}
+
+	if (reflectionCubeDescIndex_ == 0 || !reflectionCube_)
+	{
+		return env;
+	}
+
+	env.descIndex = reflectionCubeDescIndex_;
+	env.arrayTexture = reflectionCube_;
+	env.usingReflectionProbeEnv = true;
+	return env;
+};
+
+auto BindMainPassMaterialTextures = [&](auto& commandList, const auto& material, const ResolvedMaterialEnvBinding& env)
+{
+	commandList.BindTextureDesc(0, material.albedoDescIndex);
+	commandList.BindTextureDesc(12, material.normalDescIndex);
+	commandList.BindTextureDesc(13, material.metalnessDescIndex);
+	commandList.BindTextureDesc(14, material.roughnessDescIndex);
+	commandList.BindTextureDesc(15, material.aoDescIndex);
+	commandList.BindTextureDesc(16, material.emissiveDescIndex);
+	commandList.BindTextureDesc(17, env.descIndex);
+
+	if (env.usingReflectionProbeEnv && env.arrayTexture)
+	{
+		commandList.BindTexture2DArray(18, env.arrayTexture);
+	}
+};
+
+auto BuildMainPassMaterialFlags = [&](const auto& material, bool useTex, bool useShadow, const ResolvedMaterialEnvBinding& env) -> std::uint32_t
+{
+	std::uint32_t flags = 0;
+	if (useTex)
+	{
+		flags |= kMaterialFlagUseTex;
+	}
+	if (useShadow)
+	{
+		flags |= kMaterialFlagUseShadow;
+	}
+	if (material.normalDescIndex != 0)
+	{
+		flags |= kMaterialFlagUseNormal;
+	}
+	if (material.metalnessDescIndex != 0)
+	{
+		flags |= kMaterialFlagUseMetalTex;
+	}
+	if (material.roughnessDescIndex != 0)
+	{
+		flags |= kMaterialFlagUseRoughTex;
+	}
+	if (material.aoDescIndex != 0)
+	{
+		flags |= kMaterialFlagUseAOTex;
+	}
+	if (material.emissiveDescIndex != 0)
+	{
+		flags |= kMaterialFlagUseEmissiveTex;
+	}
+	if (env.descIndex != 0)
+	{
+		flags |= kMaterialFlagUseEnv;
+	}
+	if (settings_.enableReflectionCapture && env.usingReflectionProbeEnv)
+	{
+		// Dynamic reflection captures update mip0 only and are sampled via manual face+UV mapping.
+		flags |= kMaterialFlagEnvForceMip0;
+		flags |= kMaterialFlagEnvFlipZ;
+	}
+	return flags;
+};
+
 if (canDeferred)
 {
 	// Precompute camera matrices once for deferred passes.
@@ -897,6 +1043,10 @@ if (canDeferred)
 			pointShadows,
 			transparentDraws,
 			activeReflectionProbeCount,
+			BindMainPassMaterialTextures,
+			ResolveTransparentEnvBinding,
+			ResolveMainPassMaterialPerm,
+			BuildMainPassMaterialFlags,
 			instStride](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
@@ -945,17 +1095,6 @@ if (canDeferred)
 				// Bind lights (t2 StructuredBuffer SRV)
 				ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-				constexpr std::uint32_t kFlagUseTex = 1u << 0;
-				constexpr std::uint32_t kFlagUseShadow = 1u << 1;
-				constexpr std::uint32_t kFlagUseNormal = 1u << 2;
-				constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
-				constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
-				constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
-				constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
-				constexpr std::uint32_t kFlagUseEnv = 1u << 7;
-				constexpr std::uint32_t kFlagEnvForceMip0 = 1u << 8;
-				constexpr std::uint32_t kFlagEnvFlipZ = 1u << 9;
-
 				for (const TransparentDraw& batchTransparent : transparentDraws)
 				{
 					if (!batchTransparent.mesh)
@@ -963,72 +1102,21 @@ if (canDeferred)
 						continue;
 					}
 
-					MaterialPerm perm = MaterialPerm::UseShadow;
-					if (batchTransparent.materialHandle.id != 0)
-					{
-						perm = EffectivePerm(scene.GetMaterial(batchTransparent.materialHandle));
-					}
-					else
-					{
-						if (batchTransparent.material.albedoDescIndex != 0)
-						{
-							perm = perm | MaterialPerm::UseTex;
-						}
-					}
-
+					const MaterialPerm perm = ResolveMainPassMaterialPerm(
+						batchTransparent.material,
+						batchTransparent.materialHandle);
 					const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
 					const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+					const ResolvedMaterialEnvBinding env = ResolveTransparentEnvBinding(batchTransparent.materialHandle);
 
 					ctx.commandList.BindPipeline(MainPipelineFor(perm));
-					ctx.commandList.BindTextureDesc(0, batchTransparent.material.albedoDescIndex);
-					ctx.commandList.BindTextureDesc(12, batchTransparent.material.normalDescIndex);
-					ctx.commandList.BindTextureDesc(13, batchTransparent.material.metalnessDescIndex);
-					ctx.commandList.BindTextureDesc(14, batchTransparent.material.roughnessDescIndex);
-					ctx.commandList.BindTextureDesc(15, batchTransparent.material.aoDescIndex);
-					ctx.commandList.BindTextureDesc(16, batchTransparent.material.emissiveDescIndex);
+					BindMainPassMaterialTextures(ctx.commandList, batchTransparent.material, env);
 
-					bool usingReflectionProbeEnv = false;
-					rhi::TextureHandle envArrayTexture{};
-					rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
-					if (batchTransparent.materialHandle.id != 0)
-					{
-						const auto& mat = scene.GetMaterial(batchTransparent.materialHandle);
-
-						if (mat.envSource == EnvSource::ReflectionCapture && settings_.enableReflectionCapture)
-						{
-							if (reflectionCubeDescIndex_ != 0 && reflectionCube_)
-							{
-								envDescIndex = reflectionCubeDescIndex_;
-								envArrayTexture = reflectionCube_;
-								usingReflectionProbeEnv = true;
-							}
-						}
-					}
-					ctx.commandList.BindTextureDesc(17, envDescIndex);
-
-					if (usingReflectionProbeEnv && envArrayTexture)
-					{
-						ctx.commandList.BindTexture2DArray(18, envArrayTexture);
-					}
-
-					std::uint32_t flags = 0;
-					if (useTex) { flags |= kFlagUseTex; }
-					if (useShadow) { flags |= kFlagUseShadow; }
-					if (batchTransparent.material.normalDescIndex != 0) { flags |= kFlagUseNormal; }
-					if (batchTransparent.material.metalnessDescIndex != 0) { flags |= kFlagUseMetalTex; }
-					if (batchTransparent.material.roughnessDescIndex != 0) { flags |= kFlagUseRoughTex; }
-					if (batchTransparent.material.aoDescIndex != 0) { flags |= kFlagUseAOTex; }
-					if (batchTransparent.material.emissiveDescIndex != 0) { flags |= kFlagUseEmissiveTex; }
-
-					if (envDescIndex != 0)
-					{
-						flags |= kFlagUseEnv;
-						if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
-						{
-							flags |= kFlagEnvForceMip0;
-							flags |= kFlagEnvFlipZ;
-						}
-					}
+					const std::uint32_t flags = BuildMainPassMaterialFlags(
+						batchTransparent.material,
+						useTex,
+						useShadow,
+						env);
 
 					PerBatchConstants constants{};
 					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
@@ -1333,6 +1421,11 @@ else
 		selectionInstances,
 		activeReflectionProbeCount,
 		DrawEditorSelectionGroup,
+		ResolveMainPassMaterialPerm,
+		ResolveOpaqueEnvBinding,
+		BindMainPassMaterialTextures,
+		BuildMainPassMaterialFlags,
+		ResolveTransparentEnvBinding,
 		doDepthPrepass](renderGraph::PassContext& ctx)
 	{
 		const auto extent = ctx.passExtent;
@@ -1407,17 +1500,6 @@ else
 		// Bind lights (t2 StructuredBuffer SRV)
 		ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-		constexpr std::uint32_t kFlagUseTex = 1u << 0;
-		constexpr std::uint32_t kFlagUseShadow = 1u << 1;
-		constexpr std::uint32_t kFlagUseNormal = 1u << 2;
-		constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
-		constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
-		constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
-		constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
-		constexpr std::uint32_t kFlagUseEnv = 1u << 7;
-		constexpr std::uint32_t kFlagEnvFlipZ = 1u << 8;
-		constexpr std::uint32_t kFlagEnvForceMip0 = 1u << 9;
-
 		for (const Batch& batch : mainBatches)
 		{
 			if (!batch.mesh || batch.instanceCount == 0)
@@ -1425,108 +1507,21 @@ else
 				continue;
 			}
 
-			MaterialPerm perm = MaterialPerm::UseShadow;
-			if (batch.materialHandle.id != 0)
-			{
-				perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
-			}
-			else
-			{
-				// Fallback: infer only from params.
-				if (batch.material.albedoDescIndex != 0)
-				{
-					perm = perm | MaterialPerm::UseTex;
-				}
-			}
-
+			const MaterialPerm perm = ResolveMainPassMaterialPerm(batch.material, batch.materialHandle);
 			const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
 			const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+			const ResolvedMaterialEnvBinding env = ResolveOpaqueEnvBinding(
+				batch.materialHandle,
+				batch.reflectionProbeIndex);
 
 			ctx.commandList.BindPipeline(MainPipelineFor(perm));
-			ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
-			ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
-			ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
-			ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
-			ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
-			ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
-			rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
-			bool usingReflectionProbeEnv = false;
-			rhi::TextureHandle envArrayTexture{};
-			if (batch.materialHandle.id != 0)
-			{
-				const auto& mat = scene.GetMaterial(batch.materialHandle);
+			BindMainPassMaterialTextures(ctx.commandList, batch.material, env);
 
-				if (mat.envSource == EnvSource::ReflectionCapture)
-				{
-					if (settings_.enableReflectionCapture)
-					{
-						if (batch.reflectionProbeIndex >= 0 &&
-							static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
-						{
-							const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-							if (probe.cubeDescIndex != 0 && probe.cube)
-							{
-								envDescIndex = probe.cubeDescIndex;
-								envArrayTexture = probe.cube;
-								usingReflectionProbeEnv = true;
-							}
-						}
-					}
-				}
-				else
-				{
-					envDescIndex = scene.skyboxDescIndex;
-				}
-			}
-
-			ctx.commandList.BindTextureDesc(17, envDescIndex);
-
-			if (usingReflectionProbeEnv && envArrayTexture)
-			{
-				ctx.commandList.BindTexture2DArray(18, envArrayTexture);
-			}
-
-			std::uint32_t flags = 0;
-			if (useTex)
-			{
-				flags |= kFlagUseTex;
-			}
-			if (useShadow)
-			{
-				flags |= kFlagUseShadow;
-			}
-			if (batch.material.normalDescIndex != 0)
-			{
-				flags |= kFlagUseNormal;
-			}
-			if (batch.material.metalnessDescIndex != 0)
-			{
-				flags |= kFlagUseMetalTex;
-			}
-			if (batch.material.roughnessDescIndex != 0)
-			{
-				flags |= kFlagUseRoughTex;
-			}
-			if (batch.material.aoDescIndex != 0)
-			{
-				flags |= kFlagUseAOTex;
-			}
-			if (batch.material.emissiveDescIndex != 0)
-			{
-				flags |= kFlagUseEmissiveTex;
-			}
-			if (envDescIndex != 0)
-			{
-				flags |= kFlagUseEnv;
-			}
-			if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
-			{
-				// Dynamic reflection capture cubemap: render mip0 only -> force mip0 sampling in shader.
-				flags |= kFlagEnvForceMip0;
-				// Dynamic probe is sampled through manual face+UV mapping (gEnvArray).
-				// Keep an explicit runtime toggle bit for axis convention correction.
-				flags |= kFlagEnvFlipZ;
-			}
+			const std::uint32_t flags = BuildMainPassMaterialFlags(
+				batch.material,
+				useTex,
+				useShadow,
+				env);
 
 			PerBatchConstants constants{};
 			const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
@@ -1622,93 +1617,21 @@ else
 					continue;
 				}
 
-				MaterialPerm perm = MaterialPerm::UseShadow;
-				if (batchTransparent.materialHandle.id != 0)
-				{
-					perm = EffectivePerm(scene.GetMaterial(batchTransparent.materialHandle));
-				}
-				else
-				{
-					if (batchTransparent.material.albedoDescIndex != 0)
-					{
-						perm = perm | MaterialPerm::UseTex;
-					}
-				}
-
+				const MaterialPerm perm = ResolveMainPassMaterialPerm(
+					batchTransparent.material,
+					batchTransparent.materialHandle);
 				const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
 				const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+				const ResolvedMaterialEnvBinding env = ResolveTransparentEnvBinding(batchTransparent.materialHandle);
 
 				ctx.commandList.BindPipeline(MainPipelineFor(perm));
-				ctx.commandList.BindTextureDesc(0, batchTransparent.material.albedoDescIndex);
-				ctx.commandList.BindTextureDesc(12, batchTransparent.material.normalDescIndex);
-				ctx.commandList.BindTextureDesc(13, batchTransparent.material.metalnessDescIndex);
-				ctx.commandList.BindTextureDesc(14, batchTransparent.material.roughnessDescIndex);
-				ctx.commandList.BindTextureDesc(15, batchTransparent.material.aoDescIndex);
-				ctx.commandList.BindTextureDesc(16, batchTransparent.material.emissiveDescIndex);
-				bool usingReflectionProbeEnv = false;
-				rhi::TextureHandle envArrayTexture{};
-				rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
-				if (batchTransparent.materialHandle.id != 0)
-				{
-					const auto& mat = scene.GetMaterial(batchTransparent.materialHandle);
+				BindMainPassMaterialTextures(ctx.commandList, batchTransparent.material, env);
 
-					if (mat.envSource == EnvSource::ReflectionCapture && settings_.enableReflectionCapture)
-					{
-						if (reflectionCubeDescIndex_ != 0 && reflectionCube_)
-						{
-							envDescIndex = reflectionCubeDescIndex_;
-							envArrayTexture = reflectionCube_;
-							usingReflectionProbeEnv = true;
-						}
-					}
-				}
-				ctx.commandList.BindTextureDesc(17, envDescIndex);
-
-				if (usingReflectionProbeEnv && envArrayTexture)
-				{
-					ctx.commandList.BindTexture2DArray(18, envArrayTexture);
-				}
-
-				std::uint32_t flags = 0;
-				if (useTex)
-				{
-					flags |= kFlagUseTex;
-				}
-				if (useShadow)
-				{
-					flags |= kFlagUseShadow;
-				}
-				if (batchTransparent.material.normalDescIndex != 0)
-				{
-					flags |= kFlagUseNormal;
-				}
-				if (batchTransparent.material.metalnessDescIndex != 0)
-				{
-					flags |= kFlagUseMetalTex;
-				}
-				if (batchTransparent.material.roughnessDescIndex != 0)
-				{
-					flags |= kFlagUseRoughTex;
-				}
-				if (batchTransparent.material.aoDescIndex != 0)
-				{
-					flags |= kFlagUseAOTex;
-				}
-				if (batchTransparent.material.emissiveDescIndex != 0)
-				{
-					flags |= kFlagUseEmissiveTex;
-				}
-				if (envDescIndex != 0)
-				{
-					flags |= kFlagUseEnv;
-					// Dynamic reflection captures update only mip0. Force mip0 sampling in the shader to
-					// avoid seams/garbage when the cube texture was created with a full mip chain.
-					if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
-					{
-						flags |= kFlagEnvForceMip0;
-						flags |= kFlagEnvFlipZ;
-					}
-				}
+				const std::uint32_t flags = BuildMainPassMaterialFlags(
+					batchTransparent.material,
+					useTex,
+					useShadow,
+					env);
 
 				PerBatchConstants constants{};
 				const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);

@@ -2,6 +2,17 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 {
 	const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
 
+	constexpr std::uint32_t kMaterialFlagUseTex = 1u << 0;
+	constexpr std::uint32_t kMaterialFlagUseShadow = 1u << 1;
+	constexpr std::uint32_t kMaterialFlagUseNormal = 1u << 2;
+	constexpr std::uint32_t kMaterialFlagUseMetalTex = 1u << 3;
+	constexpr std::uint32_t kMaterialFlagUseRoughTex = 1u << 4;
+	constexpr std::uint32_t kMaterialFlagUseAOTex = 1u << 5;
+	constexpr std::uint32_t kMaterialFlagUseEmissiveTex = 1u << 6;
+	constexpr std::uint32_t kMaterialFlagUseEnv = 1u << 7;
+	constexpr std::uint32_t kMaterialFlagEnvForceMip0 = 1u << 8;
+	constexpr std::uint32_t kMaterialFlagEnvFlipZ = 1u << 9;
+
 	std::uint32_t mirrorIndex = 0u;
 
 	for (const PlanarMirrorDraw& mirror : planarMirrorDraws)
@@ -11,7 +22,6 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			continue;
 		}
 
-		
 		if (mirrorIndex >= settings_.planarReflectionMaxMirrors)
 		{
 			break;
@@ -195,18 +205,18 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			}
 
 			std::uint32_t flags = 0;
-			if (useTex) flags |= kFlagUseTex;
-			if (useShadow) flags |= kFlagUseShadow;
-			if (batch.material.normalDescIndex != 0) flags |= kFlagUseNormal;
-			if (batch.material.metalnessDescIndex != 0) flags |= kFlagUseMetalTex;
-			if (batch.material.roughnessDescIndex != 0) flags |= kFlagUseRoughTex;
-			if (batch.material.aoDescIndex != 0) flags |= kFlagUseAOTex;
-			if (batch.material.emissiveDescIndex != 0) flags |= kFlagUseEmissiveTex;
-			if (envDescIndex != 0) flags |= kFlagUseEnv;
+			if (useTex) flags |= kMaterialFlagUseTex;
+			if (useShadow) flags |= kMaterialFlagUseShadow;
+			if (batch.material.normalDescIndex != 0) flags |= kMaterialFlagUseNormal;
+			if (batch.material.metalnessDescIndex != 0) flags |= kMaterialFlagUseMetalTex;
+			if (batch.material.roughnessDescIndex != 0) flags |= kMaterialFlagUseRoughTex;
+			if (batch.material.aoDescIndex != 0) flags |= kMaterialFlagUseAOTex;
+			if (batch.material.emissiveDescIndex != 0) flags |= kMaterialFlagUseEmissiveTex;
+			if (envDescIndex != 0) flags |= kMaterialFlagUseEnv;
 			if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
 			{
-				flags |= kFlagEnvForceMip0;
-				flags |= kFlagEnvFlipZ;
+				flags |= kMaterialFlagEnvForceMip0;
+				flags |= kMaterialFlagEnvFlipZ;
 			}
 
 			PerBatchConstants constants{};

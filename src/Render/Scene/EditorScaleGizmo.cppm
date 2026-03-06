@@ -300,6 +300,8 @@ namespace
 		}
 		return mathUtils::Normalize(planeNormal);
 	}
+
+#include "SceneImpl/EditorGizmoShared.inl"
 }
 
 export namespace rendern

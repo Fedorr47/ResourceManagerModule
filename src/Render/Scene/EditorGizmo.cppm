@@ -307,6 +307,8 @@ namespace
 		}
 		return HitTestAxis(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
 	}
+
+#include "SceneImpl/EditorGizmoShared.inl"
 }
 
 export namespace rendern
