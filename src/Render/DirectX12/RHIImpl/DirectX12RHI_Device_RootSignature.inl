@@ -129,7 +129,7 @@ void CreateRootSignature()
     // s0: linear wrap
     samplers[0] = MakeStaticSampler(
         0,
-        D3D12_FILTER_MIN_MAG_MIP_LINEAR,
+        D3D12_FILTER_ANISOTROPIC,
         D3D12_TEXTURE_ADDRESS_MODE_WRAP,
         D3D12_TEXTURE_ADDRESS_MODE_WRAP,
         D3D12_TEXTURE_ADDRESS_MODE_WRAP,

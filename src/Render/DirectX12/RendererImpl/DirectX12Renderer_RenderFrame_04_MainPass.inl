@@ -1187,13 +1187,15 @@ else
 
 	auto forwardSceneColorAfterPost = forwardSceneColor;
 
-	const bool canForwardSSAO =
+	bool canForwardSSAO =
 		device_.GetBackend() == rhi::Backend::DirectX12 &&
 		psoSSAOForward_ &&
 		psoSSAOBlur_ &&
 		psoSSAOComposite_ &&
 		fullscreenLayout_ &&
 		swapChain.GetDepthTexture();
+
+	//canForwardSSAO = false;
 
 	renderGraph::RGTextureHandle forwardSSAOBlur{};
 

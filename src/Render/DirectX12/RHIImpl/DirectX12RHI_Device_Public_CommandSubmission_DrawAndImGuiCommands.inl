@@ -17,7 +17,10 @@
                             {
                                 maxSlot = std::max(maxSlot, static_cast<std::uint32_t>(e.InputSlot));
                             }
-                            const std::uint32_t numVB = maxSlot + 1;
+
+                            const std::uint32_t numVB = layIt->second.elems.empty()
+                                ? 0u
+                                : (maxSlot + 1u);
                             if (numVB > kMaxVBSlots)
                             {
                                 throw std::runtime_error("DX12: input layout uses more VB slots than supported");
@@ -90,7 +93,9 @@
                             {
                                 maxSlot = std::max(maxSlot, static_cast<std::uint32_t>(e.InputSlot));
                             }
-                            const std::uint32_t numVB = maxSlot + 1;
+                            const std::uint32_t numVB = layIt->second.elems.empty()
+                                ? 0u
+                                : (maxSlot + 1u);
                             if (numVB > kMaxVBSlots)
                             {
                                 throw std::runtime_error("DX12: input layout uses more VB slots than supported");

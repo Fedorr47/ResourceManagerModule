@@ -27,5 +27,6 @@ float4 PS_SSAOComposite(VSOut IN) : SV_Target0
 {
 	const float4 scene = gSceneColor.Sample(gLinearClamp, IN.uv);
 	const float ao = saturate(gSSAO.Sample(gLinearClamp, IN.uv).r);
+	
 	return float4(scene.rgb * ao, scene.a);
 }
