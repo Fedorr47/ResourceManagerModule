@@ -13,7 +13,7 @@ Texture2D gGBuffer0 : register(t0); // albedo.rgb, roughness
 Texture2D gGBuffer1 : register(t1); // normal.xyz (encoded), metalness
 Texture2D gGBuffer2 : register(t2); // emissive.rgb, ao
 Texture2D<float> gDepth : register(t3); // depth SRV (0..1)
-Texture2D gGBuffer3 : register(t4); // env selector: r=envSource, g=probeIdxN (reserved)
+Texture2D gGBuffer3 : register(t4); // env selector: r=envSource, g=probeIdxN
 
 // -----------------------------------------------------------------------------
 // Shadows
@@ -53,7 +53,11 @@ Texture2DArray<float> gPointShadow3 : register(t14);
 // Environment + SSAO
 // -----------------------------------------------------------------------------
 TextureCube gSkyboxEnv : register(t15); // global skybox cubemap
+TextureCube gReflEnv : register(t17); // single-probe fallback / compatibility path
 Texture2D gSSAO : register(t18); // SSAO (0..1)
+// Full reflection-capture cube array bound as a 2D-array SRV:
+// layers = probeCount * 6, slices ordered as (+X,-X,+Y,-Y,+Z,-Z) per probe.
+Texture2DArray<float4> gReflEnvArray : register(t19);
 
 // -----------------------------------------------------------------------------
 // Lights
@@ -68,12 +72,11 @@ struct GPULight
 
 StructuredBuffer<GPULight> gLights : register(t16);
 
-// Bindless SRV heap view (space1) for reflection cubemaps.
-TextureCube gBindlessCube[] : register(t0, space1);
-
 // -----------------------------------------------------------------------------
 // Constants
 // -----------------------------------------------------------------------------
+#define MAX_DEFERRED_REFLECTION_PROBES 32
+
 cbuffer Deferred : register(b0)
 {
 	float4x4 uInvViewProj;
@@ -81,6 +84,8 @@ cbuffer Deferred : register(b0)
 	float4 uCameraForward; // xyz + pad
 	float4 uShadowBias; // x=dirBaseBiasTexels, y=spotBaseBiasTexels, z=pointBaseBiasTexels, w=slopeScaleTexels
 	float4 uCounts; // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
+	float4 uReflectionProbeBoxMin[MAX_DEFERRED_REFLECTION_PROBES];
+	float4 uReflectionProbeBoxMax[MAX_DEFERRED_REFLECTION_PROBES];
 };
 
 // -----------------------------------------------------------------------------
@@ -100,9 +105,9 @@ VSOut VS_Fullscreen(uint vid : SV_VertexID)
 	// This matches CopyToSwapChain_dx12.hlsl and fixes the upside-down deferred output.
 	float2 uv = float2((pos.x + 1.0f) * 0.5f, 1.0f - (pos.y + 1.0f) * 0.5f);
 	VSOut o;
-     o.svPos = float4(pos, 0.0, 1.0);
-     o.uv = uv;
-     return o;
+	o.svPos = float4(pos, 0.0, 1.0);
+	o.uv = uv;
+	return o;
 }
 
 // -----------------------------------------------------------------------------
@@ -281,13 +286,13 @@ float SampleDirShadowPCF3x3(ShadowDataSB sd, float3 worldPos, float NdotL, float
 float3 ReconstructWorldPos(float2 uv, float depth)
 {
     // uv is in TEXTURE space (0,0 top-left). For NDC we need Y-up, so flip Y.
-    float4 clip;
-    clip.x = uv.x * 2.0f - 1.0f;
-    clip.y = 1.0f - uv.y * 2.0f;
-    clip.z = depth;
-    clip.w = 1.0f;
-    float4 worldH = mul(clip, uInvViewProj);
-    return worldH.xyz / max(worldH.w, 1e-6f);
+	float4 clip;
+	clip.x = uv.x * 2.0f - 1.0f;
+	clip.y = 1.0f - uv.y * 2.0f;
+	clip.z = depth;
+	clip.w = 1.0f;
+	float4 worldH = mul(clip, uInvViewProj);
+	return worldH.xyz / max(worldH.w, 1e-6f);
 }
 
 // -----------------------------------------------------------------------------
@@ -296,9 +301,9 @@ float3 ReconstructWorldPos(float2 uv, float depth)
 float3 FresnelSchlickRoughness(float cosTheta, float3 F0, float roughness)
 {
     // Better grazing behavior for rough surfaces.
-    const float oneMinusR = 1.0f - roughness;
-    const float3 oneMinusR3 = float3(oneMinusR, oneMinusR, oneMinusR);
-    return F0 + (max(oneMinusR3, F0) - F0) * pow(1.0f - cosTheta, 5.0f);
+	const float oneMinusR = 1.0f - roughness;
+	const float3 oneMinusR3 = float3(oneMinusR, oneMinusR, oneMinusR);
+	return F0 + (max(oneMinusR3, F0) - F0) * pow(1.0f - cosTheta, 5.0f);
 }
 
 float3 SampleEnvPrefiltered(TextureCube env, float3 dir, float roughness)
@@ -317,34 +322,16 @@ float3 SampleEnvDiffuseIrradiance(TextureCube env, float3 dir)
 	return env.SampleLevel(gLinearClamp, dir, lod).rgb;
 }
 
-uint DecodePackedDescriptorIndex(float3 packed)
+float3 SampleEnvPrefilteredSel(bool useRefl, float3 dir, float roughness)
 {
-	const uint b0 = (uint) round(saturate(packed.x) * 255.0f);
-	const uint b1 = (uint) round(saturate(packed.y) * 255.0f);
-	const uint b2 = (uint) round(saturate(packed.z) * 255.0f);
-	return b0 | (b1 << 8u) | (b2 << 16u);
+	return useRefl ? SampleEnvPrefiltered(gReflEnv, dir, roughness)
+                   : SampleEnvPrefiltered(gSkyboxEnv, dir, roughness);
 }
 
-float3 SampleBindlessEnvPrefiltered(uint descIndex, float3 dir, float roughness)
+float3 SampleEnvDiffuseSel(bool useRefl, float3 dir)
 {
-	if (descIndex == 0u)
-		return 0.0f;
-
-	uint w = 0u, h = 0u, mips = 1u;
-	gBindlessCube[NonUniformResourceIndex(descIndex)].GetDimensions(0, w, h, mips);
-	const float lod = saturate(roughness) * max(0.0f, (float) (mips - 1u));
-	return gBindlessCube[NonUniformResourceIndex(descIndex)].SampleLevel(gLinearClamp, dir, lod).rgb;
-}
-
-float3 SampleBindlessEnvDiffuse(uint descIndex, float3 dir)
-{
-	if (descIndex == 0u)
-		return 0.0f;
-
-	uint w = 0u, h = 0u, mips = 1u;
-	gBindlessCube[NonUniformResourceIndex(descIndex)].GetDimensions(0, w, h, mips);
-	const float lod = max(0.0f, (float) (mips - 1u));
-	return gBindlessCube[NonUniformResourceIndex(descIndex)].SampleLevel(gLinearClamp, dir, lod).rgb;
+	return useRefl ? SampleEnvDiffuseIrradiance(gReflEnv, dir)
+                   : SampleEnvDiffuseIrradiance(gSkyboxEnv, dir);
 }
 
 // -----------------------------------------------------------------------------
@@ -518,6 +505,94 @@ CubeFaceUV CubeDirToFaceUV(float3 dir)
 	return o;
 }
 
+uint DecodeReflectionProbeIndex(float probeIdxN, uint probeCount)
+{
+	if (probeCount == 0u)
+		return 0u;
+
+	const float n = saturate(probeIdxN);
+	return min((uint) (n * (float) probeCount), probeCount - 1u);
+}
+
+bool IsValidReflectionProbeBounds(float3 boxMin, float3 boxMax)
+{
+	return all(boxMax > (boxMin + float3(1e-4f, 1e-4f, 1e-4f)));
+}
+
+float3 BoxProjectReflectionDir(float3 worldPos, float3 reflDir, float3 boxMin, float3 boxMax, float3 probePos)
+{
+	float3 dir = normalize(reflDir);
+	float3 dirSafe = float3(
+		(abs(dir.x) > 1e-5f) ? dir.x : ((dir.x >= 0.0f) ? 1e-5f : -1e-5f),
+		(abs(dir.y) > 1e-5f) ? dir.y : ((dir.y >= 0.0f) ? 1e-5f : -1e-5f),
+		(abs(dir.z) > 1e-5f) ? dir.z : ((dir.z >= 0.0f) ? 1e-5f : -1e-5f));
+	float3 invDir = 1.0f / dirSafe;
+
+	const float3 tMin = (boxMin - worldPos) * invDir;
+	const float3 tMax = (boxMax - worldPos) * invDir;
+	const float3 tFar3 = max(tMin, tMax);
+	const float tFar = min(tFar3.x, min(tFar3.y, tFar3.z));
+
+	if (tFar <= 0.0f || !isfinite(tFar))
+		return dir;
+
+	const float3 hitPos = worldPos + dir * tFar;
+	return normalize(hitPos - probePos);
+}
+
+float3 GetProbeCenter(uint probeIdx)
+{
+	return 0.5f * (uReflectionProbeBoxMin[probeIdx].xyz + uReflectionProbeBoxMax[probeIdx].xyz);
+}
+
+float3 GetProbeBoxMin(uint probeIdx)
+{
+	return uReflectionProbeBoxMin[probeIdx].xyz;
+}
+
+float3 GetProbeBoxMax(uint probeIdx)
+{
+	return uReflectionProbeBoxMax[probeIdx].xyz;
+}
+
+float3 SampleEnvArrayProbeMip(uint probeIdx, float3 dir, float lod)
+{
+	CubeFaceUV fu = CubeDirToFaceUV(dir);
+
+	if (fu.uv.x < 0.0f || fu.uv.x > 1.0f || fu.uv.y < 0.0f || fu.uv.y > 1.0f)
+		return 0.0f;
+
+	uint w = 0u, h = 0u, layers = 0u, mips = 1u;
+	gReflEnvArray.GetDimensions(0, w, h, layers, mips);
+	if (layers == 0u)
+		return 0.0f;
+
+    // 6 array slices per cubemap.
+	const uint maxBaseSlice = (layers > 6u) ? (layers - 6u) : 0u;
+	const uint baseSlice = min(probeIdx * 6u, maxBaseSlice);
+	const uint slice = min(baseSlice + fu.face, layers - 1u);
+	const float clampedLod = clamp(lod, 0.0f, max(0.0f, (float) (mips - 1u)));
+
+    // Manual face sampling: linear within face, no cubemap hardware cross-face filtering.
+	return gReflEnvArray.SampleLevel(gLinearClamp, float3(fu.uv, (float) slice), clampedLod).rgb;
+}
+
+float3 SampleEnvPrefilteredProbe(uint probeIdx, float3 dir, float roughness)
+{
+	uint w = 0u, h = 0u, layers = 0u, mips = 1u;
+	gReflEnvArray.GetDimensions(0, w, h, layers, mips);
+	const float lod = saturate(roughness) * max(0.0f, (float) (mips - 1u));
+	return SampleEnvArrayProbeMip(probeIdx, dir, lod);
+}
+
+float3 SampleEnvDiffuseProbe(uint probeIdx, float3 dir)
+{
+	uint w = 0u, h = 0u, layers = 0u, mips = 1u;
+	gReflEnvArray.GetDimensions(0, w, h, layers, mips);
+	const float lod = max(0.0f, (float) (mips - 1u));
+	return SampleEnvArrayProbeMip(probeIdx, dir, lod);
+}
+
 float SamplePointShadow(Texture2DArray<float> distArr, float3 dir)
 {
 	CubeFaceUV fu = CubeDirToFaceUV(dir);
@@ -597,7 +672,7 @@ float4 PS_DeferredLighting(VSOut IN) : SV_Target0
 	ao *= saturate(gSSAO.Sample(gPointClamp, IN.uv).r);
 
     // Env selector from GBuffer3
-	const float4 envSel = gGBuffer3.SampleLevel(gPointClamp, IN.uv, 0); // r=envSource, gba=descriptor index bytes
+	const float2 envSel = gGBuffer3.SampleLevel(gPointClamp, IN.uv, 0).rg; // r=envSource
 
 	float depth = gDepth.Sample(gPointClamp, IN.uv).r;
 
@@ -714,7 +789,8 @@ float4 PS_DeferredLighting(VSOut IN) : SV_Target0
     // Indirect lighting (IBL v1)
     // -------------------------------------------------------------------------
 	const bool useRefl = (envSel.x > 0.5f);
-	const uint reflDescIndex = DecodePackedDescriptorIndex(envSel.yzw);
+	const uint reflProbeCount = (uint) max(uCounts.w, 0.0f);
+	const uint reflProbeIdx = DecodeReflectionProbeIndex(envSel.y, reflProbeCount);
 
 	float3 F0 = lerp(float3(0.04f, 0.04f, 0.04f), albedo, metallic);
 
@@ -725,17 +801,32 @@ float4 PS_DeferredLighting(VSOut IN) : SV_Target0
 	float3 kD = (1.0f - kS) * (1.0f - metallic);
 
 	float3 R = normalize(reflect(-V, N));
+	float3 Rbox = R;
 
-	float3 envDiffuse = (useRefl && reflDescIndex != 0u)
-	    ? SampleBindlessEnvDiffuse(reflDescIndex, N)
-	    : SampleEnvDiffuseIrradiance(gSkyboxEnv, N);
-	
-	float3 envSpec = (useRefl && reflDescIndex != 0u)
-	    ? SampleBindlessEnvPrefiltered(reflDescIndex, R, roughness)
-	    : SampleEnvPrefiltered(gSkyboxEnv, R, roughness);
+	if (useRefl && reflProbeCount > 0u)
+	{
+		const float3 probeBoxMin = GetProbeBoxMin(reflProbeIdx);
+		const float3 probeBoxMax = GetProbeBoxMax(reflProbeIdx);
+		if (IsValidReflectionProbeBounds(probeBoxMin, probeBoxMax))
+		{
+			const float3 probePos = GetProbeCenter(reflProbeIdx);
+			Rbox = BoxProjectReflectionDir(worldPos, R, probeBoxMin, probeBoxMax, probePos);
+		}
+	}
 
-    // AO modulates only the diffuse/ambient part.
-	float3 indirect = (kD * (envDiffuse * albedo) * ao + envSpec * F) * ambientStrength;
+	float3 envDiffuse = useRefl
+	  ? ((reflProbeCount > 0u) ? SampleEnvDiffuseProbe(reflProbeIdx, N)
+	  : SampleEnvDiffuseIrradiance(gReflEnv, N))
+	  : SampleEnvDiffuseIrradiance(gSkyboxEnv, N);
+	  
+	float3 envSpec = useRefl
+	  ? ((reflProbeCount > 0u) ? SampleEnvPrefilteredProbe(reflProbeIdx, Rbox, roughness)
+	  : SampleEnvPrefiltered(gReflEnv, R, roughness))
+	  : SampleEnvPrefiltered(gSkyboxEnv, R, roughness);
+
+	float3 indirectDiffuse = kD * (envDiffuse * albedo) * ao * ambientStrength;
+	float3 indirectSpec = envSpec * F;
+	float3 indirect = indirectDiffuse + indirectSpec;
 
 	float3 color = indirect + Lo + emissive;
 	return float4(color, 1.0f);
