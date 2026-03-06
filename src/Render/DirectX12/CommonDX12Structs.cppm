@@ -15,6 +15,13 @@ export namespace rendern
 	constexpr std::uint32_t kMaxSpotShadows = 4;
 	constexpr std::uint32_t kMaxPointShadows = 4;
 
+	struct DeferredReflectionProbeGpu
+	{
+		std::array<float, 4> boxMin;
+		std::array<float, 4> boxMax;
+		std::array<float, 4> capturePosDesc;
+	};
+
 	struct alignas(16) GPULight
 	{
 		std::array<float, 4> p0{}; // pos.xyz, type

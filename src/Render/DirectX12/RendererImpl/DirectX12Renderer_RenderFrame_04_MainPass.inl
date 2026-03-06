@@ -1,11 +1,3 @@
-std::uint32_t activeReflectionProbeCount = 0u;
-if (settings_.enableReflectionCapture)
-{
-	// Для GBuffer3 нам достаточно 0..255.
-	activeReflectionProbeCount = std::min<std::uint32_t>(
-		static_cast<std::uint32_t>(reflectionProbes_.size()),
-		255u);
-}
 // ---------------- Deferred path (DX12) ----------------
 const bool canDeferred =
 settings_.enableDeferred &&
@@ -14,6 +6,8 @@ psoDeferredGBuffer_ &&
 psoDeferredLighting_ &&
 fullscreenLayout_ &&
 swapChain.GetDepthTexture();
+
+std::uint32_t activeReflectionProbeCount = 0u;
 
 if (canDeferred)
 {
@@ -29,19 +23,70 @@ if (canDeferred)
 	const mathUtils::Vec3 camPosLocal = scene.camera.position;
 	const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
 
+	struct DeferredReflectionProbeGpu
+	{
+		std::array<float, 4> boxMin{};
+		std::array<float, 4> boxMax{};
+		std::array<float, 4> capturePosDesc{}; // xyz = probe position, w = descIndex bits
+	};
+	static_assert(sizeof(DeferredReflectionProbeGpu) == 48);
+	std::vector<DeferredReflectionProbeGpu> deferredReflectionProbes;
+	std::vector<int> deferredReflectionProbeRemap;
+	deferredReflectionProbeRemap.assign(reflectionProbes_.size(), -1);
+	const float probeHalfExtent = settings_.reflectionProbeBoxHalfExtent;
+	for (std::size_t probeIndex = 0; probeIndex < reflectionProbes_.size(); ++probeIndex)
+	{
+		const auto& probe = reflectionProbes_[probeIndex];
+		if (!probe.cube || probe.cubeDescIndex == 0)
+		{
+			continue;
+		}
+		DeferredReflectionProbeGpu gpu{};
+		gpu.boxMin = {
+			probe.capturePos.x - probeHalfExtent,
+			probe.capturePos.y - probeHalfExtent,
+			probe.capturePos.z - probeHalfExtent,
+			0.0f
+		};
+		gpu.boxMax = {
+			probe.capturePos.x + probeHalfExtent,
+			probe.capturePos.y + probeHalfExtent,
+			probe.capturePos.z + probeHalfExtent,
+			0.0f
+		};
+		gpu.capturePosDesc = {
+			probe.capturePos.x,
+			probe.capturePos.y,
+			probe.capturePos.z,
+			AsFloatBits(static_cast<std::uint32_t>(probe.cubeDescIndex))
+		};
+		deferredReflectionProbeRemap[probeIndex] =
+			static_cast<int>(deferredReflectionProbes.size());
+		deferredReflectionProbes.push_back(gpu);
+	}
+
+	activeReflectionProbeCount =
+		std::min<std::uint32_t>(
+			static_cast<std::uint32_t>(deferredReflectionProbes.size()),
+			255u);
+	if (activeReflectionProbeCount > 0u)
+	{
+		device_.UpdateBuffer(
+			reflectionProbeMetaBuffer_,
+			std::as_bytes(std::span{ deferredReflectionProbes }));
+	}
+
 	constexpr std::uint32_t kMaxDeferredReflectionProbes = 32u;
 
 	struct alignas(16) DeferredLightingConstants
 	{
-		std::array<float, 16> uInvViewProj{};
-		std::array<float, 4> uCameraPosAmbient{}; // xyz + ambientStrength
-		std::array<float, 4> uCameraForward{}; // xyz + pad
-		std::array<float, 4> uShadowBias{}; // x=dirBaseBiasTexels, y=spotBaseBiasTexels, z=pointBaseBiasTexels, w=slopeScaleTexels
-		std::array<float, 4> uCounts{}; // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
-		std::array<std::array<float, 4>, kMaxDeferredReflectionProbes> uReflectionProbeBoxMin{};
-		std::array<std::array<float, 4>, kMaxDeferredReflectionProbes> uReflectionProbeBoxMax{};
+		std::array<float, 16> uInvViewProj{};      // transpose(invViewProj)
+		std::array<float, 4>  uCameraPosAmbient{}; // xyz + ambientStrength
+		std::array<float, 4>  uCameraForward{};    // xyz + pad
+		std::array<float, 4>  uShadowBias{};       // x=dirBaseBiasTexels, y=spotBaseBiasTexels, z=pointBaseBiasTexels, w=slopeScaleTexels
+		std::array<float, 4>  uCounts{};           // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
 	};
-	static_assert((sizeof(DeferredLightingConstants) % 16) == 0);
+	static_assert(sizeof(DeferredLightingConstants) == 128);
 
 	DeferredLightingConstants deferredConstants{};
 	std::memcpy(deferredConstants.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
@@ -205,7 +250,18 @@ if (canDeferred)
 		att.clearDesc.stencil = 0;
 
 		graph.AddPass("GBufferPass", std::move(att),
-			[this, &scene, dirLightViewProj, lightCount, mainBatches, instStride, gbuf0, gbuf1, gbuf2, gbuf3, activeReflectionProbeCount](renderGraph::PassContext& ctx)
+			[this, 
+			&scene, 
+			dirLightViewProj, 
+			lightCount, 
+			mainBatches, 
+			instStride, 
+			gbuf0, 
+			gbuf1, 
+			gbuf2, 
+			gbuf3, 
+			activeReflectionProbeCount, 
+			deferredReflectionProbeRemap](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
 
@@ -282,22 +338,26 @@ if (canDeferred)
 					}
 
 					float envSourceForGBuffer = 0.0f; // 0 = Skybox, 1 = ReflectionCapture
-					float probeIdxNForGBuffer = 0.0f; // normalized probe index in [0..1]
+					float probeIdxNForGBuffer = 0.0f; // normalized compact probe index in [0..1]
+
 					if (settings_.enableReflectionCapture &&
-						reflectionCube_ &&
-						reflectionCubeDescIndex_ != 0 &&
-						activeReflectionProbeCount > 0u &&
-						batch.materialHandle.id != 0)
+						batch.materialHandle.id != 0 &&
+						batch.reflectionProbeIndex >= 0 &&
+						static_cast<std::size_t>(batch.reflectionProbeIndex) < deferredReflectionProbeRemap.size() &&
+						activeReflectionProbeCount > 0u)
 					{
 						const auto& mat = scene.GetMaterial(batch.materialHandle);
-						if (mat.envSource == EnvSource::ReflectionCapture &&
-							batch.reflectionProbeIndex >= 0 &&
-							static_cast<std::uint32_t>(batch.reflectionProbeIndex) < activeReflectionProbeCount)
+						if (mat.envSource == EnvSource::ReflectionCapture)
 						{
-							envSourceForGBuffer = 1.0f;
-							probeIdxNForGBuffer =
-								(static_cast<float>(batch.reflectionProbeIndex) + 0.5f) /
-								static_cast<float>(activeReflectionProbeCount);
+							const int compactProbeIndex =
+								deferredReflectionProbeRemap[static_cast<std::size_t>(batch.reflectionProbeIndex)];
+							if (compactProbeIndex >= 0)
+							{
+								envSourceForGBuffer = 1.0f;
+								probeIdxNForGBuffer =
+									(static_cast<float>(compactProbeIndex) + 0.5f) /
+									static_cast<float>(activeReflectionProbeCount);
+							}
 						}
 					}
 
@@ -330,6 +390,7 @@ if (canDeferred)
 					constants.uShadowBias = { 0.0f, 0.0f, 0.0f, 0.0f };
 					constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, envSourceForGBuffer };
 					constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, probeIdxNForGBuffer };
+
 
 					// Bindless indices for DeferredGBuffer_dx12.hlsl (space1 SRV heap).
 					constants.uTexIndices0 = {
@@ -492,7 +553,7 @@ if (canDeferred)
 		att.clearDesc.color = { 0.0f, 0.0f, 0.0f, 1.0f };
 
 		graph.AddPass("DeferredLighting", std::move(att),
-			[this, &scene, gbuf0, gbuf1, gbuf2, gbuf3, depthRG, shadowRG, spotShadows, pointShadows, deferredConstants, ssaoBlur](renderGraph::PassContext& ctx)
+			[this, &scene, gbuf0, gbuf1, gbuf2, gbuf3, depthRG, shadowRG, spotShadows, pointShadows, deferredConstants, ssaoBlur, activeReflectionProbeCount](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
 
@@ -539,6 +600,11 @@ if (canDeferred)
 				// Lights (t16) and SSAO (t18); t19 = full reflection cube-array
 				ctx.commandList.BindStructuredBufferSRV(16, lightsBuffer_);
 				ctx.commandList.BindTexture2D(18, ctx.resources.GetTexture(ssaoBlur));
+
+				if (activeReflectionProbeCount > 0u)
+				{
+					ctx.commandList.BindStructuredBufferSRV(19, reflectionProbeMetaBuffer_);
+				}
 
 				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &deferredConstants, 1 }));
 				ctx.commandList.Draw(3);
@@ -842,6 +908,7 @@ if (canDeferred)
 			spotShadows,
 			pointShadows,
 			transparentDraws,
+			activeReflectionProbeCount,
 			instStride](renderGraph::PassContext& ctx)
 			{
 				const auto extent = ctx.passExtent;
@@ -995,7 +1062,7 @@ if (canDeferred)
 						static_cast<float>(lightCount),
 						static_cast<float>(spotShadows.size()),
 						static_cast<float>(pointShadows.size()),
-						0.0f
+						static_cast<float>(activeReflectionProbeCount)
 					};
 
 					constants.uShadowBias = {
@@ -1908,27 +1975,6 @@ else
 
 			constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, envSourceForGBuffer };
 			constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, probeIdxNForGBuffer };
-
-			if (usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 &&
-				static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
-			{
-				const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-				const float h = settings_.reflectionProbeBoxHalfExtent;
-
-				constants.uEnvProbeBoxMin = {
-					probe.capturePos.x - h,
-					probe.capturePos.y - h,
-					probe.capturePos.z - h,
-					envSourceForGBuffer
-				};
-
-				constants.uEnvProbeBoxMax = {
-					probe.capturePos.x + h,
-					probe.capturePos.y + h,
-					probe.capturePos.z + h,
-					probeIdxNForGBuffer
-				};
-			}
 
 			// IA (instanced)
 			ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);

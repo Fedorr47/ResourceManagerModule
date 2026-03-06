@@ -371,6 +371,7 @@ export namespace rendern
 		std::uint32_t instanceBufferSizeBytes_{ kDefaultInstanceBufferSizeBytes };
 		rhi::BufferHandle highlightInstanceBuffer_{}; // single-instance VB for selection highlight
 
+		rhi::BufferHandle reflectionProbeMetaBuffer_{};
 
 		// Shadow pass
 		rhi::PipelineHandle psoShadow_{};
