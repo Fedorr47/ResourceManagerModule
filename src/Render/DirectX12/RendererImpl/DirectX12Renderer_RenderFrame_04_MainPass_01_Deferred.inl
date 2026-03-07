@@ -1,16 +1,13 @@
 if (canDeferred)
 {
-	// Precompute camera matrices once for deferred passes.
-	const float aspect = scDesc.extent.height
-		? (static_cast<float>(scDesc.extent.width) / static_cast<float>(scDesc.extent.height))
-		: 1.0f;
-	const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-	const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-	const mathUtils::Mat4 viewProj = proj * view;
-	const mathUtils::Mat4 invViewProj = mathUtils::Inverse(viewProj);
-	const mathUtils::Mat4 invViewProjT = mathUtils::Transpose(invViewProj);
-	const mathUtils::Vec3 camPosLocal = scene.camera.position;
-	const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+	const FrameCameraData frameCamera = BuildFrameCameraData(scene, scDesc.extent);
+	const mathUtils::Mat4& proj = frameCamera.proj;
+	const mathUtils::Mat4& view = frameCamera.view;
+	const mathUtils::Mat4& viewProj = frameCamera.viewProj;
+	const mathUtils::Mat4& invViewProj = frameCamera.invViewProj;
+	const mathUtils::Mat4& invViewProjT = frameCamera.invViewProjT;
+	const mathUtils::Vec3& camPosLocal = frameCamera.camPos;
+	const mathUtils::Vec3& camFLocal = frameCamera.camForward;
 
 	std::vector<DeferredReflectionProbeGpu> deferredReflectionProbes;
 	std::vector<int> deferredReflectionProbeRemap;
@@ -169,16 +166,10 @@ if (canDeferred)
 			ctx.commandList.SetState(state_);
 			ctx.commandList.BindPipeline(psoDeferredGBuffer_);
 
-			const float aspect = extent.height
-				? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-				: 1.0f;
-
-			const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-			const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-			const mathUtils::Mat4 viewProj = proj * view;
-
-			const mathUtils::Vec3 camPosLocal = scene.camera.position;
-			const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+			const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+			const mathUtils::Mat4& viewProj = camera.viewProj;
+			const mathUtils::Vec3& camPosLocal = camera.camPos;
+			const mathUtils::Vec3& camFLocal = camera.camForward;
 
 			// Flags must match shader.
 			constexpr std::uint32_t kFlagUseTex = 1u << 0;
@@ -330,14 +321,8 @@ if (canDeferred)
 					static_cast<int>(extent.width),
 					static_cast<int>(extent.height));
 
-				const float aspect = extent.height
-					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-					: 1.0f;
-				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-				const mathUtils::Mat4 viewProj = proj * view;
-				const mathUtils::Mat4 invViewProj = mathUtils::Inverse(viewProj);
-				const mathUtils::Mat4 invViewProjT = mathUtils::Transpose(invViewProj);
+				const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+				const mathUtils::Mat4& invViewProjT = camera.invViewProjT;
 
 				SSAOConstants c{};
 				std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
@@ -487,12 +472,9 @@ if (canDeferred)
 			{
 				const auto extent = ctx.passExtent;
 
-				const float aspect = extent.height
-					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-					: 1.0f;
-
-				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
+				const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+				const mathUtils::Mat4& proj = camera.proj;
+				const mathUtils::Mat4& view = camera.view;
 
 				if (scene.skyboxDescIndex != 0)
 				{
@@ -604,14 +586,10 @@ if (canDeferred)
 					static_cast<int>(extent.width),
 					static_cast<int>(extent.height));
 
-				const float aspect = extent.height
-					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-					: 1.0f;
-				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-				const mathUtils::Mat4 viewProj = proj * view;
-				const mathUtils::Vec3 camPosLocal = scene.camera.position;
-				const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+				const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+				const mathUtils::Mat4& viewProj = camera.viewProj;
+				const mathUtils::Vec3& camPosLocal = camera.camPos;
+				const mathUtils::Vec3& camFLocal = camera.camForward;
 
 				DrawEditorSelectionGroup(
 					ctx,
@@ -794,14 +772,10 @@ if (canDeferred)
 					static_cast<int>(extent.width),
 					static_cast<int>(extent.height));
 
-				const float aspect = extent.height
-					? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-					: 1.0f;
-				const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-				const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-				const mathUtils::Mat4 viewProj = proj * view;
-				const mathUtils::Vec3 camPosLocal = scene.camera.position;
-				const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+				const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+				const mathUtils::Mat4& viewProj = camera.viewProj;
+				const mathUtils::Vec3& camPosLocal = camera.camPos;
+				const mathUtils::Vec3& camFLocal = camera.camForward;
 
 				DrawEditorSelectionGroup(
 					ctx,

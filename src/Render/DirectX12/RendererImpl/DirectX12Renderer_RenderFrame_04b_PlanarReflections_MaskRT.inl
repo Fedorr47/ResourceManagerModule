@@ -73,15 +73,13 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 					ctx.commandList.BindPipeline(psoHighlight_);
 
-					const float aspect = e.height ? (static_cast<float>(e.width) / static_cast<float>(e.height)) : 1.0f;
-					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(proj * view);
+					const FrameCameraData camera = BuildFrameCameraData(scene, e);
+					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(camera.viewProj);
 
 					PerBatchConstants constants{};
 					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
 					std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
-					constants.uCameraAmbient = { scene.camera.position.x, scene.camera.position.y, scene.camera.position.z, 0.0f };
+					constants.uCameraAmbient = { camera.camPos.x, camera.camPos.y, camera.camPos.z, 0.0f };
 					constants.uCameraForward = { 0.0f, 0.0f, 0.0f, 0.0f };
 					// CORE_HIGHLIGHT path uses uBaseColor; write mask into alpha.
 					constants.uBaseColor = { 0.0f, 0.0f, 0.0f, 1.0f };
@@ -116,152 +114,151 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 			graph.AddPass(std::string("PlanarReflScene_") + std::to_string(mirrorIndex), std::move(att),
 				[this,
-				&scene, 
-				shadowRG, 
-				dirLightViewProj, 
-				lightCount, 
-				spotShadows, 
-				pointShadows, 
-				mainBatches, 
-				captureMainBatchesNoCull, 
-				instStride, 
-				planeN, 
+				&scene,
+				shadowRG,
+				viewProj,
+				dirLightViewProj,
+				lightCount,
+				spotShadows,
+				pointShadows,
+				mainBatches,
+				captureMainBatchesNoCull,
+				instStride,
+				planeN,
 				planeD,
 				ResolveMainPassMaterialPerm,
 				ResolveOpaqueEnvBinding,
 				BindMainPassMaterialTextures,
 				BuildMainPassMaterialFlags
 				](renderGraph::PassContext& ctx)
+			{
+				const auto e = ctx.passExtent;
+				ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
+
+				const FrameCameraData camera = BuildFrameCameraData(scene, e);
+				const mathUtils::Mat4& proj = camera.proj;
+				const mathUtils::Vec3& camPosLocal = camera.camPos;
+				const mathUtils::Vec3& camFLocal = camera.camForward;
+
+				const mathUtils::Mat4 reflectW = mathUtils::MakeReflectionMatrix(planeN, planeD);
+				const mathUtils::Mat4 viewProjReflT = mathUtils::Transpose(viewProj * reflectW);
+
+				ctx.commandList.SetStencilRef(0u);
+				ctx.commandList.SetState(planarReflectedState_);
+
+				// --- Skybox in planar reflection: draw into reflColor (background) ---
+				// reflDepth was cleared to 1.0f, so regular skybox depth-test works here.
+				if (scene.skyboxDescIndex != 0)
 				{
-					const auto e = ctx.passExtent;
-					ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
+					const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
+					const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
+					const mathUtils::Vec3 camUpRefl = ReflectVector(scene.camera.up, planeN);
 
-					const float aspect = e.height ? (static_cast<float>(e.width) / static_cast<float>(e.height)) : 1.0f;
-					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-					const mathUtils::Mat4 viewProj = proj * view;
-					const mathUtils::Vec3 camPosLocal = scene.camera.position;
-					const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+					const mathUtils::Mat4 viewRefl = mathUtils::LookAt(
+						camPosRefl,
+						camPosRefl + camFwdRefl,
+						camUpRefl);
 
-					const mathUtils::Mat4 reflectW = mathUtils::MakeReflectionMatrix(planeN, planeD);
-					const mathUtils::Mat4 viewProjReflT = mathUtils::Transpose(viewProj * reflectW);
+					mathUtils::Mat4 viewReflNoTranslation = viewRefl;
+					viewReflNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
-					ctx.commandList.SetStencilRef(0u);
+					const mathUtils::Mat4 viewProjSkyReflT =
+						mathUtils::Transpose(proj * viewReflNoTranslation);
+
+					SkyboxConstants sky{};
+					std::memcpy(sky.uViewProj.data(), mathUtils::ValuePtr(viewProjSkyReflT), sizeof(float) * 16);
+
+					rhi::GraphicsState skyState = skyboxState_;
+					// No stencil needed here: reflColor will be masked later by maskTex in PlanarComposite.
+					skyState.depth.stencil.enable = false;
+
+					ctx.commandList.SetState(skyState);
+					ctx.commandList.BindPipeline(psoSkybox_);
+					ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex);
+					ctx.commandList.BindInputLayout(skyboxMesh_.layout);
+					ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
+					ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
+					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &sky, 1 }));
+					ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0, 1, 0);
+
+					// Restore for reflected meshes
 					ctx.commandList.SetState(planarReflectedState_);
+				}
 
-					// --- Skybox in planar reflection: draw into reflColor (background) ---
-	// reflDepth was cleared to 1.0f, so regular skybox depth-test works here.
-					if (scene.skyboxDescIndex != 0)
+				// Bind shadows + lights like in the forward main pass.
+				ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(shadowRG));
+				for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
+				{
+					ctx.commandList.BindTexture2D(3 + static_cast<std::uint32_t>(spotShadowIndex), ctx.resources.GetTexture(spotShadows[spotShadowIndex].tex));
+				}
+				for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
+				{
+					ctx.commandList.BindTexture2DArray(7 + static_cast<std::uint32_t>(pointShadowIndex), ctx.resources.GetTexture(pointShadows[pointShadowIndex].cube));
+				}
+				ctx.commandList.BindStructuredBufferSRV(11, shadowDataBuffer_);
+				ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
+
+				const auto& planarBatches = !captureMainBatchesNoCull.empty() ? captureMainBatchesNoCull : mainBatches;
+
+				for (const Batch& batch : planarBatches)
+				{
+					if (!batch.mesh || batch.instanceCount == 0)
 					{
-						const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
-						const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
-						const mathUtils::Vec3 camUpRefl = ReflectVector(scene.camera.up, planeN);
-
-						const mathUtils::Mat4 viewRefl = mathUtils::LookAt(
-							camPosRefl,
-							camPosRefl + camFwdRefl,
-							camUpRefl);
-
-						mathUtils::Mat4 viewReflNoTranslation = viewRefl;
-						viewReflNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
-
-						const mathUtils::Mat4 viewProjSkyReflT =
-							mathUtils::Transpose(proj * viewReflNoTranslation);
-
-						SkyboxConstants sky{};
-						std::memcpy(sky.uViewProj.data(), mathUtils::ValuePtr(viewProjSkyReflT), sizeof(float) * 16);
-
-						rhi::GraphicsState skyState = skyboxState_;
-						// No stencil needed here: reflColor will be masked later by maskTex in PlanarComposite.
-						skyState.depth.stencil.enable = false;
-
-						ctx.commandList.SetState(skyState);
-						ctx.commandList.BindPipeline(psoSkybox_);
-						ctx.commandList.BindTextureDesc(0, scene.skyboxDescIndex);
-						ctx.commandList.BindInputLayout(skyboxMesh_.layout);
-						ctx.commandList.BindVertexBuffer(0, skyboxMesh_.vertexBuffer, skyboxMesh_.vertexStrideBytes, 0);
-						ctx.commandList.BindIndexBuffer(skyboxMesh_.indexBuffer, skyboxMesh_.indexType, 0);
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &sky, 1 }));
-						ctx.commandList.DrawIndexed(skyboxMesh_.indexCount, skyboxMesh_.indexType, 0, 0, 1, 0);
-
-						// Restore for reflected meshes
-						ctx.commandList.SetState(planarReflectedState_);
+						continue;
 					}
 
-					// Bind shadows + lights like in the forward main pass.
-					ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(shadowRG));
-					for (std::size_t spotShadowIndex = 0; spotShadowIndex < spotShadows.size(); ++spotShadowIndex)
+					MaterialPerm perm = ResolveMainPassMaterialPerm(batch.material, batch.materialHandle);
+
+					if (HasFlag(perm, MaterialPerm::PlanarMirror))
 					{
-						ctx.commandList.BindTexture2D(3 + static_cast<std::uint32_t>(spotShadowIndex), ctx.resources.GetTexture(spotShadows[spotShadowIndex].tex));
+						continue;
 					}
-					for (std::size_t pointShadowIndex = 0; pointShadowIndex < pointShadows.size(); ++pointShadowIndex)
+
+					const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
+					const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
+
+					ctx.commandList.BindPipeline(PlanarPipelineFor(perm));
+					const ResolvedMaterialEnvBinding env = ResolveOpaqueEnvBinding(batch.materialHandle, batch.reflectionProbeIndex);
+					BindMainPassMaterialTextures(ctx.commandList, batch.material, env);
+
+					const std::uint32_t flags = BuildMainPassMaterialFlags(batch.material, useTex, useShadow, env);
+
+					PerBatchConstants constants{};
+					const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
+					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjReflT), sizeof(float) * 16);
+					std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
+
+					const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
+					constants.uCameraAmbient = { camPosRefl.x, camPosRefl.y, camPosRefl.z, 0.22f };
+					const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
+					constants.uCameraForward = { camFwdRefl.x, camFwdRefl.y, camFwdRefl.z, planeN.z };
+					constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
+
+					const float materialBiasTexels = batch.material.shadowBias;
+					constants.uMaterialFlags = { planeN.x, planeN.y, materialBiasTexels, AsFloatBits(flags) };
+
+					constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
+					constants.uCounts = { float(lightCount), float(spotShadows.size()), float(pointShadows.size()), (planeD - 0.05f) };
+					constants.uShadowBias = { settings_.dirShadowBaseBiasTexels, settings_.spotShadowBaseBiasTexels, settings_.pointShadowBaseBiasTexels, settings_.shadowSlopeScaleTexels };
+					constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
+					constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
+
+					if (env.usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
 					{
-						ctx.commandList.BindTexture2DArray(7 + static_cast<std::uint32_t>(pointShadowIndex), ctx.resources.GetTexture(pointShadows[pointShadowIndex].cube));
+						const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
+						const float h = settings_.reflectionProbeBoxHalfExtent;
+						constants.uEnvProbeBoxMin = { probe.capturePos.x - h, probe.capturePos.y - h, probe.capturePos.z - h, 0.0f };
+						constants.uEnvProbeBoxMax = { probe.capturePos.x + h, probe.capturePos.y + h, probe.capturePos.z + h, 0.0f };
 					}
-					ctx.commandList.BindStructuredBufferSRV(11, shadowDataBuffer_);
-					ctx.commandList.BindStructuredBufferSRV(2, lightsBuffer_);
 
-					const auto& planarBatches = !captureMainBatchesNoCull.empty() ? captureMainBatchesNoCull : mainBatches;
-
-					for (const Batch& batch : planarBatches)
-					{
-						if (!batch.mesh || batch.instanceCount == 0)
-						{
-							continue;
-						}
-
-						MaterialPerm perm = ResolveMainPassMaterialPerm(batch.material, batch.materialHandle);
-
-						if (HasFlag(perm, MaterialPerm::PlanarMirror))
-						{
-							continue;
-						}
-
-						const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
-						const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
-
-						ctx.commandList.BindPipeline(PlanarPipelineFor(perm));
-						const ResolvedMaterialEnvBinding env = ResolveOpaqueEnvBinding(batch.materialHandle, batch.reflectionProbeIndex);
-						BindMainPassMaterialTextures(ctx.commandList, batch.material, env);
-
-						const std::uint32_t flags = BuildMainPassMaterialFlags(batch.material, useTex, useShadow, env);
-
-						PerBatchConstants constants{};
-						const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
-						std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjReflT), sizeof(float) * 16);
-						std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(dirVP_T), sizeof(float) * 16);
-
-						const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
-						constants.uCameraAmbient = { camPosRefl.x, camPosRefl.y, camPosRefl.z, 0.22f };
-						const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
-						constants.uCameraForward = { camFwdRefl.x, camFwdRefl.y, camFwdRefl.z, planeN.z };
-						constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
-
-						const float materialBiasTexels = batch.material.shadowBias;
-						constants.uMaterialFlags = { planeN.x, planeN.y, materialBiasTexels, AsFloatBits(flags) };
-
-						constants.uPbrParams = { batch.material.metallic, batch.material.roughness, batch.material.ao, batch.material.emissiveStrength };
-						constants.uCounts = { float(lightCount), float(spotShadows.size()), float(pointShadows.size()), (planeD - 0.05f) };
-						constants.uShadowBias = { settings_.dirShadowBaseBiasTexels, settings_.spotShadowBaseBiasTexels, settings_.pointShadowBaseBiasTexels, settings_.shadowSlopeScaleTexels };
-						constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
-						constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
-
-						if (env.usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
-						{
-							const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-							const float h = settings_.reflectionProbeBoxHalfExtent;
-							constants.uEnvProbeBoxMin = { probe.capturePos.x - h, probe.capturePos.y - h, probe.capturePos.z - h, 0.0f };
-							constants.uEnvProbeBoxMax = { probe.capturePos.x + h, probe.capturePos.y + h, probe.capturePos.z + h, 0.0f };
-						}
-
-						ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
-						ctx.commandList.BindVertexBuffer(0, batch.mesh->vertexBuffer, batch.mesh->vertexStrideBytes, 0);
-						ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batch.instanceOffset * instStride);
-						ctx.commandList.BindIndexBuffer(batch.mesh->indexBuffer, batch.mesh->indexType, 0);
-						ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
-						ctx.commandList.DrawIndexed(batch.mesh->indexCount, batch.mesh->indexType, 0, 0, batch.instanceCount, 0);
-					}
-				});
+					ctx.commandList.BindInputLayout(batch.mesh->layoutInstanced);
+					ctx.commandList.BindVertexBuffer(0, batch.mesh->vertexBuffer, batch.mesh->vertexStrideBytes, 0);
+					ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, batch.instanceOffset * instStride);
+					ctx.commandList.BindIndexBuffer(batch.mesh->indexBuffer, batch.mesh->indexType, 0);
+					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+					ctx.commandList.DrawIndexed(batch.mesh->indexCount, batch.mesh->indexType, 0, 0, batch.instanceCount, 0);
+				}
+			});
 		}
 
 		// (3) Composite into SceneColor (alpha blend by mask).
@@ -305,6 +302,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 				[this, &scene, mirror, instStride](renderGraph::PassContext& ctx)
 				{
 					const auto e = ctx.passExtent;
+					const FrameCameraData camera = BuildFrameCameraData(scene, e);
 					ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
 					ctx.commandList.SetState(planarMaskState_);
 					ctx.commandList.SetStencilRef(0u);
@@ -319,7 +317,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 					PerBatchConstants constants{};
 					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
 					std::memcpy(constants.uLightViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
-					constants.uCameraAmbient = { scene.camera.position.x, scene.camera.position.y, scene.camera.position.z, 0.0f };
+					constants.uCameraAmbient = { camera.camPos.x, camera.camPos.y, camera.camPos.z, 0.0f };
 					constants.uCameraForward = { 0.0f, 0.0f, 0.0f, 0.0f };
 					constants.uBaseColor = { 0.0f, 0.0f, 0.0f, 0.0f };
 					constants.uMaterialFlags = { 0.0f, 0.0f, 0.0f, AsFloatBits(0u) };

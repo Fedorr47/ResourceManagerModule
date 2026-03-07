@@ -58,22 +58,8 @@ if (canForwardSSAO)
 			const auto extent = ctx.passExtent;
 			ctx.commandList.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
 
-			const float aspect = extent.height
-				? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-				: 1.0f;
-
-			const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(
-				mathUtils::DegToRad(scene.camera.fovYDeg),
-				aspect,
-				scene.camera.nearZ,
-				scene.camera.farZ);
-			const mathUtils::Mat4 view = mathUtils::LookAt(
-				scene.camera.position,
-				scene.camera.target,
-				scene.camera.up);
-			const mathUtils::Mat4 viewProj = proj * view;
-			const mathUtils::Mat4 invViewProj = mathUtils::Inverse(viewProj);
-			const mathUtils::Mat4 invViewProjT = mathUtils::Transpose(invViewProj);
+			const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+			const mathUtils::Mat4& invViewProjT = camera.invViewProjT;
 
 			SSAOConstants c{};
 			std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
@@ -181,16 +167,12 @@ graph.AddPass("ForwardMainPass", std::move(mainAtt), [
 	// If we ran a depth prepass, keep depth read-only in the main pass.
 	ctx.commandList.SetState(doDepthPrepass ? mainAfterPreDepthState_ : state_);
 
-	const float aspect = extent.height
-		? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-		: 1.0f;
-
-	const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-	const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-	const mathUtils::Vec3 camPosLocal = scene.camera.position;
-
-	const mathUtils::Vec3 camFLocal = mathUtils::Normalize(scene.camera.target - scene.camera.position);
-	const mathUtils::Mat4 viewProj = proj * view;
+	const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+	const mathUtils::Mat4& proj = camera.proj;
+	const mathUtils::Mat4& view = camera.view;
+	const mathUtils::Mat4& viewProj = camera.viewProj;
+	const mathUtils::Vec3& camPosLocal = camera.camPos;
+	const mathUtils::Vec3& camFLocal = camera.camForward;
 
 	// --- Skybox draw ---
 	{
@@ -462,26 +444,12 @@ if (canForwardSSAO)
 
 if (settings_.enableFog && psoFog_)
 {
-	const float aspect = scDesc.extent.height
-		? (static_cast<float>(scDesc.extent.width) / static_cast<float>(scDesc.extent.height))
-		: 1.0f;
-	const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(
-		mathUtils::DegToRad(scene.camera.fovYDeg),
-		aspect,
-		scene.camera.nearZ,
-		scene.camera.farZ);
-	const mathUtils::Mat4 view = mathUtils::LookAt(
-		scene.camera.position,
-		scene.camera.target,
-		scene.camera.up);
-	const mathUtils::Mat4 viewProj = proj * view;
-	const mathUtils::Mat4 invViewProj = mathUtils::Inverse(viewProj);
-	const mathUtils::Mat4 invViewProjT = mathUtils::Transpose(invViewProj);
-
+	const FrameCameraData camera = BuildFrameCameraData(scene, scDesc.extent);
 
 	FogConstants c{};
+	const mathUtils::Mat4& invViewProjT = camera.invViewProjT;
 	std::memcpy(c.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);
-	c.uCameraPos = { scene.camera.position.x, scene.camera.position.y, scene.camera.position.z, 0.0f };
+	c.uCameraPos = { camera.camPos.x, camera.camPos.y, camera.camPos.z, 0.0f };
 	c.uFogParams = { settings_.fogStart, settings_.fogEnd, settings_.fogDensity, static_cast<float>(settings_.fogMode) };
 	c.uFogColor = { settings_.fogColor[0], settings_.fogColor[1], settings_.fogColor[2], settings_.enableFog ? 1.0f : 0.0f };
 
