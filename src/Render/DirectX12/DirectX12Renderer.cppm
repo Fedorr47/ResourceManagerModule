@@ -181,6 +181,32 @@ export namespace rendern
 			return data;
 		}
 
+		static FrameCameraData BuildReflectedFrameCameraData(
+			const FrameCameraData& baseCamera,
+			const mathUtils::Vec3& planeN,
+			float planeD) noexcept
+		{
+			FrameCameraData reflected = baseCamera;
+
+			const mathUtils::Mat4 reflectW = mathUtils::MakeReflectionMatrix(planeN, planeD);
+
+			reflected.view = baseCamera.view * reflectW;
+			reflected.viewProj = baseCamera.proj * reflected.view;
+			reflected.invViewProj = mathUtils::Inverse(reflected.viewProj);
+
+			const mathUtils::Vec4 camPos4 =
+				reflectW * mathUtils::Vec4(baseCamera.camPos, 1.0f);
+
+			reflected.camPos = mathUtils::Vec3(camPos4.xyz());
+
+			const mathUtils::Vec4 fwd4 =
+				reflectW * mathUtils::Vec4(baseCamera.camForward, 0.0f);
+
+			reflected.camForward = mathUtils::Normalize(mathUtils::Vec3(fwd4.x, fwd4.y, fwd4.z));
+
+			return reflected;
+		}
+
 		std::uint32_t UploadLights(const Scene& scene, const mathUtils::Vec3& camPos)
 		{
 #include "RendererImpl/DirectX12Renderer_UploadLights.inl"

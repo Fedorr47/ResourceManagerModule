@@ -139,12 +139,12 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 				ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
 
 				const FrameCameraData camera = BuildFrameCameraData(scene, e);
-				const mathUtils::Mat4& proj = camera.proj;
-				const mathUtils::Vec3& camPosLocal = camera.camPos;
-				const mathUtils::Vec3& camFLocal = camera.camForward;
+				const FrameCameraData reflectedCamera =
+					BuildReflectedFrameCameraData(camera, planeN, planeD);
 
-				const mathUtils::Mat4 reflectW = mathUtils::MakeReflectionMatrix(planeN, planeD);
-				const mathUtils::Mat4 viewProjReflT = mathUtils::Transpose(viewProj * reflectW);
+				const mathUtils::Mat4& proj = reflectedCamera.proj;
+				const mathUtils::Vec3& camPosLocal = reflectedCamera.camPos;
+				const mathUtils::Vec3& camFLocal = reflectedCamera.camForward;
 
 				ctx.commandList.SetStencilRef(0u);
 				ctx.commandList.SetState(planarReflectedState_);
@@ -153,16 +153,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 				// reflDepth was cleared to 1.0f, so regular skybox depth-test works here.
 				if (scene.skyboxDescIndex != 0)
 				{
-					const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
-					const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
-					const mathUtils::Vec3 camUpRefl = ReflectVector(scene.camera.up, planeN);
-
-					const mathUtils::Mat4 viewRefl = mathUtils::LookAt(
-						camPosRefl,
-						camPosRefl + camFwdRefl,
-						camUpRefl);
-
-					mathUtils::Mat4 viewReflNoTranslation = viewRefl;
+					mathUtils::Mat4 viewReflNoTranslation = reflectedCamera.view;
 					viewReflNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
 					const mathUtils::Mat4 viewProjSkyReflT =
@@ -227,10 +218,14 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 					const std::uint32_t flags = BuildMainPassMaterialFlags(batch.material, useTex, useShadow, env);
 
 					PerBatchConstants constants{};
-					
-					const mathUtils::Vec3 camPosRefl = ReflectPoint(camPosLocal, planeN, planeD);
-					const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
-					FillPerBatchViewLightingConstants(constants, mathUtils::Transpose(viewProjReflT), dirLightViewProj, camPosRefl, camFwdRefl, 0.22f, planeN.z);
+					FillPerBatchViewLightingConstants(
+						constants,
+						reflectedCamera.viewProj,
+						dirLightViewProj,
+						reflectedCamera.camPos,
+						reflectedCamera.camForward,
+						0.22f,
+						planeN.z);
 					constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
 
 					const float materialBiasTexels = batch.material.shadowBias;
@@ -267,7 +262,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			att.clearDesc.clearStencil = false;
 
 			graph.AddPass(std::string("PlanarComposite_") + std::to_string(mirrorIndex), std::move(att),
-				[this, &scene, view, proj, maskTex, reflColor, planeN, planeD](renderGraph::PassContext& ctx)
+				[this, maskTex, reflColor](renderGraph::PassContext& ctx)
 				{
 					const auto e = ctx.passExtent;
 					ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
@@ -304,10 +299,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 					ctx.commandList.BindPipeline(psoHighlight_);
 
-					const float aspect = e.height ? (static_cast<float>(e.width) / static_cast<float>(e.height)) : 1.0f;
-					const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(mathUtils::DegToRad(scene.camera.fovYDeg), aspect, scene.camera.nearZ, scene.camera.farZ);
-					const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(proj * view);
+					const mathUtils::Mat4 viewProjT = mathUtils::Transpose(camera.viewProj);
 
 					PerBatchConstants constants{};
 					std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
