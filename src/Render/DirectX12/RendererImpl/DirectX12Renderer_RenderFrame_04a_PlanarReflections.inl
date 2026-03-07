@@ -2,17 +2,6 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 {
 	const mathUtils::Mat4 viewProjT = mathUtils::Transpose(viewProj);
 
-	constexpr std::uint32_t kMaterialFlagUseTex = 1u << 0;
-	constexpr std::uint32_t kMaterialFlagUseShadow = 1u << 1;
-	constexpr std::uint32_t kMaterialFlagUseNormal = 1u << 2;
-	constexpr std::uint32_t kMaterialFlagUseMetalTex = 1u << 3;
-	constexpr std::uint32_t kMaterialFlagUseRoughTex = 1u << 4;
-	constexpr std::uint32_t kMaterialFlagUseAOTex = 1u << 5;
-	constexpr std::uint32_t kMaterialFlagUseEmissiveTex = 1u << 6;
-	constexpr std::uint32_t kMaterialFlagUseEnv = 1u << 7;
-	constexpr std::uint32_t kMaterialFlagEnvForceMip0 = 1u << 8;
-	constexpr std::uint32_t kMaterialFlagEnvFlipZ = 1u << 9;
-
 	std::uint32_t mirrorIndex = 0u;
 
 	for (const PlanarMirrorDraw& mirror : planarMirrorDraws)
@@ -33,7 +22,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			planeN = -planeN;
 			planeD = -planeD;
 		}
-		
+
 		// ---------------- (1) Stencil mask: visible mirror pixels -> stencil = ref ----------------
 		ctx.commandList.SetState(planarMaskState_);
 		ctx.commandList.SetStencilRef(1u + mirrorIndex);
@@ -45,7 +34,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 		ctx.commandList.BindInputLayout(mirror.mesh->layoutInstanced);
 		ctx.commandList.BindVertexBuffer(0, mirror.mesh->vertexBuffer, mirror.mesh->vertexStrideBytes, 0);
-		ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, mirror.instanceOffset* instStride);
+		ctx.commandList.BindVertexBuffer(1, instanceBuffer_, instStride, mirror.instanceOffset * instStride);
 		ctx.commandList.BindIndexBuffer(mirror.mesh->indexBuffer, mirror.mesh->indexType, 0);
 		ctx.commandList.DrawIndexed(mirror.mesh->indexCount, mirror.mesh->indexType, 0, 0, 1, 0);
 
@@ -53,7 +42,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 		const mathUtils::Mat4 reflectW = mathUtils::MakeReflectionMatrix(planeN, planeD);
 		const mathUtils::Mat4 viewProjRefl = viewProj * reflectW;
 		const mathUtils::Mat4 viewProjReflT = mathUtils::Transpose(viewProjRefl);
-		
+
 		ctx.commandList.SetState(planarReflectedState_);
 		ctx.commandList.SetStencilRef(1u + mirrorIndex);
 
@@ -68,25 +57,17 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 		if (scene.skyboxDescIndex != 0)
 		{
 			const auto extent = ctx.passExtent;
-			const float aspect = extent.height
-				? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-				: 1.0f;
+			const FrameCameraData camera = BuildFrameCameraData(scene, extent);
 
-			const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(
-				mathUtils::DegToRad(scene.camera.fovYDeg),
-				aspect,
-				scene.camera.nearZ,
-				scene.camera.farZ);
+			mathUtils::Mat4 viewNoTranslation = camera.view;
 
-			mathUtils::Mat4 viewNoTranslation =
-				mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
 			viewNoTranslation[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
 			mathUtils::Mat4 reflectDir = reflectW;
 			reflectDir[3] = mathUtils::Vec4(0.0f, 0.0f, 0.0f, 1.0f);
 
 			const mathUtils::Mat4 viewProjSkyReflT =
-				mathUtils::Transpose((proj * viewNoTranslation) * reflectDir);
+				mathUtils::Transpose((camera.proj * viewNoTranslation) * reflectDir);
 
 			SkyboxConstants skyConsts{};
 			std::memcpy(
@@ -135,18 +116,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 				continue;
 			}
 
-			MaterialPerm perm = MaterialPerm::UseShadow;
-			if (batch.materialHandle.id != 0)
-			{
-				perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
-			}
-			else
-			{
-				if (batch.material.albedoDescIndex != 0)
-				{
-					perm = perm | MaterialPerm::UseTex;
-				}
-			}
+			MaterialPerm perm = ResolveMainPassMaterialPerm(batch.material, batch.materialHandle);
 			if (HasFlag(perm, MaterialPerm::PlanarMirror))
 			{
 				continue; // avoid self-recursion in planar path
@@ -157,67 +127,10 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 			// Use the regular main pipeline (no special planar defines).
 			ctx.commandList.BindPipeline(PlanarPipelineFor(perm));
-			ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
-			ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
-			ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
-			ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
-			ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
-			ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
+			const ResolvedMaterialEnvBinding env = ResolveOpaqueEnvBinding(batch.materialHandle, batch.reflectionProbeIndex);
+			BindMainPassMaterialTextures(ctx.commandList, batch.material, env);
 
-			rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
-			bool usingReflectionProbeEnv = false;
-			rhi::TextureHandle envArrayTexture{};
-			if (batch.materialHandle.id != 0)
-			{
-				const auto& mat = scene.GetMaterial(batch.materialHandle);
-				if (mat.envSource == EnvSource::ReflectionCapture)
-				{
-					if (settings_.enableReflectionCapture)
-					{
-						if (batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
-						{
-							const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-							if (probe.cubeDescIndex != 0 && probe.cube)
-							{
-								envDescIndex = probe.cubeDescIndex;
-								envArrayTexture = probe.cube;
-								usingReflectionProbeEnv = true;
-							}
-						}
-						else if (reflectionCubeDescIndex_ != 0 && reflectionCube_)
-						{
-							envDescIndex = reflectionCubeDescIndex_;
-							envArrayTexture = reflectionCube_;
-							usingReflectionProbeEnv = true;
-						}
-					}
-				}
-				else
-				{
-					envDescIndex = scene.skyboxDescIndex;
-				}
-			}
-
-			ctx.commandList.BindTextureDesc(17, envDescIndex);
-			if (usingReflectionProbeEnv && envArrayTexture)
-			{
-				ctx.commandList.BindTexture2DArray(18, envArrayTexture);
-			}
-
-			std::uint32_t flags = 0;
-			if (useTex) flags |= kMaterialFlagUseTex;
-			if (useShadow) flags |= kMaterialFlagUseShadow;
-			if (batch.material.normalDescIndex != 0) flags |= kMaterialFlagUseNormal;
-			if (batch.material.metalnessDescIndex != 0) flags |= kMaterialFlagUseMetalTex;
-			if (batch.material.roughnessDescIndex != 0) flags |= kMaterialFlagUseRoughTex;
-			if (batch.material.aoDescIndex != 0) flags |= kMaterialFlagUseAOTex;
-			if (batch.material.emissiveDescIndex != 0) flags |= kMaterialFlagUseEmissiveTex;
-			if (envDescIndex != 0) flags |= kMaterialFlagUseEnv;
-			if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
-			{
-				flags |= kMaterialFlagEnvForceMip0;
-				flags |= kMaterialFlagEnvFlipZ;
-			}
+			const std::uint32_t flags = BuildMainPassMaterialFlags(batch.material, useTex, useShadow, env);
 
 			PerBatchConstants constants{};
 			// plane: n·x + d = 0, and we keep (n·x + d) >= 0
@@ -232,7 +145,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			const mathUtils::Vec3 camFwdRefl = ReflectVector(camFLocal, planeN);
 			constants.uCameraForward = { camFwdRefl.x, camFwdRefl.y, camFwdRefl.z, clipN.z };
 			constants.uBaseColor = { batch.material.baseColor.x, batch.material.baseColor.y, batch.material.baseColor.z, batch.material.baseColor.w };
-			
+
 			const float materialBiasTexels = batch.material.shadowBias;
 			constants.uMaterialFlags = { clipN.x, clipN.y, materialBiasTexels, AsFloatBits(flags) };
 
@@ -241,7 +154,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			constants.uShadowBias = { settings_.dirShadowBaseBiasTexels, settings_.spotShadowBaseBiasTexels, settings_.pointShadowBaseBiasTexels, settings_.shadowSlopeScaleTexels };
 			constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
 			constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
-			if (usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 &&
+			if (env.usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 &&
 				static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
 			{
 				const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];

@@ -115,7 +115,23 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 			att.clearDesc.stencil = 0;
 
 			graph.AddPass(std::string("PlanarReflScene_") + std::to_string(mirrorIndex), std::move(att),
-				[this, &scene, shadowRG, dirLightViewProj, lightCount, spotShadows, pointShadows, mainBatches, captureMainBatchesNoCull, instStride, planeN, planeD](renderGraph::PassContext& ctx)
+				[this,
+				&scene, 
+				shadowRG, 
+				dirLightViewProj, 
+				lightCount, 
+				spotShadows, 
+				pointShadows, 
+				mainBatches, 
+				captureMainBatchesNoCull, 
+				instStride, 
+				planeN, 
+				planeD,
+				ResolveMainPassMaterialPerm,
+				ResolveOpaqueEnvBinding,
+				BindMainPassMaterialTextures,
+				BuildMainPassMaterialFlags
+				](renderGraph::PassContext& ctx)
 				{
 					const auto e = ctx.passExtent;
 					ctx.commandList.SetViewport(0, 0, static_cast<int>(e.width), static_cast<int>(e.height));
@@ -187,17 +203,6 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 					const auto& planarBatches = !captureMainBatchesNoCull.empty() ? captureMainBatchesNoCull : mainBatches;
 
-					constexpr std::uint32_t kFlagUseTex = 1u << 0;
-					constexpr std::uint32_t kFlagUseShadow = 1u << 1;
-					constexpr std::uint32_t kFlagUseNormal = 1u << 2;
-					constexpr std::uint32_t kFlagUseMetalTex = 1u << 3;
-					constexpr std::uint32_t kFlagUseRoughTex = 1u << 4;
-					constexpr std::uint32_t kFlagUseAOTex = 1u << 5;
-					constexpr std::uint32_t kFlagUseEmissiveTex = 1u << 6;
-					constexpr std::uint32_t kFlagUseEnv = 1u << 7;
-					constexpr std::uint32_t kFlagEnvFlipZ = 1u << 8;
-					constexpr std::uint32_t kFlagEnvForceMip0 = 1u << 9;
-
 					for (const Batch& batch : planarBatches)
 					{
 						if (!batch.mesh || batch.instanceCount == 0)
@@ -205,15 +210,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 							continue;
 						}
 
-						MaterialPerm perm = MaterialPerm::UseShadow;
-						if (batch.materialHandle.id != 0)
-						{
-							perm = EffectivePerm(scene.GetMaterial(batch.materialHandle));
-						}
-						else if (batch.material.albedoDescIndex != 0)
-						{
-							perm = perm | MaterialPerm::UseTex;
-						}
+						MaterialPerm perm = ResolveMainPassMaterialPerm(batch.material, batch.materialHandle);
 
 						if (HasFlag(perm, MaterialPerm::PlanarMirror))
 						{
@@ -224,60 +221,10 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 						const bool useShadow = HasFlag(perm, MaterialPerm::UseShadow);
 
 						ctx.commandList.BindPipeline(PlanarPipelineFor(perm));
-						ctx.commandList.BindTextureDesc(0, batch.material.albedoDescIndex);
-						ctx.commandList.BindTextureDesc(12, batch.material.normalDescIndex);
-						ctx.commandList.BindTextureDesc(13, batch.material.metalnessDescIndex);
-						ctx.commandList.BindTextureDesc(14, batch.material.roughnessDescIndex);
-						ctx.commandList.BindTextureDesc(15, batch.material.aoDescIndex);
-						ctx.commandList.BindTextureDesc(16, batch.material.emissiveDescIndex);
+						const ResolvedMaterialEnvBinding env = ResolveOpaqueEnvBinding(batch.materialHandle, batch.reflectionProbeIndex);
+						BindMainPassMaterialTextures(ctx.commandList, batch.material, env);
 
-						rhi::TextureDescIndex envDescIndex = scene.skyboxDescIndex;
-						bool usingReflectionProbeEnv = false;
-						rhi::TextureHandle envArrayTexture{};
-						if (batch.materialHandle.id != 0)
-						{
-							const auto& mat = scene.GetMaterial(batch.materialHandle);
-							if (mat.envSource == EnvSource::ReflectionCapture && settings_.enableReflectionCapture)
-							{
-								if (batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
-								{
-									const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
-									if (probe.cubeDescIndex != 0 && probe.cube)
-									{
-										envDescIndex = probe.cubeDescIndex;
-										envArrayTexture = probe.cube;
-										usingReflectionProbeEnv = true;
-									}
-								}
-								else if (reflectionCubeDescIndex_ != 0 && reflectionCube_)
-								{
-									envDescIndex = reflectionCubeDescIndex_;
-									envArrayTexture = reflectionCube_;
-									usingReflectionProbeEnv = true;
-								}
-							}
-						}
-
-						ctx.commandList.BindTextureDesc(17, envDescIndex);
-						if (usingReflectionProbeEnv && envArrayTexture)
-						{
-							ctx.commandList.BindTexture2DArray(18, envArrayTexture);
-						}
-
-						std::uint32_t flags = 0u;
-						if (useTex) flags |= kFlagUseTex;
-						if (useShadow) flags |= kFlagUseShadow;
-						if (batch.material.normalDescIndex != 0) flags |= kFlagUseNormal;
-						if (batch.material.metalnessDescIndex != 0) flags |= kFlagUseMetalTex;
-						if (batch.material.roughnessDescIndex != 0) flags |= kFlagUseRoughTex;
-						if (batch.material.aoDescIndex != 0) flags |= kFlagUseAOTex;
-						if (batch.material.emissiveDescIndex != 0) flags |= kFlagUseEmissiveTex;
-						if (envDescIndex != 0) flags |= kFlagUseEnv;
-						if (settings_.enableReflectionCapture && usingReflectionProbeEnv)
-						{
-							flags |= kFlagEnvForceMip0;
-							flags |= kFlagEnvFlipZ;
-						}
+						const std::uint32_t flags = BuildMainPassMaterialFlags(batch.material, useTex, useShadow, env);
 
 						PerBatchConstants constants{};
 						const mathUtils::Mat4 dirVP_T = mathUtils::Transpose(dirLightViewProj);
@@ -299,7 +246,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 						constants.uEnvProbeBoxMin = { 0.0f, 0.0f, 0.0f, 0.0f };
 						constants.uEnvProbeBoxMax = { 0.0f, 0.0f, 0.0f, 0.0f };
 
-						if (usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
+						if (env.usingReflectionProbeEnv && batch.reflectionProbeIndex >= 0 && static_cast<std::size_t>(batch.reflectionProbeIndex) < reflectionProbes_.size())
 						{
 							const auto& probe = reflectionProbes_[static_cast<std::size_t>(batch.reflectionProbeIndex)];
 							const float h = settings_.reflectionProbeBoxHalfExtent;

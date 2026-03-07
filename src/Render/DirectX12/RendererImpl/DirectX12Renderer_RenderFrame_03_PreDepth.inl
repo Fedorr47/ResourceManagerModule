@@ -21,20 +21,10 @@ if (doDepthPrepass && psoShadow_)
 			ctx.commandList.SetState(preDepthState_);
 			ctx.commandList.BindPipeline(psoShadow_);
 
-			const float aspect = extent.height
-				? (static_cast<float>(extent.width) / static_cast<float>(extent.height))
-				: 1.0f;
-
-			const mathUtils::Mat4 proj = mathUtils::PerspectiveRH_ZO(
-				mathUtils::DegToRad(scene.camera.fovYDeg),
-				aspect,
-				scene.camera.nearZ,
-				scene.camera.farZ);
-			const mathUtils::Mat4 view = mathUtils::LookAt(scene.camera.position, scene.camera.target, scene.camera.up);
-			const mathUtils::Mat4 viewProj = proj * view;
+			const FrameCameraData camera = BuildFrameCameraData(scene, extent);
 
 			SingleMatrixPassConstants c{};
-			const mathUtils::Mat4 vpT = mathUtils::Transpose(viewProj);
+			const mathUtils::Mat4 vpT = mathUtils::Transpose(camera.viewProj);
 			std::memcpy(c.uLightViewProj.data(), mathUtils::ValuePtr(vpT), sizeof(float) * 16);
 			ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
 

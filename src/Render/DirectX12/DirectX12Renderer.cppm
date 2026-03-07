@@ -347,7 +347,6 @@ export namespace rendern
 	private:
 		static constexpr std::uint32_t kMaxLights = 64;
 		static constexpr std::uint32_t kDefaultInstanceBufferSizeBytes = 8u * 1024u * 1024u; // 8 MB (combined shadow+main instances)
-		static constexpr std::uint32_t kMaxDeferredReflectionProbes = 255u;
 
 		rhi::IRHIDevice& device_;
 		RendererSettings settings_{};
