@@ -105,64 +105,20 @@ void SubmitCommandList(CommandList&& commandList) override
                 desired);
         };
 
+#include "DirectX12RHI_Device_Public_CommandSubmission_PSOHelpers.inl"
+
     auto EnsurePSO = [&](PipelineHandle pipelineHandle, InputLayoutHandle layout) -> ID3D12PipelineState*
         {
-            auto PackState = [&](const GraphicsState& s) -> std::uint64_t
-                {
-                    std::uint64_t v = 0;
-                    std::uint32_t bit = 0;
-                    auto PackBits = [&](std::uint64_t value, std::uint32_t width)
-                        {
-                            const std::uint64_t mask = (width >= 64u) ? ~0ull : ((1ull << width) - 1ull);
-                            v |= (value & mask) << bit;
-                            bit += width;
-                        };
-
-                    PackBits(static_cast<std::uint32_t>(s.rasterizer.cullMode), 2);             // 0..2
-                    PackBits(static_cast<std::uint32_t>(s.rasterizer.frontFace), 1);            // 2
-                    PackBits(s.depth.testEnable ? 1u : 0u, 1);                                  // 3
-                    PackBits(s.depth.writeEnable ? 1u : 0u, 1);                                 // 4
-                    PackBits(static_cast<std::uint32_t>(s.depth.depthCompareOp), 3);            // 5..7
-                    PackBits(s.blend.enable ? 1u : 0u, 1);                                      // 8
-
-                    PackBits(s.depth.stencil.enable ? 1u : 0u, 1);                              // 9
-                    PackBits(static_cast<std::uint32_t>(s.depth.stencil.readMask), 8);          // 10..17
-                    PackBits(static_cast<std::uint32_t>(s.depth.stencil.writeMask), 8);         // 18..25
-
-                    auto PackStencilFace = [&](const StencilFaceState& face)
-                        {
-                            PackBits(static_cast<std::uint32_t>(face.failOp), 3);
-                            PackBits(static_cast<std::uint32_t>(face.depthFailOp), 3);
-                            PackBits(static_cast<std::uint32_t>(face.passOp), 3);
-                            PackBits(static_cast<std::uint32_t>(face.compareOp), 3);
-                        };
-                    PackStencilFace(s.depth.stencil.front);                                     // 26..37
-                    PackStencilFace(s.depth.stencil.back);                                      // 38..49
-                    return v;
-                };
-
-            auto Fnv1a64 = [](std::uint64_t h, std::uint64_t v) -> std::uint64_t
-                {
-                    constexpr std::uint64_t kPrime = 1099511628211ull;
-                    for (int i = 0; i < 8; ++i)
-                    {
-                        const std::uint8_t byte = static_cast<std::uint8_t>((v >> (i * 8)) & 0xffu);
-                        h ^= byte;
-                        h *= kPrime;
-                    }
-                    return h;
-                };
-
             // PSO cache key MUST include: shaders, state, layout, and render-target formats.
             std::uint64_t key = 1469598103934665603ull; // FNV-1a offset basis
-            key = Fnv1a64(key, static_cast<std::uint64_t>(pipelineHandle.id));
-            key = Fnv1a64(key, static_cast<std::uint64_t>(layout.id));
-            key = Fnv1a64(key, static_cast<std::uint64_t>(PackState(curState)));
-            key = Fnv1a64(key, static_cast<std::uint64_t>(curNumRT));
-            key = Fnv1a64(key, static_cast<std::uint64_t>(curDSVFormat));
+            key = HashPsoKeyPart(key, static_cast<std::uint64_t>(pipelineHandle.id));
+            key = HashPsoKeyPart(key, static_cast<std::uint64_t>(layout.id));
+            key = HashPsoKeyPart(key, static_cast<std::uint64_t>(PackGraphicsStateKey(curState)));
+            key = HashPsoKeyPart(key, static_cast<std::uint64_t>(curNumRT));
+            key = HashPsoKeyPart(key, static_cast<std::uint64_t>(curDSVFormat));
             for (std::size_t i = 0; i < curRTVFormats.size(); ++i)
             {
-                key = Fnv1a64(key, static_cast<std::uint64_t>(curRTVFormats[i]));
+                key = HashPsoKeyPart(key, static_cast<std::uint64_t>(curRTVFormats[i]));
             }
 
             if (auto it = psoCache_.find(key); it != psoCache_.end())
@@ -176,29 +132,11 @@ void SubmitCommandList(CommandList&& commandList) override
                 throw std::runtime_error("DX12: pipeline handle not found");
             }
 
-            auto MakeShaderNotFound = [&](const char* which)
-                {
-                    std::string msg = "DX12: shader handle not found (";
-                    msg += which;
-                    msg += ", pipeline='";
-                    msg += pit->second.debugName;
-                    msg += "', pipe=";
-                    msg += std::to_string(pipelineHandle.id);
-                    msg += ", vs=";
-                    msg += std::to_string(pit->second.vs.id);
-                    msg += ", ps=";
-                    msg += std::to_string(pit->second.ps.id);
-                    msg += ", numRT=";
-                    msg += std::to_string(curNumRT);
-                    msg += ")";
-                    throw std::runtime_error(msg);
-                };
-
             auto vsIt = shaders_.find(pit->second.vs.id);
 
             if (vsIt == shaders_.end())
             {
-                MakeShaderNotFound("vs");
+                throw std::runtime_error(BuildMissingShaderMessage(pit->second, pipelineHandle, curNumRT, "vs"));
             }
 
             // Depth-only passes (NumRenderTargets == 0) can omit a pixel shader.
@@ -209,7 +147,7 @@ void SubmitCommandList(CommandList&& commandList) override
                 psIt = shaders_.find(pit->second.ps.id);
                 if (psIt == shaders_.end())
                 {
-                    MakeShaderNotFound("ps");
+                    throw std::runtime_error(BuildMissingShaderMessage(pit->second, pipelineHandle, curNumRT, "ps"));
                 }
             }
 
