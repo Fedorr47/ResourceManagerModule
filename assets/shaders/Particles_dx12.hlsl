@@ -1,3 +1,12 @@
+#ifndef PARTICLE_TEXTURED
+#define PARTICLE_TEXTURED 0
+#endif
+
+SamplerState gLinear : register(s0);
+#if PARTICLE_TEXTURED
+Texture2D gParticleTex : register(t0);
+#endif
+
 cbuffer ParticleCB : register(b0)
 {
     float4x4 uViewProj;
@@ -7,12 +16,12 @@ cbuffer ParticleCB : register(b0)
 
 struct VSIn
 {
-    float3 localPos  : POSITION;
-    float2 uv        : TEXCOORD0;
+    float3 localPos   : POSITION;
+    float2 uv         : TEXCOORD0;
     float4 centerSize : TEXCOORD1;
-    float4 color     : TEXCOORD2;
-    float4 params0   : TEXCOORD3;
-    float4 params1   : TEXCOORD4;
+    float4 color      : TEXCOORD2;
+    float4 params0    : TEXCOORD3;
+    float4 params1    : TEXCOORD4;
 };
 
 struct VSOut
@@ -49,5 +58,12 @@ float4 PSMain(VSOut IN) : SV_Target
     const float r2 = dot(d, d);
     const float falloff = saturate(1.0f - r2);
     const float intensity = falloff * falloff;
+
+#if PARTICLE_TEXTURED
+    const float4 texel = gParticleTex.Sample(gLinear, IN.uv);
+    const float alpha = texel.a * intensity * IN.color.a;
+    return float4(texel.rgb * IN.color.rgb * alpha, alpha);
+#else
     return float4(IN.color.rgb * intensity * IN.color.a, intensity * IN.color.a);
+#endif
 }

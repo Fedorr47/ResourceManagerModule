@@ -142,6 +142,26 @@ export namespace mathUtils
 	constexpr Vec4 operator*(const Vec4& v, float s) noexcept { return Vec4(v.x * s, v.y * s, v.z * s, v.w * s); }
 	constexpr Vec4 operator*(float s, const Vec4& v) noexcept { return v * s; }
 
+	[[nodiscard]] inline constexpr float Lerp(float a, float b, float t) noexcept
+	{
+		return a + (b - a) * t;
+	}
+
+	[[nodiscard]] inline constexpr Vec2 Lerp(const Vec2& a, const Vec2& b, float t) noexcept
+	{
+		return a + (b - a) * t;
+	}
+
+	[[nodiscard]] inline constexpr Vec3 Lerp(const Vec3& a, const Vec3& b, float t) noexcept
+	{
+		return a + (b - a) * t;
+	}
+
+	[[nodiscard]] inline constexpr Vec4 Lerp(const Vec4& a, const Vec4& b, float t) noexcept
+	{
+		return a + (b - a) * t;
+	}
+
 	inline float Dot(const Vec2& a, const Vec2& b) noexcept { return a.x * b.x + a.y * b.y; }
 	inline float Dot(const Vec3& a, const Vec3& b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z; }
 	inline float Dot(const Vec4& a, const Vec4& b) noexcept { return a.x * b.x + a.y * b.y + a.z * b.z + a.w * b.w; }

@@ -214,7 +214,7 @@ export namespace rendern
                 std::max(std::abs(emitter->velocityMin.y), std::abs(emitter->velocityMax.y))),
                 std::max(std::abs(emitter->velocityMin.z), std::abs(emitter->velocityMax.z)));
             const float maxLifetime = std::max(emitter->lifetimeMin, emitter->lifetimeMax);
-            const float radius = std::max(0.35f, jitterRadius + velocityExtent * std::max(0.25f, maxLifetime) + std::max(emitter->sizeMin, emitter->sizeMax));
+            const float radius = std::max(0.35f, jitterRadius + velocityExtent * std::max(0.25f, maxLifetime) + std::max(emitter->sizeBegin, emitter->sizeEnd));
 
             float t = 0.0f;
             if (!IntersectRaySphere(ray, emitter->position, radius, t))

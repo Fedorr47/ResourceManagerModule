@@ -249,6 +249,7 @@
 				const JsonObject& ed = ev.AsObject();
 				ParticleEmitter emitter;
 				emitter.name = GetStringOpt(ed, "name");
+				emitter.textureId = GetStringOpt(ed, "textureId");
 				emitter.enabled = GetBoolOpt(ed, "enabled", emitter.enabled);
 				emitter.looping = GetBoolOpt(ed, "looping", emitter.looping);
 				if (auto* p = TryGet(ed, "position"))
@@ -275,6 +276,18 @@
 				{
 					auto a = ReadFloatArray(*c, 4, "particleEmitters.color");
 					emitter.color = { a[0], a[1], a[2], a[3] };
+					emitter.colorBegin = emitter.color;
+					emitter.colorEnd = emitter.color;
+				}
+				if (auto* c = TryGet(ed, "colorBegin"))
+				{
+					auto a = ReadFloatArray(*c, 4, "particleEmitters.colorBegin");
+					emitter.colorBegin = { a[0], a[1], a[2], a[3] };
+				}
+				if (auto* c = TryGet(ed, "colorEnd"))
+				{
+					auto a = ReadFloatArray(*c, 4, "particleEmitters.colorEnd");
+					emitter.colorEnd = { a[0], a[1], a[2], a[3] };
 				}
 				if (auto* s = TryGet(ed, "size"))
 				{
@@ -284,6 +297,8 @@
 				}
 				emitter.sizeMin = GetFloatOpt(ed, "sizeMin", emitter.sizeMin);
 				emitter.sizeMax = GetFloatOpt(ed, "sizeMax", emitter.sizeMax);
+				emitter.sizeBegin = GetFloatOpt(ed, "sizeBegin", emitter.sizeBegin);
+				emitter.sizeEnd = GetFloatOpt(ed, "sizeEnd", emitter.sizeEnd);
 				if (auto* s = TryGet(ed, "lifetime"))
 				{
 					auto a = ReadFloatArray(*s, 2, "particleEmitters.lifetime");

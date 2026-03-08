@@ -141,13 +141,20 @@ export namespace rendern
 			}
 		}
 
+		struct ParticleDrawBatch
+		{
+			rhi::TextureDescIndex textureDescIndex{ 0 };
+			std::uint32_t instanceOffset{ 0 };
+			std::uint32_t instanceCount{ 0 };
+		};
+
 		void DrawParticleBillboards(
 			rhi::CommandList& commandList,
 			const Scene& scene,
 			const FrameCameraData& camera,
 			std::uint32_t particleCount) const
 		{
-			if (!psoParticles_ || !particleMesh_.vertexBuffer || !particleMesh_.indexBuffer || !particleInstanceBuffer_ || particleCount == 0)
+			if (!psoParticles_ || !particleMesh_.vertexBuffer || !particleMesh_.indexBuffer || !particleInstanceBuffer_ || particleCount == 0 || particleBatches_.empty())
 			{
 				return;
 			}
@@ -168,14 +175,28 @@ export namespace rendern
 			constants.uCameraUp = { up.x, up.y, up.z, 0.0f };
 
 			commandList.SetState(particleState_);
-			commandList.BindPipeline(psoParticles_);
 			commandList.BindInputLayout(particleMesh_.layoutInstanced);
 			commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
 			commandList.BindVertexBuffer(0, particleMesh_.vertexBuffer, particleMesh_.vertexStrideBytes, 0);
 			commandList.BindVertexBuffer(1, particleInstanceBuffer_, static_cast<std::uint32_t>(sizeof(ParticleInstanceData)), 0);
 			commandList.BindIndexBuffer(particleMesh_.indexBuffer, particleMesh_.indexType, 0);
 			commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
-			commandList.DrawIndexed(particleMesh_.indexCount, particleMesh_.indexType, 0, 0, particleCount, 0);
+
+			for (const ParticleDrawBatch& batch : particleBatches_)
+			{
+				if (batch.instanceCount == 0)
+				{
+					continue;
+				}
+
+				const bool textured = (batch.textureDescIndex != 0) && psoParticlesTextured_;
+				commandList.BindPipeline(textured ? psoParticlesTextured_ : psoParticles_);
+				if (textured)
+				{
+					commandList.BindTextureDesc(0, batch.textureDescIndex);
+				}
+				commandList.DrawIndexed(particleMesh_.indexCount, particleMesh_.indexType, 0, 0, batch.instanceCount, batch.instanceOffset);
+			}
 		}
 
 		rhi::PipelineHandle PlanarPipelineFor(MaterialPerm perm) const noexcept
@@ -440,7 +461,8 @@ export namespace rendern
 		rhi::PipelineHandle psoBloomComposite_{}; // fullscreen SceneColor + Bloom
 		rhi::PipelineHandle psoToneMap_{};       // fullscreen tonemap SceneColor -> swapchain
 		rhi::PipelineHandle psoCopyToSwapChain_{}; // fullscreen copy SceneColor -> swapchain
-		rhi::PipelineHandle psoParticles_{};      // instanced billboard particles
+		rhi::PipelineHandle psoParticles_{};      // instanced billboard particles (procedural)
+		rhi::PipelineHandle psoParticlesTextured_{}; // instanced billboard particles (textured)
 		rhi::InputLayoutHandle fullscreenLayout_{}; // empty input layout for fullscreen VS (SV_VertexID)
 		rhi::GraphicsState deferredLightingState_{};
 		rhi::GraphicsState planarCompositeState_{};
@@ -504,6 +526,7 @@ export namespace rendern
 		std::vector<InstanceData> combinedInstancesScratch_;
 		std::vector<DeferredReflectionProbeGpu> deferredReflectionProbesScratch_;
 		std::vector<int> deferredReflectionProbeRemapScratch_;
+		std::vector<ParticleDrawBatch> particleBatches_{};
 		static constexpr std::size_t kMaxReflectionProbes = 16;
 
 		int reflectionCaptureLastAnchorKind_{ 0 }; // 0=auto/none, 1=selected, 2=owner, 3=debugOwnerIndex

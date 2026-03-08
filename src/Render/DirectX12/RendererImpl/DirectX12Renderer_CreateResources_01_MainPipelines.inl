@@ -459,7 +459,7 @@
 				});
 			psoToneMap_ = psoCache_.GetOrCreate("PSO_ToneMap", vsToneMap, psToneMap);
 		}
-		// Additive billboard particles.
+		// Billboard particles: procedural + textured variant.
 		{
 			const auto vsParticles = shaderLibrary_.GetOrCreateShader(ShaderKey{
 				.stage = rhi::ShaderStage::Vertex,
@@ -476,6 +476,23 @@
 				.shaderModel = rhi::ShaderModel::SM6_1
 				});
 			psoParticles_ = psoCache_.GetOrCreate("PSO_Particles", vsParticles, psParticles);
+
+			const std::vector<std::string> texturedDefs = { "PARTICLE_TEXTURED=1" };
+			const auto vsParticlesTextured = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VSMain",
+				.filePath = particlePath.string(),
+				.defines = texturedDefs,
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psParticlesTextured = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PSMain",
+				.filePath = particlePath.string(),
+				.defines = texturedDefs,
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoParticlesTextured_ = psoCache_.GetOrCreate("PSO_Particles_Textured", vsParticlesTextured, psParticlesTextured);
 		}
 
 		// Copy scene color to swapchain (fullscreen blit).

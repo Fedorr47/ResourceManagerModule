@@ -98,7 +98,11 @@ export namespace rendern
 		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
 		mathUtils::Vec3 velocity{ 0.0f, 0.0f, 0.0f };
 		mathUtils::Vec4 color{ 1.0f, 0.6f, 0.2f, 1.0f };
+		mathUtils::Vec4 colorBegin{ 1.0f, 0.6f, 0.2f, 1.0f };
+		mathUtils::Vec4 colorEnd{ 1.0f, 0.6f, 0.2f, 1.0f };
 		float size{ 0.15f };
+		float sizeBegin{ 0.15f };
+		float sizeEnd{ 0.15f };
 		float lifetime{ 1.0f };
 		float age{ 0.0f };
 		float rotationRad{ 0.0f };
@@ -109,6 +113,8 @@ export namespace rendern
 	struct ParticleEmitter
 	{
 		std::string name;
+		std::string textureId;
+		rhi::TextureDescIndex textureDescIndex{ 0 };
 		bool enabled{ true };
 		bool looping{ true };
 		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
@@ -116,8 +122,12 @@ export namespace rendern
 		mathUtils::Vec3 velocityMin{ -0.15f, 0.9f, -0.15f };
 		mathUtils::Vec3 velocityMax{ 0.15f, 1.6f, 0.15f };
 		mathUtils::Vec4 color{ 1.0f, 0.6f, 0.2f, 1.0f };
+		mathUtils::Vec4 colorBegin{ 1.0f, 0.6f, 0.2f, 1.0f };
+		mathUtils::Vec4 colorEnd{ 1.0f, 0.6f, 0.2f, 1.0f };
 		float sizeMin{ 0.08f };
 		float sizeMax{ 0.16f };
+		float sizeBegin{ 0.0f };
+		float sizeEnd{ 0.0f };
 		float lifetimeMin{ 0.8f };
 		float lifetimeMax{ 1.4f };
 		float spawnRate{ 16.0f };
@@ -582,8 +592,13 @@ export namespace rendern
 				detail::ParticleRandRange(rng, emitter.velocityMin.y, emitter.velocityMax.y),
 				detail::ParticleRandRange(rng, emitter.velocityMin.z, emitter.velocityMax.z));
 
-			particle.color = emitter.color;
-			particle.size = detail::ParticleRandRange(rng, emitter.sizeMin, emitter.sizeMax);
+			particle.colorBegin = emitter.colorBegin;
+			particle.colorEnd = emitter.colorEnd;
+			particle.color = particle.colorBegin;
+			const float randomizedSizeBegin = detail::ParticleRandRange(rng, emitter.sizeMin, emitter.sizeMax);
+			particle.sizeBegin = (emitter.sizeBegin > 0.0f) ? emitter.sizeBegin : randomizedSizeBegin;
+			particle.sizeEnd = (emitter.sizeEnd > 0.0f) ? emitter.sizeEnd : particle.sizeBegin;
+			particle.size = particle.sizeBegin;
 			particle.lifetime = detail::ParticleRandRange(rng, emitter.lifetimeMin, emitter.lifetimeMax);
 			particle.age = 0.0f;
 			particle.rotationRad = detail::ParticleRandRange(rng, 0.0f, 6.28318530718f);
@@ -645,6 +660,9 @@ export namespace rendern
 
 				particle.age += dt;
 				particle.position = particle.position + particle.velocity * dt;
+				const float lifeT = (particle.lifetime > 0.0f) ? std::clamp(particle.age / particle.lifetime, 0.0f, 1.0f) : 1.0f;
+				particle.color = mathUtils::Lerp(particle.colorBegin, particle.colorEnd, lifeT);
+				particle.size = mathUtils::Lerp(particle.sizeBegin, particle.sizeEnd, lifeT);
 
 				if (particle.lifetime > 0.0f && particle.age >= particle.lifetime)
 				{

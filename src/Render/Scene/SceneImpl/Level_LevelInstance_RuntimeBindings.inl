@@ -38,6 +38,19 @@ void ResolveTextureBindings(AssetManager& assets, BindlessTable& bindless, Scene
 			scene.skyboxDescIndex = idx;
 		}
 	}
+
+	// Particle emitters
+	for (auto& emitter : scene.particleEmitters)
+	{
+		if (!emitter.textureId.empty())
+		{
+			emitter.textureDescIndex = GetOrCreateTextureDesc_(rm, bindless, emitter.textureId);
+		}
+		else
+		{
+			emitter.textureDescIndex = 0;
+		}
+	}
 }
 
 void FreeDescriptors(BindlessTable& bindless) noexcept

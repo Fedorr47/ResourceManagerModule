@@ -339,6 +339,14 @@ namespace rendern::ui::level_ui_detail
             changed = true;
         }
 
+        char textureIdBuf[256]{};
+        std::snprintf(textureIdBuf, sizeof(textureIdBuf), "%s", emitter.textureId.c_str());
+        if (ImGui::InputText("Texture Id", textureIdBuf, sizeof(textureIdBuf)))
+        {
+            emitter.textureId = std::string(textureIdBuf);
+            changed = true;
+        }
+
         changed |= ImGui::Checkbox("Enabled", &emitter.enabled);
         changed |= ImGui::Checkbox("Looping", &emitter.looping);
         changed |= DragVec3("Position", emitter.position, 0.05f);
@@ -346,25 +354,30 @@ namespace rendern::ui::level_ui_detail
         changed |= DragVec3("Velocity Min", emitter.velocityMin, 0.02f);
         changed |= DragVec3("Velocity Max", emitter.velocityMax, 0.02f);
 
-        float color[4] = { emitter.color.x, emitter.color.y, emitter.color.z, emitter.color.w };
-        if (ImGui::ColorEdit4("Color", color))
+        float colorBegin[4] = { emitter.colorBegin.x, emitter.colorBegin.y, emitter.colorBegin.z, emitter.colorBegin.w };
+        if (ImGui::ColorEdit4("Color Begin", colorBegin))
         {
-            emitter.color = mathUtils::Vec4(color[0], color[1], color[2], color[3]);
+            emitter.colorBegin = mathUtils::Vec4(colorBegin[0], colorBegin[1], colorBegin[2], colorBegin[3]);
             changed = true;
         }
 
-        float sizeMin = emitter.sizeMin;
-        float sizeMax = emitter.sizeMax;
-        if (ImGui::DragFloat("Size Min", &sizeMin, 0.01f, 0.001f, 100.0f, "%.3f"))
+        float colorEnd[4] = { emitter.colorEnd.x, emitter.colorEnd.y, emitter.colorEnd.z, emitter.colorEnd.w };
+        if (ImGui::ColorEdit4("Color End", colorEnd))
         {
-            emitter.sizeMin = std::max(0.001f, sizeMin);
-            if (emitter.sizeMax < emitter.sizeMin)
-                emitter.sizeMax = emitter.sizeMin;
+            emitter.colorEnd = mathUtils::Vec4(colorEnd[0], colorEnd[1], colorEnd[2], colorEnd[3]);
             changed = true;
         }
-        if (ImGui::DragFloat("Size Max", &sizeMax, 0.01f, 0.001f, 100.0f, "%.3f"))
+
+        float sizeBegin = emitter.sizeBegin;
+        float sizeEnd = emitter.sizeEnd;
+        if (ImGui::DragFloat("Size Begin", &sizeBegin, 0.01f, 0.001f, 100.0f, "%.3f"))
         {
-            emitter.sizeMax = std::max(emitter.sizeMin, sizeMax);
+            emitter.sizeBegin = std::max(0.001f, sizeBegin);
+            changed = true;
+        }
+        if (ImGui::DragFloat("Size End", &sizeEnd, 0.01f, 0.001f, 100.0f, "%.3f"))
+        {
+            emitter.sizeEnd = std::max(0.001f, sizeEnd);
             changed = true;
         }
 
@@ -420,7 +433,6 @@ namespace rendern::ui::level_ui_detail
             }
 
             ImGui::Text("Alive particles: %d", aliveCount);
-            ImGui::Text("World position: %.2f %.2f %.2f", runtimeEmitter->position.x, runtimeEmitter->position.y, runtimeEmitter->position.z);
             ImGui::Text("Elapsed: %.3f", runtimeEmitter->elapsed);
             ImGui::Text("Spawn accumulator: %.3f", runtimeEmitter->spawnAccumulator);
             ImGui::Text("Burst done: %s", runtimeEmitter->burstDone ? "Yes" : "No");
@@ -439,47 +451,12 @@ namespace rendern::ui::level_ui_detail
         {
             levelInst.TriggerParticleEmitterBurst(level, scene, st.selectedParticleEmitter);
         }
-
-        if (ImGui::Button("Duplicate Emitter"))
-        {
-            rendern::ParticleEmitter copy = emitter;
-            copy.name += "_Copy";
-            const int newIdx = levelInst.AddParticleEmitter(level, scene, copy);
-            scene.EditorSetSelectionSingleParticleEmitter(newIdx);
-            levelInst.SyncEditorRuntimeBindings(level, scene);
-            st.selectedParticleEmitter = newIdx;
-            st.prevSelectedParticleEmitter = -2;
-            return;
-        }
         ImGui::SameLine();
-        if (ImGui::Button("Move To Camera"))
-        {
-            mathUtils::Vec3 forward = scene.camera.target - scene.camera.position;
-            if (mathUtils::Length(forward) <= 1e-5f)
-            {
-                forward = mathUtils::Vec3(0.0f, 0.0f, -1.0f);
-            }
-            else
-            {
-                forward = mathUtils::Normalize(forward);
-            }
-            emitter.position = scene.camera.position + forward * 3.0f;
-            levelInst.SetParticleEmitterPosition(level, scene, st.selectedParticleEmitter, emitter.position);
-            levelInst.RestartParticleEmitter(level, scene, st.selectedParticleEmitter);
-            changed = false;
-        }
-        ImGui::SameLine();
-        bool doDeleteEmitter = ImGui::Button("Delete Emitter");
-        if (ImGui::IsKeyPressed(ImGuiKey_Delete))
-        {
-            doDeleteEmitter = true;
-        }
-        if (doDeleteEmitter)
+        if (ImGui::Button("Delete Emitter"))
         {
             levelInst.DeleteParticleEmitter(level, scene, st.selectedParticleEmitter);
             st.selectedParticleEmitter = -1;
             st.prevSelectedParticleEmitter = -2;
-            scene.editorSelectedParticleEmitter = -1;
         }
     }
 

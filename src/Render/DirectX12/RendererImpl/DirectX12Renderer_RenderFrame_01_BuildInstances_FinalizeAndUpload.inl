@@ -113,15 +113,16 @@ if (!combinedInstances.empty())
 	device_.UpdateBuffer(instanceBuffer_, std::as_bytes(std::span{ combinedInstances }));
 }
 
-std::vector<ParticleInstanceData> particleInstances;
-particleInstances.reserve(std::min<std::size_t>(scene.particles.size(), static_cast<std::size_t>(kMaxParticles)));
+particleBatches_.clear();
+std::vector<std::pair<rhi::TextureDescIndex, ParticleInstanceData>> particlePacked;
+particlePacked.reserve(std::min<std::size_t>(scene.particles.size(), static_cast<std::size_t>(kMaxParticles)));
 for (const Particle& particle : scene.particles)
 {
 	if (!particle.alive || particle.size <= 0.0f || particle.color.w <= 0.0f)
 	{
 		continue;
 	}
-	if (particleInstances.size() >= static_cast<std::size_t>(kMaxParticles))
+	if (particlePacked.size() >= static_cast<std::size_t>(kMaxParticles))
 	{
 		break;
 	}
@@ -130,8 +131,34 @@ for (const Particle& particle : scene.particles)
 	gpu.centerSize = mathUtils::Vec4(particle.position, particle.size);
 	gpu.color = particle.color;
 	gpu.params0 = mathUtils::Vec4(particle.rotationRad, 0.0f, 0.0f, 0.0f);
-	particleInstances.push_back(gpu);
+
+	rhi::TextureDescIndex textureDescIndex = 0;
+	if (particle.ownerEmitter >= 0 && static_cast<std::size_t>(particle.ownerEmitter) < scene.particleEmitters.size())
+	{
+		textureDescIndex = scene.particleEmitters[static_cast<std::size_t>(particle.ownerEmitter)].textureDescIndex;
+	}
+	particlePacked.emplace_back(textureDescIndex, gpu);
 }
+
+std::sort(particlePacked.begin(), particlePacked.end(),
+	[](const auto& a, const auto& b)
+	{
+		return a.first < b.first;
+	});
+
+std::vector<ParticleInstanceData> particleInstances;
+particleInstances.reserve(particlePacked.size());
+for (const auto& entry : particlePacked)
+{
+	if (particleBatches_.empty() || particleBatches_.back().textureDescIndex != entry.first)
+	{
+		particleBatches_.push_back(ParticleDrawBatch{ .textureDescIndex = entry.first, .instanceOffset = static_cast<std::uint32_t>(particleInstances.size()), .instanceCount = 0u });
+	}
+
+	particleInstances.push_back(entry.second);
+	++particleBatches_.back().instanceCount;
+}
+
 particleCount = static_cast<std::uint32_t>(particleInstances.size());
 if (particleCount > 0u)
 {
