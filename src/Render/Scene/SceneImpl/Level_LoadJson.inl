@@ -294,9 +294,9 @@
 				emitter.lifetimeMax = GetFloatOpt(ed, "lifetimeMax", emitter.lifetimeMax);
 				emitter.spawnRate = GetFloatOpt(ed, "spawnRate", emitter.spawnRate);
 				emitter.burstCount = static_cast<std::uint32_t>(std::max(0.0f, GetFloatOpt(ed, "burstCount", static_cast<float>(emitter.burstCount))));
-				emitter.maxParticles = static_cast<std::uint32_t>(std::max(0.0f, GetFloatOpt(ed, "maxParticles", static_cast<float>(emitter.maxParticles))));
 				emitter.duration = GetFloatOpt(ed, "duration", emitter.duration);
 				emitter.startDelay = GetFloatOpt(ed, "startDelay", emitter.startDelay);
+				emitter.maxParticles = static_cast<std::uint32_t>(std::max(0.0f, GetFloatOpt(ed, "maxParticles", static_cast<float>(emitter.maxParticles))));
 				out.particleEmitters.push_back(std::move(emitter));
 			}
 		}

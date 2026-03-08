@@ -300,6 +300,66 @@ if (settings_.drawLightGizmos)
 	}
 }
 
+// Particle emitter editor visualization
+if (!scene.particleEmitters.empty())
+{
+	for (std::size_t i = 0; i < scene.particleEmitters.size(); ++i)
+	{
+		const ParticleEmitter& emitter = scene.particleEmitters[i];
+		const bool selected = scene.editorSelectedParticleEmitter == static_cast<int>(i);
+		const std::uint32_t colMain = !emitter.enabled
+			? debugDraw::PackRGBA8(140, 140, 140, 255)
+			: (selected ? debugDraw::PackRGBA8(255, 220, 80, 255) : debugDraw::PackRGBA8(255, 140, 80, 255));
+		const std::uint32_t colDir = selected ? debugDraw::PackRGBA8(255, 255, 255, 255) : debugDraw::PackRGBA8(80, 220, 255, 255);
+
+		const mathUtils::Vec3 p = emitter.position;
+		const float markerSize = std::clamp(mathUtils::Length(scene.camera.position - p) * 0.015f, 0.05f, 0.35f);
+		debugList.AddAxesCross(p, markerSize, colMain, true);
+
+		const mathUtils::Vec3 jitter = emitter.positionJitter;
+		if (mathUtils::Length(jitter) > 1e-4f)
+		{
+			AddAabbLines(p - jitter, p + jitter, colMain);
+		}
+
+		mathUtils::Vec3 dir = emitter.velocityMin + emitter.velocityMax;
+		const float dirLen = mathUtils::Length(dir);
+		if (dirLen > 1e-4f)
+		{
+			dir = dir / dirLen;
+			const float arrowLen = std::clamp(markerSize * 6.0f, 0.4f, 2.0f);
+			debugList.AddArrow(p, p + dir * arrowLen, colDir, 0.18f, 0.10f, true);
+		}
+
+		int aliveCount = 0;
+		for (const Particle& particle : scene.particles)
+		{
+			if (particle.alive && particle.ownerEmitter == static_cast<int>(i))
+			{
+				++aliveCount;
+			}
+		}
+
+		mathUtils::Vec2 pPx{};
+		if (ProjectWorldToScreenPx(p, pPx))
+		{
+			char label[256]{};
+			const char* name = emitter.name.empty() ? "ParticleEmitter" : emitter.name.c_str();
+			std::snprintf(label, sizeof(label), "%s  [%d/%u]", name, aliveCount, emitter.maxParticles);
+			textList.AddOutlinedTextAlignedPx(
+				pPx.x + 10.0f,
+				pPx.y - 10.0f,
+				label,
+				debugText::TextAlignH::Left,
+				debugText::TextAlignV::Bottom,
+				colMain,
+				debugText::PackRGBA8(0, 0, 0, 210),
+				1.5f,
+				1.5f);
+		}
+	}
+}
+
 if (scene.editorGizmoMode == GizmoMode::Translate && scene.editorTranslateGizmo.enabled && scene.editorTranslateGizmo.visible)
 {
 	const mathUtils::Vec3 pivot = scene.editorTranslateGizmo.pivotWorld;

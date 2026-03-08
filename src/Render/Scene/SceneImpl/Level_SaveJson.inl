@@ -295,12 +295,12 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 		WriteJsonFloat(ss, e.spawnRate);
 		ss << ", \"burstCount\": ";
 		ss << e.burstCount;
-		ss << ", \"maxParticles\": ";
-		ss << e.maxParticles;
 		ss << ", \"duration\": ";
 		WriteJsonFloat(ss, e.duration);
 		ss << ", \"startDelay\": ";
 		WriteJsonFloat(ss, e.startDelay);
+		ss << ", \"maxParticles\": ";
+		ss << e.maxParticles;
 		ss << "}";
 	}
 	if (!level.particleEmitters.empty()) ss << "\n  ";

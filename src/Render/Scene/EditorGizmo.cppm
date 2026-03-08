@@ -313,6 +313,43 @@ namespace
 
 export namespace rendern
 {
+	bool ProjectWorldToScreenForGizmo(const Scene& scene,
+		const mathUtils::Vec3& worldPos,
+		float viewportW,
+		float viewportH,
+		mathUtils::Vec2& outScreen) noexcept
+	{
+		return ProjectWorldToScreen(scene, worldPos, viewportW, viewportH, outScreen);
+	}
+
+	GizmoAxis HitTestTranslateGizmoAxis(const Scene& scene,
+		const TranslateGizmoState& gizmo,
+		float mouseX,
+		float mouseY,
+		float viewportW,
+		float viewportH) noexcept
+	{
+		return HitTestAxis(scene, gizmo, mouseX, mouseY, viewportW, viewportH);
+	}
+
+	mathUtils::Vec3 TranslateGizmoAxisDirection(const TranslateGizmoState& gizmo, GizmoAxis axis) noexcept
+	{
+		return AxisDirection(gizmo, axis);
+	}
+
+	mathUtils::Vec3 ComputeTranslateGizmoAxisDragPlaneNormal(const mathUtils::Vec3& axisWorld, const mathUtils::Vec3& viewDir) noexcept
+	{
+		return ComputeAxisDragPlaneNormal(axisWorld, viewDir);
+	}
+
+	bool IntersectRayPlaneForGizmo(const geometry::Ray& ray,
+		const mathUtils::Vec3& planePoint,
+		const mathUtils::Vec3& planeNormal,
+		mathUtils::Vec3& outPoint) noexcept
+	{
+		return IntersectRayPlane(ray, planePoint, planeNormal, outPoint);
+	}
+
 	class TranslateGizmoController
 	{
 	public:

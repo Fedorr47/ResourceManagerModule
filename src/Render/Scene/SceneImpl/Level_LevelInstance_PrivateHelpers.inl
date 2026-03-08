@@ -361,6 +361,38 @@ std::vector<int> CollectSubtree_(const LevelAsset& asset, int rootNodeIndex) con
 	return out;
 }
 
+
+void RebuildParticleEmitters_(const LevelAsset& asset, Scene& scene)
+{
+	scene.particles.clear();
+	scene.particleEmitters.clear();
+	particleEmitterToSceneEmitter_.clear();
+	particleEmitterToSceneEmitter_.reserve(asset.particleEmitters.size());
+
+	for (const ParticleEmitter& emitter : asset.particleEmitters)
+	{
+		scene.AddParticleEmitter(emitter);
+		particleEmitterToSceneEmitter_.push_back(static_cast<int>(scene.particleEmitters.size() - 1));
+	}
+}
+
+void RemoveParticlesOwnedByEmitter_(Scene& scene, int emitterIndex)
+{
+	for (Particle& particle : scene.particles)
+	{
+		if (particle.ownerEmitter == emitterIndex)
+		{
+			particle.alive = false;
+		}
+	}
+	scene.particles.erase(
+		std::remove_if(scene.particles.begin(), scene.particles.end(), [](const Particle& particle)
+			{
+				return !particle.alive;
+			}),
+		scene.particles.end());
+}
+
 void ValidateRuntimeMappings_(const LevelAsset& asset, const Scene& scene) const noexcept
 {
 #ifndef NDEBUG

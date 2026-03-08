@@ -37,7 +37,7 @@ VSOut VSMain(VSIn IN)
         + uCameraUp.xyz * (local.y * size);
 
     VSOut OUT;
-    OUT.pos = mul(uViewProj, float4(worldPos, 1.0f));
+    OUT.pos = mul(float4(worldPos, 1.0f), uViewProj);
     OUT.uv = IN.uv;
     OUT.color = IN.color;
     return OUT;

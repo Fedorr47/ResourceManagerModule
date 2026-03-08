@@ -39,11 +39,6 @@ namespace rendern::ui::level_ui_detail
         return i < level.nodes.size() && level.nodes[i].alive;
     }
 
-    static bool ParticleEmitterAlive(const rendern::LevelAsset& level, int idx)
-    {
-        return idx >= 0 && static_cast<std::size_t>(idx) < level.particleEmitters.size();
-    }
-
     static void SyncSavePathWithSource(rendern::LevelAsset& level, LevelEditorUIState& st)
     {
         if (st.cachedSourcePath != level.sourcePath)
@@ -147,5 +142,10 @@ namespace rendern::ui::level_ui_detail
     static int ParentForNewNode(const rendern::LevelAsset& level, const LevelEditorUIState& st)
     {
         return (st.addAsChildOfSelection && NodeAlive(level, st.selectedNode)) ? st.selectedNode : -1;
+    }
+
+    static bool ParticleEmitterAlive(const rendern::LevelAsset& level, int idx)
+    {
+        return idx >= 0 && static_cast<std::size_t>(idx) < level.particleEmitters.size();
     }
 }

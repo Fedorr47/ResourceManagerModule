@@ -420,6 +420,7 @@ namespace rendern::ui::level_ui_detail
             }
 
             ImGui::Text("Alive particles: %d", aliveCount);
+            ImGui::Text("World position: %.2f %.2f %.2f", runtimeEmitter->position.x, runtimeEmitter->position.y, runtimeEmitter->position.z);
             ImGui::Text("Elapsed: %.3f", runtimeEmitter->elapsed);
             ImGui::Text("Spawn accumulator: %.3f", runtimeEmitter->spawnAccumulator);
             ImGui::Text("Burst done: %s", runtimeEmitter->burstDone ? "Yes" : "No");
@@ -438,12 +439,47 @@ namespace rendern::ui::level_ui_detail
         {
             levelInst.TriggerParticleEmitterBurst(level, scene, st.selectedParticleEmitter);
         }
+
+        if (ImGui::Button("Duplicate Emitter"))
+        {
+            rendern::ParticleEmitter copy = emitter;
+            copy.name += "_Copy";
+            const int newIdx = levelInst.AddParticleEmitter(level, scene, copy);
+            scene.EditorSetSelectionSingleParticleEmitter(newIdx);
+            levelInst.SyncEditorRuntimeBindings(level, scene);
+            st.selectedParticleEmitter = newIdx;
+            st.prevSelectedParticleEmitter = -2;
+            return;
+        }
         ImGui::SameLine();
-        if (ImGui::Button("Delete Emitter"))
+        if (ImGui::Button("Move To Camera"))
+        {
+            mathUtils::Vec3 forward = scene.camera.target - scene.camera.position;
+            if (mathUtils::Length(forward) <= 1e-5f)
+            {
+                forward = mathUtils::Vec3(0.0f, 0.0f, -1.0f);
+            }
+            else
+            {
+                forward = mathUtils::Normalize(forward);
+            }
+            emitter.position = scene.camera.position + forward * 3.0f;
+            levelInst.SetParticleEmitterPosition(level, scene, st.selectedParticleEmitter, emitter.position);
+            levelInst.RestartParticleEmitter(level, scene, st.selectedParticleEmitter);
+            changed = false;
+        }
+        ImGui::SameLine();
+        bool doDeleteEmitter = ImGui::Button("Delete Emitter");
+        if (ImGui::IsKeyPressed(ImGuiKey_Delete))
+        {
+            doDeleteEmitter = true;
+        }
+        if (doDeleteEmitter)
         {
             levelInst.DeleteParticleEmitter(level, scene, st.selectedParticleEmitter);
             st.selectedParticleEmitter = -1;
             st.prevSelectedParticleEmitter = -2;
+            scene.editorSelectedParticleEmitter = -1;
         }
     }
 
