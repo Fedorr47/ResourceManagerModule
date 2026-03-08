@@ -321,6 +321,32 @@ export namespace rendern
 	};
 	static_assert(sizeof(FogConstants) % 16 == 0);
 
+	struct alignas(16) BloomExtractConstants
+	{
+		mathUtils::Vec4 uInvSourceSize{}; // 1/w, 1/h
+		mathUtils::Vec4 uParams{}; // threshold, softKnee, clampMax, pad
+	};
+	static_assert(sizeof(BloomExtractConstants) % 16 == 0);
+
+	struct alignas(16) BloomBlurConstants
+	{
+		mathUtils::Vec4 uInvSourceSize{}; // 1/w, 1/h
+		mathUtils::Vec4 uDirection{};     // x/y axis * radius
+	};
+	static_assert(sizeof(BloomBlurConstants) % 16 == 0);
+
+	struct alignas(16) BloomCompositeConstants
+	{
+		mathUtils::Vec4 uParams{}; // intensity
+	};
+	static_assert(sizeof(BloomCompositeConstants) % 16 == 0);
+
+	struct alignas(16) ToneMapConstants
+	{
+		mathUtils::Vec4 uParams{}; // exposure, mode, gamma, enableHDR
+	};
+	static_assert(sizeof(ToneMapConstants) % 16 == 0);
+
 	struct FrameCameraData
 	{
 		mathUtils::Mat4 proj{ 1.0f };

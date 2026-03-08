@@ -52,6 +52,7 @@ export namespace rhi
 	{
 		Unknown,
 		RGBA8_UNORM,
+		RGBA16_FLOAT,
 		BGRA8_UNORM,
 		R32_FLOAT,
 		D32_FLOAT,

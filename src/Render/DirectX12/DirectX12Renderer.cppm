@@ -396,6 +396,10 @@ export namespace rendern
 		rhi::PipelineHandle psoSSAOBlur_{};      // fullscreen SSAO blur (R32_FLOAT)
 		rhi::PipelineHandle psoSSAOComposite_{}; // fullscreen SceneColor * AO
 		rhi::PipelineHandle psoFog_{};           // fullscreen fog post effect
+		rhi::PipelineHandle psoBloomExtract_{};  // fullscreen bloom threshold/downsample
+		rhi::PipelineHandle psoBloomBlur_{};     // fullscreen bloom blur
+		rhi::PipelineHandle psoBloomComposite_{}; // fullscreen SceneColor + Bloom
+		rhi::PipelineHandle psoToneMap_{};       // fullscreen tonemap SceneColor -> swapchain
 		rhi::PipelineHandle psoCopyToSwapChain_{}; // fullscreen copy SceneColor -> swapchain
 		rhi::InputLayoutHandle fullscreenLayout_{}; // empty input layout for fullscreen VS (SV_VertexID)
 		rhi::GraphicsState deferredLightingState_{};

@@ -32,9 +32,6 @@ namespace rendern::ui
 
     static void DrawFogSection(rendern::RendererSettings& rs)
     {
-        if (!rs.enableDeferred)
-            return;
-
         if (!ImGui::CollapsingHeader("Fog", ImGuiTreeNodeFlags_DefaultOpen))
             return;
 
@@ -74,6 +71,52 @@ namespace rendern::ui
             rs.fogEnd = 80.0f;
             rs.fogDensity = 0.02f;
             rs.fogColor = { 0.60f, 0.70f, 0.80f };
+        }
+
+        ImGui::EndDisabled();
+        ImGui::Separator();
+    }
+
+
+    static void DrawHdrBloomSection(rendern::RendererSettings& rs)
+    {
+        if (!ImGui::CollapsingHeader("HDR / Bloom", ImGuiTreeNodeFlags_DefaultOpen))
+            return;
+
+        ImGui::Checkbox("Enable HDR", &rs.enableHDR);
+        ImGui::BeginDisabled(!rs.enableHDR);
+
+        const char* toneItems[] = { "Linear", "Reinhard", "ACES" };
+        int toneMode = static_cast<int>(rs.toneMapMode);
+        if (ImGui::Combo("Tonemap", &toneMode, toneItems, IM_ARRAYSIZE(toneItems)))
+        {
+            if (toneMode < 0) toneMode = 0;
+            if (toneMode > 2) toneMode = 2;
+            rs.toneMapMode = static_cast<std::uint32_t>(toneMode);
+        }
+
+        ImGui::SliderFloat("Exposure", &rs.hdrExposure, 0.1f, 8.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::Checkbox("Enable Bloom", &rs.enableBloom);
+
+        ImGui::BeginDisabled(!rs.enableBloom);
+        ImGui::SliderFloat("Bloom threshold", &rs.bloomThreshold, 0.1f, 8.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("Bloom soft knee", &rs.bloomSoftKnee, 0.0f, 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("Bloom intensity", &rs.bloomIntensity, 0.0f, 1.5f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("Bloom clamp", &rs.bloomClamp, 1.0f, 64.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("Bloom radius", &rs.bloomRadius, 0.25f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::EndDisabled();
+
+        if (ImGui::Button("HDR/Bloom defaults"))
+        {
+            rs.enableHDR = true;
+            rs.toneMapMode = 2u;
+            rs.hdrExposure = 1.0f;
+            rs.enableBloom = true;
+            rs.bloomThreshold = 1.0f;
+            rs.bloomSoftKnee = 0.5f;
+            rs.bloomIntensity = 0.08f;
+            rs.bloomClamp = 16.0f;
+            rs.bloomRadius = 1.0f;
         }
 
         ImGui::EndDisabled();
@@ -226,6 +269,7 @@ namespace rendern::ui
 
         DrawSSAOSection(rs);
         DrawFogSection(rs);
+        DrawHdrBloomSection(rs);
 
         DrawCameraDebugSection(scene, camCtl);
         DrawShadowAndDebugSection(rs, scene);

@@ -52,7 +52,7 @@ if (settings_.enableFog && psoFog_)
 {
 	const auto sceneColorFog = graph.CreateTexture(renderGraph::RGTextureDesc{
 		.extent = scDesc.extent,
-		.format = rhi::Format::RGBA8_UNORM,
+		.format = sceneColorFormat,
 		.usage = renderGraph::ResourceUsage::RenderTarget,
 		.debugName = "SceneColor_Fog"
 		});

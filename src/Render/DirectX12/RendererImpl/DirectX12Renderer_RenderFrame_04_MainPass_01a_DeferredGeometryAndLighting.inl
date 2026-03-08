@@ -106,9 +106,10 @@
 		.usage = renderGraph::ResourceUsage::RenderTarget,
 		.debugName = "GBuffer3_EnvSel"
 		});
+	const auto sceneColorFormat = settings_.enableHDR ? rhi::Format::RGBA16_FLOAT : rhi::Format::RGBA8_UNORM;
 	const auto sceneColor = graph.CreateTexture(renderGraph::RGTextureDesc{
 		.extent = scDesc.extent,
-		.format = rhi::Format::RGBA8_UNORM,
+		.format = sceneColorFormat,
 		.usage = renderGraph::ResourceUsage::RenderTarget,
 		.debugName = "SceneColor_Lit"
 		});

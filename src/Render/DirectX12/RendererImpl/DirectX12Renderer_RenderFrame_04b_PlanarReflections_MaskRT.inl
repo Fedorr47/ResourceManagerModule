@@ -39,7 +39,7 @@ if (settings_.enablePlanarReflections && !planarMirrorDraws.empty())
 
 		const auto reflColor = graph.CreateTexture(renderGraph::RGTextureDesc{
 			.extent = extent,
-			.format = rhi::Format::RGBA8_UNORM,
+			.format = sceneColorFormat,
 			.usage = renderGraph::ResourceUsage::RenderTarget,
 			.debugName = std::string("PlanarReflColor_") + std::to_string(mirrorIndex)
 			});

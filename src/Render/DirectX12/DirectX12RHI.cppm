@@ -72,6 +72,8 @@ DXGI_FORMAT ToDXGIFormat(rhi::Format format)
     {
     case rhi::Format::RGBA8_UNORM:
         return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case rhi::Format::RGBA16_FLOAT:
+        return DXGI_FORMAT_R16G16B16A16_FLOAT;
     case rhi::Format::BGRA8_UNORM:
         return DXGI_FORMAT_B8G8R8A8_UNORM;
     case rhi::Format::R32_FLOAT:

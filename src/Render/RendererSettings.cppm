@@ -41,6 +41,17 @@ export namespace rendern
 		float fogDensity{ 0.02f };
 		std::array<float, 3> fogColor{ 0.60f, 0.70f, 0.80f };
 
+		// HDR / tone mapping / bloom.
+		bool enableHDR{ true };
+		std::uint32_t toneMapMode{ 2u }; // 0=None, 1=Reinhard, 2=ACES
+		float hdrExposure{ 1.0f };
+		bool enableBloom{ true };
+		float bloomThreshold{ 1.0f };
+		float bloomSoftKnee{ 0.5f };
+		float bloomIntensity{ 0.08f };
+		float bloomClamp{ 16.0f };
+		float bloomRadius{ 1.0f };
+
 		// Reflection capture (cubemap). Currently used by DX12 backend.
 		bool enableReflectionCapture{ true };
 		bool reflectionCaptureUpdateEveryFrame{ true };

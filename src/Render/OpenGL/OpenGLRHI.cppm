@@ -117,6 +117,8 @@ namespace
 		{
 		case rhi::Format::RGBA8_UNORM:
 			return GL_RGBA8;
+		case rhi::Format::RGBA16_FLOAT:
+			return GL_RGBA16F;
 		case rhi::Format::R32_FLOAT:
 			return GL_R32F;
 		case rhi::Format::BGRA8_UNORM:
@@ -135,6 +137,7 @@ namespace
 		switch (format)
 		{
 		case rhi::Format::RGBA8_UNORM:
+		case rhi::Format::RGBA16_FLOAT:
 			return GL_RGBA;
 		case rhi::Format::BGRA8_UNORM:
 			return GL_BGRA;
@@ -156,6 +159,7 @@ namespace
 		case rhi::Format::RGBA8_UNORM:
 		case rhi::Format::BGRA8_UNORM:
 			return GL_UNSIGNED_BYTE;
+		case rhi::Format::RGBA16_FLOAT:
 		case rhi::Format::R32_FLOAT:
 		case rhi::Format::D32_FLOAT:
 			return GL_FLOAT;

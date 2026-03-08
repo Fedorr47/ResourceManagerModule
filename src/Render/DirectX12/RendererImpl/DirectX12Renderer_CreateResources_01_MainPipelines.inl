@@ -252,6 +252,10 @@
 		const auto ssaoBlurPath = corefs::ResolveAsset("shaders\\SSAOBlur_dx12.hlsl");
 		const auto ssaoCompositePath = corefs::ResolveAsset("shaders\\SSAOComposite_dx12.hlsl");
 		const auto fogPath = corefs::ResolveAsset("shaders\\FogPost_dx12.hlsl");
+		const auto bloomExtractPath = corefs::ResolveAsset("shaders\\BloomExtract_dx12.hlsl");
+		const auto bloomBlurPath = corefs::ResolveAsset("shaders\\BloomBlur_dx12.hlsl");
+		const auto bloomCompositePath = corefs::ResolveAsset("shaders\\BloomComposite_dx12.hlsl");
+		const auto toneMapPath = corefs::ResolveAsset("shaders\\ToneMap_dx12.hlsl");
 		const auto copyPath = corefs::ResolveAsset("shaders\\CopyToSwapChain_dx12.hlsl");
 		const auto planarCompPath = corefs::ResolveAsset("shaders\\PlanarComposite_dx12.hlsl");
 
@@ -379,6 +383,76 @@
 				.shaderModel = rhi::ShaderModel::SM6_1
 				});
 			psoFog_ = psoCache_.GetOrCreate("PSO_Fog", vsFog, psFog);
+		}
+
+		// Bloom (extract -> blur -> composite) in HDR scene color.
+		{
+			const auto vsBloomExtract = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Fullscreen",
+				.filePath = bloomExtractPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psBloomExtract = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_BloomExtract",
+				.filePath = bloomExtractPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoBloomExtract_ = psoCache_.GetOrCreate("PSO_Bloom_Extract", vsBloomExtract, psBloomExtract);
+		}
+		{
+			const auto vsBloomBlur = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Fullscreen",
+				.filePath = bloomBlurPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psBloomBlur = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_BloomBlur",
+				.filePath = bloomBlurPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoBloomBlur_ = psoCache_.GetOrCreate("PSO_Bloom_Blur", vsBloomBlur, psBloomBlur);
+		}
+		{
+			const auto vsBloomComposite = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Fullscreen",
+				.filePath = bloomCompositePath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psBloomComposite = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_BloomComposite",
+				.filePath = bloomCompositePath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoBloomComposite_ = psoCache_.GetOrCreate("PSO_Bloom_Composite", vsBloomComposite, psBloomComposite);
+		}
+		{
+			const auto vsToneMap = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VS_Fullscreen",
+				.filePath = toneMapPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psToneMap = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PS_ToneMap",
+				.filePath = toneMapPath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoToneMap_ = psoCache_.GetOrCreate("PSO_ToneMap", vsToneMap, psToneMap);
 		}
 
 		// Copy scene color to swapchain (fullscreen blit).

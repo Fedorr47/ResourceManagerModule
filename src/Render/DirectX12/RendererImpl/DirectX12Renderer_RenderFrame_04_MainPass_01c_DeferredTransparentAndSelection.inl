@@ -223,7 +223,173 @@ if (!selectionTransparent.empty())
 				selectionTransparentStart);
 		});
 }
-// --- Present: copy SceneColor to swapchain ---
+auto finalSceneColor = sceneColorAfterFog;
+
+if (settings_.enableHDR && settings_.enableBloom &&
+	psoBloomExtract_ && psoBloomBlur_ && psoBloomComposite_)
+{
+	rhi::Extent2D bloomExtent{
+		std::max(1u, scDesc.extent.width / 2u),
+		std::max(1u, scDesc.extent.height / 2u)
+	};
+
+	const auto bloomExtract = graph.CreateTexture(renderGraph::RGTextureDesc{
+		.extent = bloomExtent,
+		.format = rhi::Format::RGBA16_FLOAT,
+		.usage = renderGraph::ResourceUsage::RenderTarget,
+		.debugName = "DeferredBloom_Extract"
+		});
+
+	const auto bloomBlurX = graph.CreateTexture(renderGraph::RGTextureDesc{
+		.extent = bloomExtent,
+		.format = rhi::Format::RGBA16_FLOAT,
+		.usage = renderGraph::ResourceUsage::RenderTarget,
+		.debugName = "DeferredBloom_BlurX"
+		});
+
+	const auto bloomBlurY = graph.CreateTexture(renderGraph::RGTextureDesc{
+		.extent = bloomExtent,
+		.format = rhi::Format::RGBA16_FLOAT,
+		.usage = renderGraph::ResourceUsage::RenderTarget,
+		.debugName = "DeferredBloom_BlurY"
+		});
+
+	const auto sceneColorBloom = graph.CreateTexture(renderGraph::RGTextureDesc{
+		.extent = scDesc.extent,
+		.format = sceneColorFormat,
+		.usage = renderGraph::ResourceUsage::RenderTarget,
+		.debugName = "DeferredSceneColor_Bloom"
+		});
+
+	{
+		BloomExtractConstants c{};
+		c.uInvSourceSize = {
+			scDesc.extent.width ? (1.0f / static_cast<float>(scDesc.extent.width)) : 0.0f,
+			scDesc.extent.height ? (1.0f / static_cast<float>(scDesc.extent.height)) : 0.0f,
+			0.0f, 0.0f
+		};
+		c.uParams = {
+			settings_.bloomThreshold,
+			settings_.bloomSoftKnee,
+			settings_.bloomClamp,
+			0.0f
+		};
+
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { bloomExtract };
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+		graph.AddPass("DeferredBloomExtract", std::move(att),
+			[this, finalSceneColor, c](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+				ctx.commandList.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
+				ctx.commandList.SetState(deferredLightingState_);
+				ctx.commandList.BindPipeline(psoBloomExtract_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3);
+			});
+	}
+
+	{
+		BloomBlurConstants c{};
+		c.uInvSourceSize = {
+			bloomExtent.width ? (1.0f / static_cast<float>(bloomExtent.width)) : 0.0f,
+			bloomExtent.height ? (1.0f / static_cast<float>(bloomExtent.height)) : 0.0f,
+			0.0f, 0.0f
+		};
+		c.uDirection = { settings_.bloomRadius, 0.0f, 0.0f, 0.0f };
+
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { bloomBlurX };
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+		graph.AddPass("DeferredBloomBlurX", std::move(att),
+			[this, bloomExtract, c](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+				ctx.commandList.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
+				ctx.commandList.SetState(deferredLightingState_);
+				ctx.commandList.BindPipeline(psoBloomBlur_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(bloomExtract));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3);
+			});
+	}
+
+	{
+		BloomBlurConstants c{};
+		c.uInvSourceSize = {
+			bloomExtent.width ? (1.0f / static_cast<float>(bloomExtent.width)) : 0.0f,
+			bloomExtent.height ? (1.0f / static_cast<float>(bloomExtent.height)) : 0.0f,
+			0.0f, 0.0f
+		};
+		c.uDirection = { 0.0f, settings_.bloomRadius, 0.0f, 0.0f };
+
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { bloomBlurY };
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+		graph.AddPass("DeferredBloomBlurY", std::move(att),
+			[this, bloomBlurX, c](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+				ctx.commandList.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
+				ctx.commandList.SetState(deferredLightingState_);
+				ctx.commandList.BindPipeline(psoBloomBlur_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(bloomBlurX));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3);
+			});
+	}
+
+	{
+		BloomCompositeConstants c{};
+		c.uParams = { settings_.bloomIntensity, 0.0f, 0.0f, 0.0f };
+
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { sceneColorBloom };
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+		graph.AddPass("DeferredBloomComposite", std::move(att),
+			[this, finalSceneColor, bloomBlurY, c](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+				ctx.commandList.SetViewport(0, 0, static_cast<int>(extent.width), static_cast<int>(extent.height));
+				ctx.commandList.SetState(deferredLightingState_);
+				ctx.commandList.BindPipeline(psoBloomComposite_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+				ctx.commandList.BindTexture2D(1, ctx.resources.GetTexture(bloomBlurY));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3);
+			});
+	}
+
+	finalSceneColor = sceneColorBloom;
+}
+
+// --- Present: tonemap/copy SceneColor to swapchain ---
 {
 	rhi::ClearDesc clear{};
 	clear.clearColor = false;
@@ -231,7 +397,7 @@ if (!selectionTransparent.empty())
 	clear.clearStencil = false;
 
 	graph.AddSwapChainPass("DeferredPresent", clear,
-		[this, sceneColorAfterFog](renderGraph::PassContext& ctx)
+		[this, finalSceneColor](renderGraph::PassContext& ctx)
 		{
 			const auto extent = ctx.passExtent;
 
@@ -241,11 +407,29 @@ if (!selectionTransparent.empty())
 
 			ctx.commandList.SetState(copyToSwapChainState_);
 			ctx.commandList.BindInputLayout(fullscreenLayout_);
-			ctx.commandList.BindPipeline(psoCopyToSwapChain_);
+			ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
 
-			// t0: SceneColor_Lit				
-			ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(sceneColorAfterFog));
-			ctx.commandList.Draw(3, 0);
+			if (psoToneMap_)
+			{
+				ToneMapConstants c{};
+				c.uParams = {
+					settings_.hdrExposure,
+					static_cast<float>(settings_.toneMapMode),
+					2.2f,
+					settings_.enableHDR ? 1.0f : 0.0f
+				};
+
+				ctx.commandList.BindPipeline(psoToneMap_);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+				ctx.commandList.Draw(3, 0);
+			}
+			else
+			{
+				ctx.commandList.BindPipeline(psoCopyToSwapChain_);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+				ctx.commandList.Draw(3, 0);
+			}
 		});
 
 	// --- ImGui overlay (optional) ---
