@@ -48,3 +48,16 @@
 				skyboxMesh_ = UploadMesh(device_, skyCpu, "SkyboxCube_DX12");
 			}
 
+			// Unit quad for instanced billboard particles.
+			{
+				MeshCPU particleCpu{};
+				particleCpu.vertices = {
+					VertexDesc{ -0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f },
+					VertexDesc{  0.5f, -0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f },
+					VertexDesc{  0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 0.0f },
+					VertexDesc{ -0.5f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f, 0.0f, 0.0f },
+				};
+				particleCpu.indices = { 0u, 1u, 2u, 2u, 3u, 0u };
+				particleMesh_ = UploadMesh(device_, particleCpu, "ParticleQuad_DX12");
+			}
+

@@ -55,6 +55,16 @@
 					highlightInstanceBuffer_ = device_.CreateBuffer(id);
 				}
 
+				// Billboard particle instances (slot1, same 4xfloat4 layout shape as InstanceData).
+				{
+					rhi::BufferDesc pd{};
+					pd.bindFlag = rhi::BufferBindFlag::VertexBuffer;
+					pd.usageFlag = rhi::BufferUsageFlag::Dynamic;
+					pd.sizeInBytes = kParticleInstanceBufferSizeBytes;
+					pd.debugName = "ParticleInstanceVB";
+					particleInstanceBuffer_ = device_.CreateBuffer(pd);
+				}
+
 				// Persistent reflection capture cubemap.
 				// The texture is (re)created based on current RendererSettings (resolution).
 				EnsureReflectionCaptureResources();

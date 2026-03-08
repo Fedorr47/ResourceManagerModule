@@ -110,6 +110,10 @@
 	transparentState_.blend.enable = true;
 	transparentState_.rasterizer.cullMode = rhi::CullMode::None;
 
+
+	particleState_ = transparentState_;
+	particleState_.blend.mode = rhi::BlendMode::Additive;
+	particleState_.rasterizer.cullMode = rhi::CullMode::None;
 	// Depth pre-pass state: same raster as opaque, depth test+write enabled.
 	preDepthState_ = state_;
 
@@ -258,6 +262,7 @@
 		const auto toneMapPath = corefs::ResolveAsset("shaders\\ToneMap_dx12.hlsl");
 		const auto copyPath = corefs::ResolveAsset("shaders\\CopyToSwapChain_dx12.hlsl");
 		const auto planarCompPath = corefs::ResolveAsset("shaders\\PlanarComposite_dx12.hlsl");
+		const auto particlePath = corefs::ResolveAsset("shaders\\Particles_dx12.hlsl");
 
 		const auto vsG = shaderLibrary_.GetOrCreateShader(ShaderKey{
 			.stage = rhi::ShaderStage::Vertex,
@@ -453,6 +458,24 @@
 				.shaderModel = rhi::ShaderModel::SM6_1
 				});
 			psoToneMap_ = psoCache_.GetOrCreate("PSO_ToneMap", vsToneMap, psToneMap);
+		}
+		// Additive billboard particles.
+		{
+			const auto vsParticles = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Vertex,
+				.name = "VSMain",
+				.filePath = particlePath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			const auto psParticles = shaderLibrary_.GetOrCreateShader(ShaderKey{
+				.stage = rhi::ShaderStage::Pixel,
+				.name = "PSMain",
+				.filePath = particlePath.string(),
+				.defines = {},
+				.shaderModel = rhi::ShaderModel::SM6_1
+				});
+			psoParticles_ = psoCache_.GetOrCreate("PSO_Particles", vsParticles, psParticles);
 		}
 
 		// Copy scene color to swapchain (fullscreen blit).

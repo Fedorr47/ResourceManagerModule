@@ -42,30 +42,22 @@
       "roughness": "watermelon_roughness"
     }}
   },
-  "camera": {"position": [-6.978175,5.997520,1.841396], "target": [-6.206993,5.361194,1.822197], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
+  "camera": {"position": [-7.796309,6.766295,1.024262], "target": [-7.005341,6.159338,0.946985], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
   "lights": [
-    {"type": "directional", "position": [0.000000,0.000000,0.000000], "direction": [-0.357771,-0.894427,-0.268328], "color": [1.000000,1.000000,1.000000], "intensity": 4.560000, "range": 10.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.120000, "attQuadratic": 0.040000},
+    {"type": "directional", "position": [0.000000,0.000000,0.000000], "direction": [-0.357771,-0.894427,-0.268328], "color": [1.000000,1.000000,1.000000], "intensity": 1.000000, "range": 10.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.120000, "attQuadratic": 0.040000},
     {"type": "point", "position": [-1.350000,5.100000,-1.350000], "direction": [0.000000,-1.000000,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 0.000000, "range": 120.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.020000, "attQuadratic": 0.004000},
     {"type": "spot", "position": [2.000000,4.000000,2.000000], "direction": [-0.371391,-0.928477,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 0.000000, "range": 100.000000, "innerHalfAngleDeg": 22.000000, "outerHalfAngleDeg": 35.000000, "attConstant": 1.000000, "attLinear": 0.090000, "attQuadratic": 0.032000}
+  ],
+  "particleEmitters": [
+    {"name": "FireColumn_Left", "enabled": true, "looping": true, "position": [-1.350000,2.950000,-1.350000], "positionJitter": [0.080000,0.020000,0.080000], "velocityMin": [-0.120000,0.900000,-0.120000], "velocityMax": [0.120000,1.600000,0.120000], "color": [1.000000,0.600000,0.200000,1.000000], "size": [0.080000, 0.160000], "lifetime": [0.800000, 1.400000], "spawnRate": 18.000000, "burstCount": 5, "duration": 10.000000, "startDelay": 0.000000}
   ],
   "skybox": "Skybox",
   "nodes": [
     {"name": "Ground", "parent": -1, "visible": true, "mesh": "quad", "material": "ground", "transform": {"position": [0.000000,-0.600000,0.000000], "rotationDegrees": [-90.000000,0.000000,0.000000], "scale": [8.000000,8.000000,8.000000]}},
-    {"name": "Cube_1_1", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [-1.350000,2.300000,-1.350000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
-    {"name": "Cube_1_2", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [-1.350000,2.300000,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
-    {"name": "Cube_2_2", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
-    {"name": "Cube_2_3", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,1.350000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
-    {
-      "name": "PlanarMirror",
-      "parent": -1,
-      "visible": true,
-      "mesh": "quad",
-      "material": "planar_mirror",
-      "transform": {
-        "position": [ 4.5, 3.000000, -2.000000 ],
-        "rotationDegrees": [ 0.000000, -90.000000, 0.000000 ],
-        "scale": [ 3.000000, 1.000000, 3.000000 ]
-      }
-    }
+    {"name": "Cube_1_1", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [-1.350000,2.300000,-3.229985], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
+    {"name": "Cube_1_2", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [-1.350000,2.300000,3.588334], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
+    {"name": "Cube_2_2", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,-3.133935], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
+    {"name": "Cube_2_3", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,3.596077], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
+    {"name": "PlanarMirror", "parent": -1, "visible": true, "mesh": "quad", "material": "planar_mirror", "transform": {"position": [4.500000,3.000000,-2.000000], "rotationDegrees": [0.000000,-90.000000,0.000000], "scale": [3.000000,1.000000,3.000000]}}
   ]
 }

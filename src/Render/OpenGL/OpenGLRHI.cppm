@@ -1185,11 +1185,18 @@ void DestroyFramebuffer(FrameBufferHandle framebuffer) noexcept override
 			}
 			glFrontFace(ToGLFrontFace(state.rasterizer.frontFace));
 
-			// Blend (simple)
+			// Blend
 			if (state.blend.enable)
 			{
 				glEnable(GL_BLEND);
-				glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				if (state.blend.mode == BlendMode::Additive)
+				{
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+				}
+				else
+				{
+					glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+				}
 				glBlendEquation(GL_FUNC_ADD);
 			}
 			else

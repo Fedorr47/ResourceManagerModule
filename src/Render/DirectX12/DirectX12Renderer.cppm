@@ -141,6 +141,43 @@ export namespace rendern
 			}
 		}
 
+		void DrawParticleBillboards(
+			rhi::CommandList& commandList,
+			const Scene& scene,
+			const FrameCameraData& camera,
+			std::uint32_t particleCount) const
+		{
+			if (!psoParticles_ || !particleMesh_.vertexBuffer || !particleMesh_.indexBuffer || !particleInstanceBuffer_ || particleCount == 0)
+			{
+				return;
+			}
+
+			const mathUtils::Vec3 forward = mathUtils::Normalize(scene.camera.target - scene.camera.position);
+			mathUtils::Vec3 right = mathUtils::Cross(forward, scene.camera.up);
+			if (mathUtils::Length(right) <= 0.0001f)
+			{
+				right = mathUtils::Vec3(1.0f, 0.0f, 0.0f);
+			}
+			right = mathUtils::Normalize(right);
+			const mathUtils::Vec3 up = mathUtils::Normalize(mathUtils::Cross(right, forward));
+
+			ParticleConstants constants{};
+			const mathUtils::Mat4 viewProjT = mathUtils::Transpose(camera.viewProj);
+			std::memcpy(constants.uViewProj.data(), mathUtils::ValuePtr(viewProjT), sizeof(float) * 16);
+			constants.uCameraRight = { right.x, right.y, right.z, 0.0f };
+			constants.uCameraUp = { up.x, up.y, up.z, 0.0f };
+
+			commandList.SetState(particleState_);
+			commandList.BindPipeline(psoParticles_);
+			commandList.BindInputLayout(particleMesh_.layoutInstanced);
+			commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+			commandList.BindVertexBuffer(0, particleMesh_.vertexBuffer, particleMesh_.vertexStrideBytes, 0);
+			commandList.BindVertexBuffer(1, particleInstanceBuffer_, static_cast<std::uint32_t>(sizeof(ParticleInstanceData)), 0);
+			commandList.BindIndexBuffer(particleMesh_.indexBuffer, particleMesh_.indexType, 0);
+			commandList.SetConstants(0, std::as_bytes(std::span{ &constants, 1 }));
+			commandList.DrawIndexed(particleMesh_.indexCount, particleMesh_.indexType, 0, 0, particleCount, 0);
+		}
+
 		rhi::PipelineHandle PlanarPipelineFor(MaterialPerm perm) const noexcept
 		{
 			const bool useTex = HasFlag(perm, MaterialPerm::UseTex);
@@ -374,6 +411,8 @@ export namespace rendern
 		static constexpr std::uint32_t kMaxLights = 64;
 		static constexpr std::uint32_t kDefaultInstanceBufferSizeBytes = 8u * 1024u * 1024u; // 8 MB (combined shadow+main instances)
 		static constexpr std::uint32_t kMaxDeferredReflectionProbes = 255u;
+		static constexpr std::uint32_t kMaxParticles = 16384u;
+		static constexpr std::uint32_t kParticleInstanceBufferSizeBytes = static_cast<std::uint32_t>(sizeof(ParticleInstanceData) * kMaxParticles);
 
 		rhi::IRHIDevice& device_;
 		RendererSettings settings_{};
@@ -401,6 +440,7 @@ export namespace rendern
 		rhi::PipelineHandle psoBloomComposite_{}; // fullscreen SceneColor + Bloom
 		rhi::PipelineHandle psoToneMap_{};       // fullscreen tonemap SceneColor -> swapchain
 		rhi::PipelineHandle psoCopyToSwapChain_{}; // fullscreen copy SceneColor -> swapchain
+		rhi::PipelineHandle psoParticles_{};      // instanced billboard particles
 		rhi::InputLayoutHandle fullscreenLayout_{}; // empty input layout for fullscreen VS (SV_VertexID)
 		rhi::GraphicsState deferredLightingState_{};
 		rhi::GraphicsState planarCompositeState_{};
@@ -412,12 +452,14 @@ export namespace rendern
 		rhi::GraphicsState outlineState_{};
 		rhi::GraphicsState preDepthState_{};
 		rhi::GraphicsState mainAfterPreDepthState_{};
+		rhi::GraphicsState particleState_{};
 		rhi::GraphicsState planarMaskState_{};
 		rhi::GraphicsState planarReflectedState_{};
 
 		rhi::BufferHandle instanceBuffer_{};
 		std::uint32_t instanceBufferSizeBytes_{ kDefaultInstanceBufferSizeBytes };
 		rhi::BufferHandle highlightInstanceBuffer_{}; // single-instance VB for selection highlight
+		rhi::BufferHandle particleInstanceBuffer_{};
 
 		// Shadow pass
 		rhi::PipelineHandle psoShadow_{};
@@ -468,6 +510,7 @@ export namespace rendern
 		int reflectionCaptureLastAnchorNode_{ -1 }; // LevelAsset node index (or -1)
 
 		MeshRHI skyboxMesh_{};
+		MeshRHI particleMesh_{};
 		rhi::PipelineHandle psoSkybox_{};
 		// Debug: visualize a cubemap as a 3x2 atlas (swapchain pass).
 		rhi::PipelineHandle psoDebugCubeAtlas_{};

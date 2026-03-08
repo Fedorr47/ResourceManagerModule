@@ -24,6 +24,7 @@ auto PackGraphicsStateKey = [&](const GraphicsState& state) -> std::uint64_t
         PackBits(packedValue, bitOffset, state.depth.writeEnable ? 1u : 0u, 1);
         PackBits(packedValue, bitOffset, static_cast<std::uint32_t>(state.depth.depthCompareOp), 3);
         PackBits(packedValue, bitOffset, state.blend.enable ? 1u : 0u, 1);
+        PackBits(packedValue, bitOffset, static_cast<std::uint32_t>(state.blend.mode), 2);
         PackBits(packedValue, bitOffset, state.depth.stencil.enable ? 1u : 0u, 1);
         PackBits(packedValue, bitOffset, static_cast<std::uint32_t>(state.depth.stencil.readMask), 8);
         PackBits(packedValue, bitOffset, static_cast<std::uint32_t>(state.depth.stencil.writeMask), 8);

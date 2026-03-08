@@ -65,6 +65,7 @@ struct LevelAsset
 
 	std::optional<Camera> camera;
 	std::vector<Light> lights;
+	std::vector<ParticleEmitter> particleEmitters;
 	std::optional<std::string> skyboxTexture; // textureId
 
 	std::vector<LevelNode> nodes;

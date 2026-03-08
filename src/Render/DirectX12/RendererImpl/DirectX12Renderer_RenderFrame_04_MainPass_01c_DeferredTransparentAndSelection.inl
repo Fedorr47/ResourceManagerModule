@@ -177,6 +177,29 @@ if (!transparentDraws.empty())
 		}
 	});
 }
+// --- Additive particles over deferred SceneColor ---
+if (particleCount > 0u)
+{
+	renderGraph::PassAttachments att{};
+	att.useSwapChainBackbuffer = false;
+	att.colors = { sceneColorAfterFog };
+	att.depth = depthRG;
+	att.clearDesc.clearColor = false;
+	att.clearDesc.clearDepth = false;
+	att.clearDesc.clearStencil = false;
+
+	graph.AddPass("DeferredParticles", std::move(att),
+		[this, &scene, particleCount](renderGraph::PassContext& ctx)
+		{
+			const auto extent = ctx.passExtent;
+			ctx.commandList.SetViewport(0, 0,
+				static_cast<int>(extent.width),
+				static_cast<int>(extent.height));
+
+			const FrameCameraData camera = BuildFrameCameraData(scene, extent);
+			DrawParticleBillboards(ctx.commandList, scene, camera, particleCount);
+		});
+}
 // --- Editor selection (transparent) over deferred SceneColor ---
 if (!selectionTransparent.empty())
 {

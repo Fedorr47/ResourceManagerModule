@@ -258,6 +258,52 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 	if (!level.lights.empty()) ss << "\n  ";
 	ss << "],\n";
 
+	// particle emitters
+	ss << "  \"particleEmitters\": [";
+	for (std::size_t i = 0; i < level.particleEmitters.size(); ++i)
+	{
+		const ParticleEmitter& e = level.particleEmitters[i];
+		if (i == 0) ss << "\n"; else ss << ",\n";
+		ss << "    {";
+		ss << "\"name\": ";
+		WriteJsonEscaped(ss, e.name);
+		ss << ", \"enabled\": ";
+		WriteJsonBool(ss, e.enabled);
+		ss << ", \"looping\": ";
+		WriteJsonBool(ss, e.looping);
+		ss << ", \"position\": ";
+		WriteJsonVec3(ss, e.position);
+		ss << ", \"positionJitter\": ";
+		WriteJsonVec3(ss, e.positionJitter);
+		ss << ", \"velocityMin\": ";
+		WriteJsonVec3(ss, e.velocityMin);
+		ss << ", \"velocityMax\": ";
+		WriteJsonVec3(ss, e.velocityMax);
+		ss << ", \"color\": ";
+		WriteJsonVec4(ss, e.color);
+		ss << ", \"size\": [";
+		WriteJsonFloat(ss, e.sizeMin);
+		ss << ", ";
+		WriteJsonFloat(ss, e.sizeMax);
+		ss << "]";
+		ss << ", \"lifetime\": [";
+		WriteJsonFloat(ss, e.lifetimeMin);
+		ss << ", ";
+		WriteJsonFloat(ss, e.lifetimeMax);
+		ss << "]";
+		ss << ", \"spawnRate\": ";
+		WriteJsonFloat(ss, e.spawnRate);
+		ss << ", \"burstCount\": ";
+		ss << e.burstCount;
+		ss << ", \"duration\": ";
+		WriteJsonFloat(ss, e.duration);
+		ss << ", \"startDelay\": ";
+		WriteJsonFloat(ss, e.startDelay);
+		ss << "}";
+	}
+	if (!level.particleEmitters.empty()) ss << "\n  ";
+	ss << "],\n";
+
 	// skybox: write as string or null (keep loader happy and stable)
 	ss << "  \"skybox\": ";
 	if (level.skyboxTexture && !level.skyboxTexture->empty())

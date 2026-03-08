@@ -101,6 +101,7 @@ assert(layeredReflectionBase >= layeredShadowBase + shadowInstancesLayered.size(
 assert(combinedInstances.size() == finalCount);
 
 const std::uint32_t instStride = static_cast<std::uint32_t>(sizeof(InstanceData));
+std::uint32_t particleCount = 0u;
 
 if (!combinedInstances.empty())
 {
@@ -110,6 +111,31 @@ if (!combinedInstances.empty())
 		throw std::runtime_error("DX12Renderer: instance buffer overflow (increase instanceBufferSizeBytes_)");
 	}
 	device_.UpdateBuffer(instanceBuffer_, std::as_bytes(std::span{ combinedInstances }));
+}
+
+std::vector<ParticleInstanceData> particleInstances;
+particleInstances.reserve(std::min<std::size_t>(scene.particles.size(), static_cast<std::size_t>(kMaxParticles)));
+for (const Particle& particle : scene.particles)
+{
+	if (!particle.alive || particle.size <= 0.0f || particle.color.w <= 0.0f)
+	{
+		continue;
+	}
+	if (particleInstances.size() >= static_cast<std::size_t>(kMaxParticles))
+	{
+		break;
+	}
+
+	ParticleInstanceData gpu{};
+	gpu.centerSize = mathUtils::Vec4(particle.position, particle.size);
+	gpu.color = particle.color;
+	gpu.params0 = mathUtils::Vec4(particle.rotationRad, 0.0f, 0.0f, 0.0f);
+	particleInstances.push_back(gpu);
+}
+particleCount = static_cast<std::uint32_t>(particleInstances.size());
+if (particleCount > 0u)
+{
+	device_.UpdateBuffer(particleInstanceBuffer_, std::as_bytes(std::span{ particleInstances }));
 }
 
 if (settings_.debugPrintDrawCalls)

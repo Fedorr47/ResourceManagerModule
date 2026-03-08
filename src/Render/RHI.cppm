@@ -229,9 +229,16 @@ export namespace rhi
 		FrontFace frontFace{ FrontFace::CounterClockwise };
 	};
 
+	enum class BlendMode : std::uint8_t
+	{
+		Alpha = 0,
+		Additive
+	};
+
 	struct BlendState
 	{
 		bool enable{ false };
+		BlendMode mode{ BlendMode::Alpha };
 	};
 
 	struct GraphicsState

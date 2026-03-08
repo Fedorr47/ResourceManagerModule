@@ -92,6 +92,63 @@ export namespace rendern
 		bool hit{ false };
 	};
 
+	struct Particle
+	{
+		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 velocity{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec4 color{ 1.0f, 0.6f, 0.2f, 1.0f };
+		float size{ 0.15f };
+		float lifetime{ 1.0f };
+		float age{ 0.0f };
+		float rotationRad{ 0.0f };
+		bool alive{ true };
+	};
+
+	struct ParticleEmitter
+	{
+		std::string name;
+		bool enabled{ true };
+		bool looping{ true };
+		mathUtils::Vec3 position{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 positionJitter{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 velocityMin{ -0.15f, 0.9f, -0.15f };
+		mathUtils::Vec3 velocityMax{ 0.15f, 1.6f, 0.15f };
+		mathUtils::Vec4 color{ 1.0f, 0.6f, 0.2f, 1.0f };
+		float sizeMin{ 0.08f };
+		float sizeMax{ 0.16f };
+		float lifetimeMin{ 0.8f };
+		float lifetimeMax{ 1.4f };
+		float spawnRate{ 16.0f };
+		std::uint32_t burstCount{ 0u };
+		float duration{ 0.0f };
+		float startDelay{ 0.0f };
+
+		// Runtime-only state. Not serialized.
+		float elapsed{ 0.0f };
+		float spawnAccumulator{ 0.0f };
+		std::uint32_t spawnSequence{ 0u };
+		bool burstDone{ false };
+	};
+
+	namespace detail
+	{
+		inline std::uint32_t NextParticleRand(std::uint32_t& state) noexcept
+		{
+			state = state * 1664525u + 1013904223u;
+			return state;
+		}
+
+		inline float ParticleRand01(std::uint32_t& state) noexcept
+		{
+			return static_cast<float>(NextParticleRand(state) & 0x00FFFFFFu) / 16777215.0f;
+		}
+
+		inline float ParticleRandRange(std::uint32_t& state, float lo, float hi) noexcept
+		{
+			return lo + (hi - lo) * ParticleRand01(state);
+		}
+	}
+
 	enum class GizmoAxis : std::uint8_t
 	{
 		None = 0,
@@ -267,6 +324,8 @@ export namespace rendern
 		std::vector<Material> materials; // persistent "assets" owned by Scene
 		std::vector<DrawItem> drawItems;
 		std::vector<Light> lights;
+		std::vector<Particle> particles;
+		std::vector<ParticleEmitter> particleEmitters;
 
 		rhi::TextureDescIndex skyboxDescIndex{ 0 };
 
@@ -309,6 +368,8 @@ export namespace rendern
 		{
 			drawItems.clear();
 			lights.clear();
+			particles.clear();
+			particleEmitters.clear();
 			skyboxDescIndex = 0;
 			debugPickRay = {};
 			editorSelectedNode = -1;
@@ -416,6 +477,111 @@ export namespace rendern
 			return lights.back();
 		}
 
+		Particle& AddParticle(const Particle& particle)
+		{
+			particles.push_back(particle);
+			return particles.back();
+		}
+
+		ParticleEmitter& AddParticleEmitter(const ParticleEmitter& emitter)
+		{
+			particleEmitters.push_back(emitter);
+			return particleEmitters.back();
+		}
+
+		void EmitParticleFromEmitter(ParticleEmitter& emitter)
+		{
+			std::uint32_t rng = (emitter.spawnSequence++ + 1u) * 747796405u + 2891336453u;
+
+			Particle particle{};
+			particle.position =
+				emitter.position +
+				mathUtils::Vec3(
+					detail::ParticleRandRange(rng, -emitter.positionJitter.x, emitter.positionJitter.x),
+					detail::ParticleRandRange(rng, -emitter.positionJitter.y, emitter.positionJitter.y),
+					detail::ParticleRandRange(rng, -emitter.positionJitter.z, emitter.positionJitter.z));
+
+			particle.velocity = mathUtils::Vec3(
+				detail::ParticleRandRange(rng, emitter.velocityMin.x, emitter.velocityMax.x),
+				detail::ParticleRandRange(rng, emitter.velocityMin.y, emitter.velocityMax.y),
+				detail::ParticleRandRange(rng, emitter.velocityMin.z, emitter.velocityMax.z));
+
+			particle.color = emitter.color;
+			particle.size = detail::ParticleRandRange(rng, emitter.sizeMin, emitter.sizeMax);
+			particle.lifetime = detail::ParticleRandRange(rng, emitter.lifetimeMin, emitter.lifetimeMax);
+			particle.age = 0.0f;
+			particle.rotationRad = detail::ParticleRandRange(rng, 0.0f, 6.28318530718f);
+			particle.alive = true;
+
+			particles.push_back(particle);
+		}
+
+		void UpdateParticles(float dt)
+		{
+			for (ParticleEmitter& emitter : particleEmitters)
+			{
+				if (!emitter.enabled)
+				{
+					continue;
+				}
+
+				const float previousElapsed = emitter.elapsed;
+				emitter.elapsed += dt;
+
+				if (!emitter.burstDone && emitter.burstCount > 0u && previousElapsed <= emitter.startDelay && emitter.elapsed >= emitter.startDelay)
+				{
+					for (std::uint32_t i = 0; i < emitter.burstCount; ++i)
+					{
+						EmitParticleFromEmitter(emitter);
+					}
+					emitter.burstDone = true;
+				}
+
+				if (emitter.elapsed < emitter.startDelay)
+				{
+					continue;
+				}
+
+				if (!emitter.looping && emitter.duration > 0.0f && (emitter.elapsed - emitter.startDelay) > emitter.duration)
+				{
+					continue;
+				}
+
+				if (emitter.spawnRate > 0.0f)
+				{
+					emitter.spawnAccumulator += dt * emitter.spawnRate;
+					while (emitter.spawnAccumulator >= 1.0f)
+					{
+						emitter.spawnAccumulator -= 1.0f;
+						EmitParticleFromEmitter(emitter);
+					}
+				}
+			}
+
+			for (Particle& particle : particles)
+			{
+				if (!particle.alive)
+				{
+					continue;
+				}
+
+				particle.age += dt;
+				particle.position = particle.position + particle.velocity * dt;
+
+				if (particle.lifetime > 0.0f && particle.age >= particle.lifetime)
+				{
+					particle.alive = false;
+				}
+			}
+
+			particles.erase(
+				std::remove_if(particles.begin(), particles.end(), [](const Particle& particle)
+					{
+						return !particle.alive || particle.size <= 0.0f || particle.color.w <= 0.0f;
+					}),
+				particles.end());
+		}
+
 		std::span<const Material> GetMaterials() const { return materials; }
 		std::span<Material> GetMaterials() { return materials; }
 
@@ -424,5 +590,11 @@ export namespace rendern
 
 		std::span<const Light> GetLights() const { return lights; }
 		std::span<Light> GetLights() { return lights; }
+
+		std::span<const Particle> GetParticles() const { return particles; }
+		std::span<Particle> GetParticles() { return particles; }
+
+		std::span<const ParticleEmitter> GetParticleEmitters() const { return particleEmitters; }
+		std::span<ParticleEmitter> GetParticleEmitters() { return particleEmitters; }
 	};
 } // namespace rendern

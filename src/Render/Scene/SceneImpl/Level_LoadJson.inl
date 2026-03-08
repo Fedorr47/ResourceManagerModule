@@ -241,6 +241,65 @@
 			}
 		}
 
+		// --- particle emitters ---
+		if (auto* emittersV = TryGet(jsonObject, "particleEmitters"))
+		{
+			for (const auto& ev : emittersV->AsArray())
+			{
+				const JsonObject& ed = ev.AsObject();
+				ParticleEmitter emitter;
+				emitter.name = GetStringOpt(ed, "name");
+				emitter.enabled = GetBoolOpt(ed, "enabled", emitter.enabled);
+				emitter.looping = GetBoolOpt(ed, "looping", emitter.looping);
+				if (auto* p = TryGet(ed, "position"))
+				{
+					auto a = ReadFloatArray(*p, 3, "particleEmitters.position");
+					emitter.position = { a[0], a[1], a[2] };
+				}
+				if (auto* p = TryGet(ed, "positionJitter"))
+				{
+					auto a = ReadFloatArray(*p, 3, "particleEmitters.positionJitter");
+					emitter.positionJitter = { a[0], a[1], a[2] };
+				}
+				if (auto* p = TryGet(ed, "velocityMin"))
+				{
+					auto a = ReadFloatArray(*p, 3, "particleEmitters.velocityMin");
+					emitter.velocityMin = { a[0], a[1], a[2] };
+				}
+				if (auto* p = TryGet(ed, "velocityMax"))
+				{
+					auto a = ReadFloatArray(*p, 3, "particleEmitters.velocityMax");
+					emitter.velocityMax = { a[0], a[1], a[2] };
+				}
+				if (auto* c = TryGet(ed, "color"))
+				{
+					auto a = ReadFloatArray(*c, 4, "particleEmitters.color");
+					emitter.color = { a[0], a[1], a[2], a[3] };
+				}
+				if (auto* s = TryGet(ed, "size"))
+				{
+					auto a = ReadFloatArray(*s, 2, "particleEmitters.size");
+					emitter.sizeMin = a[0];
+					emitter.sizeMax = a[1];
+				}
+				emitter.sizeMin = GetFloatOpt(ed, "sizeMin", emitter.sizeMin);
+				emitter.sizeMax = GetFloatOpt(ed, "sizeMax", emitter.sizeMax);
+				if (auto* s = TryGet(ed, "lifetime"))
+				{
+					auto a = ReadFloatArray(*s, 2, "particleEmitters.lifetime");
+					emitter.lifetimeMin = a[0];
+					emitter.lifetimeMax = a[1];
+				}
+				emitter.lifetimeMin = GetFloatOpt(ed, "lifetimeMin", emitter.lifetimeMin);
+				emitter.lifetimeMax = GetFloatOpt(ed, "lifetimeMax", emitter.lifetimeMax);
+				emitter.spawnRate = GetFloatOpt(ed, "spawnRate", emitter.spawnRate);
+				emitter.burstCount = static_cast<std::uint32_t>(std::max(0.0f, GetFloatOpt(ed, "burstCount", static_cast<float>(emitter.burstCount))));
+				emitter.duration = GetFloatOpt(ed, "duration", emitter.duration);
+				emitter.startDelay = GetFloatOpt(ed, "startDelay", emitter.startDelay);
+				out.particleEmitters.push_back(std::move(emitter));
+			}
+		}
+
 		// --- skybox ---
 		if (auto* sb = TryGet(jsonObject, "skybox"))
 		{

@@ -161,6 +161,36 @@ auto AddProbeCenterMarker = [&](const mathUtils::Vec3& p, float s, std::uint32_t
 			rgba);
 	};
 
+auto ResolveGizmoAxisColor = [&](GizmoAxis activeAxis, GizmoAxis hoveredAxis, GizmoAxis axis, std::uint32_t baseColor) -> std::uint32_t
+	{
+		if (activeAxis == axis)
+		{
+			return debugDraw::PackRGBA8(255, 255, 255, 255);
+		}
+		if (hoveredAxis == axis)
+		{
+			return debugDraw::PackRGBA8(255, 255, 0, 255);
+		}
+		return baseColor;
+	};
+
+auto AddGizmoPlaneHandle = [&](const mathUtils::Vec3& pivot,
+	float planeInner,
+	float planeOuter,
+	const mathUtils::Vec3& a,
+	const mathUtils::Vec3& b,
+	std::uint32_t color)
+	{
+		const mathUtils::Vec3 p00 = pivot + a * planeInner + b * planeInner;
+		const mathUtils::Vec3 p10 = pivot + a * planeOuter + b * planeInner;
+		const mathUtils::Vec3 p11 = pivot + a * planeOuter + b * planeOuter;
+		const mathUtils::Vec3 p01 = pivot + a * planeInner + b * planeOuter;
+		debugList.AddLine(p00, p10, color, true);
+		debugList.AddLine(p10, p11, color, true);
+		debugList.AddLine(p11, p01, color, true);
+		debugList.AddLine(p01, p00, color, true);
+	};
+
 if (settings_.enableReflectionCapture)
 {
 	const float h = settings_.reflectionProbeBoxHalfExtent;
@@ -195,6 +225,7 @@ if (settings_.drawLightGizmos)
 	const float scale = settings_.debugLightGizmoScale;
 	const float halfSize = settings_.lightGizmoHalfSize * scale;
 	const float arrowLen = settings_.lightGizmoArrowLength * scale;
+	const float axisLen = scene.editorTranslateGizmo.axisLengthWorld;
 
 	for (const auto& light : scene.lights)
 	{
@@ -217,6 +248,23 @@ if (settings_.drawLightGizmos)
 			debugList.AddLine(p - mathUtils::Vec3(halfSize, 0.0f, 0.0f), p + mathUtils::Vec3(halfSize, 0.0f, 0.0f), colPoint);
 			debugList.AddLine(p - mathUtils::Vec3(0.0f, halfSize, 0.0f), p + mathUtils::Vec3(0.0f, halfSize, 0.0f), colPoint);
 			debugList.AddLine(p - mathUtils::Vec3(0.0f, 0.0f, halfSize), p + mathUtils::Vec3(0.0f, 0.0f, halfSize), colPoint);
+
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(axisLen, 0.0f, 0.0f),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis,
+					scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::X, debugDraw::PackRGBA8(255, 80, 80, 255)), 0.25f, 0.15f, true);
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(0.0f, axisLen, 0.0f),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis,
+					scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::Y, debugDraw::PackRGBA8(80, 255, 80, 255)), 0.25f, 0.15f, true);
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(0.0f, 0.0f, axisLen),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis, scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::Z,
+					debugDraw::PackRGBA8(80, 160, 255, 255)), 0.25f, 0.15f, true);
+
 			debugList.AddWireSphere(p, halfSize, colPoint, 16);
 			break;
 		}
@@ -227,6 +275,23 @@ if (settings_.drawLightGizmos)
 			debugList.AddArrow(p, p + dir * arrowLen, colSpot);
 			const float outerRad = mathUtils::DegToRad(light.outerHalfAngleDeg);
 			debugList.AddWireCone(p, dir, arrowLen, outerRad, colSpot, 24);
+
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(axisLen, 0.0f, 0.0f),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis,
+					scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::X, debugDraw::PackRGBA8(255, 80, 80, 255)), 0.25f, 0.15f, true);
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(0.0f, axisLen, 0.0f),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis,
+					scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::Y, debugDraw::PackRGBA8(80, 255, 80, 255)), 0.25f, 0.15f, true);
+			debugList.AddArrow(
+				p,
+				p + mathUtils::Vec3(0.0f, 0.0f, axisLen),
+				ResolveGizmoAxisColor(scene.editorTranslateGizmo.activeAxis, scene.editorTranslateGizmo.hoveredAxis, GizmoAxis::Z,
+					debugDraw::PackRGBA8(80, 160, 255, 255)), 0.25f, 0.15f, true);
+
 			break;
 		}
 		default:
@@ -234,36 +299,6 @@ if (settings_.drawLightGizmos)
 		}
 	}
 }
-
-auto ResolveGizmoAxisColor = [&](GizmoAxis activeAxis, GizmoAxis hoveredAxis, GizmoAxis axis, std::uint32_t baseColor) -> std::uint32_t
-	{
-		if (activeAxis == axis)
-		{
-			return debugDraw::PackRGBA8(255, 255, 255, 255);
-		}
-		if (hoveredAxis == axis)
-		{
-			return debugDraw::PackRGBA8(255, 255, 0, 255);
-		}
-		return baseColor;
-	};
-
-auto AddGizmoPlaneHandle = [&](const mathUtils::Vec3& pivot,
-	float planeInner,
-	float planeOuter,
-	const mathUtils::Vec3& a,
-	const mathUtils::Vec3& b,
-	std::uint32_t color)
-	{
-		const mathUtils::Vec3 p00 = pivot + a * planeInner + b * planeInner;
-		const mathUtils::Vec3 p10 = pivot + a * planeOuter + b * planeInner;
-		const mathUtils::Vec3 p11 = pivot + a * planeOuter + b * planeOuter;
-		const mathUtils::Vec3 p01 = pivot + a * planeInner + b * planeOuter;
-		debugList.AddLine(p00, p10, color, true);
-		debugList.AddLine(p10, p11, color, true);
-		debugList.AddLine(p11, p01, color, true);
-		debugList.AddLine(p01, p00, color, true);
-	};
 
 if (scene.editorGizmoMode == GizmoMode::Translate && scene.editorTranslateGizmo.enabled && scene.editorTranslateGizmo.visible)
 {

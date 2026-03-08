@@ -165,6 +165,9 @@ namespace appLifecycle
         appEditor::UpdateViewportGizmoHover(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, app.scene, app.win32Input.State());
         appEditor::HandleViewportMouseInteraction(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, *app.levelAsset, *app.levelInstance, app.scene, app.win32Input.State());
 
+        // Advance CPU particle simulation before UI/rendering so freshly spawned particles are visible this frame.
+        app.scene.UpdateParticles(deltaSeconds);
+
         const void* imguiDrawData = appUi::BuildImGuiFrameIfEnabled(
             *app.device,
             app.rendererSettings,

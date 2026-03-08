@@ -11,6 +11,10 @@ if (highlightInstanceBuffer_)
 {
 	device_.DestroyBuffer(highlightInstanceBuffer_);
 }
+if (particleInstanceBuffer_)
+{
+	device_.DestroyBuffer(particleInstanceBuffer_);
+}
 if (lightsBuffer_)
 {
 	device_.DestroyBuffer(lightsBuffer_);
@@ -41,6 +45,7 @@ if (reflectionProbeMetaBuffer_)
 }
 reflectionCubeExtent_ = {};
 DestroyMesh(device_, skyboxMesh_);
+DestroyMesh(device_, particleMesh_);
 debugDrawRenderer_.Shutdown();
 debugTextRenderer_.Shutdown();
 psoCache_.ClearCache();

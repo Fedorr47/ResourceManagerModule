@@ -183,14 +183,25 @@ void SubmitCommandList(CommandList&& commandList) override
                 D3D12_RENDER_TARGET_BLEND_DESC renderTartget{};
                 renderTartget.BlendEnable = TRUE;
                 renderTartget.LogicOpEnable = FALSE;
-                renderTartget.SrcBlend = D3D12_BLEND_SRC_ALPHA;
-                renderTartget.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
                 renderTartget.BlendOp = D3D12_BLEND_OP_ADD;
-                renderTartget.SrcBlendAlpha = D3D12_BLEND_ONE;
-                renderTartget.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
                 renderTartget.BlendOpAlpha = D3D12_BLEND_OP_ADD;
                 renderTartget.LogicOp = D3D12_LOGIC_OP_NOOP;
                 renderTartget.RenderTargetWriteMask = D3D12_COLOR_WRITE_ENABLE_ALL;
+
+                if (curState.blend.mode == BlendMode::Additive)
+                {
+                    renderTartget.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+                    renderTartget.DestBlend = D3D12_BLEND_ONE;
+                    renderTartget.SrcBlendAlpha = D3D12_BLEND_ONE;
+                    renderTartget.DestBlendAlpha = D3D12_BLEND_ONE;
+                }
+                else
+                {
+                    renderTartget.SrcBlend = D3D12_BLEND_SRC_ALPHA;
+                    renderTartget.DestBlend = D3D12_BLEND_INV_SRC_ALPHA;
+                    renderTartget.SrcBlendAlpha = D3D12_BLEND_ONE;
+                    renderTartget.DestBlendAlpha = D3D12_BLEND_INV_SRC_ALPHA;
+                }
 
                 for (UINT i = 0; i < 8; ++i)
                 {

@@ -79,6 +79,23 @@ export namespace rendern
 	};
 	static_assert(sizeof(InstanceData) == 64);
 
+	struct ParticleInstanceData
+	{
+		mathUtils::Vec4 centerSize; // xyz = world center, w = size
+		mathUtils::Vec4 color;      // rgba
+		mathUtils::Vec4 params0;    // x = rotationRad, yzw unused for now
+		mathUtils::Vec4 params1{};  // reserved
+	};
+	static_assert(sizeof(ParticleInstanceData) == 64);
+
+	struct alignas(16) ParticleConstants
+	{
+		std::array<float, 16> uViewProj{};
+		std::array<float, 4> uCameraRight{};
+		std::array<float, 4> uCameraUp{};
+	};
+	static_assert(sizeof(ParticleConstants) <= 96);
+
 	// shadow metadata for Spot/Point arrays (bound as StructuredBuffer at t11).
 	// We pack indices/bias as floats to keep the struct simple across compilers.
 	struct alignas(16) ShadowDataSB

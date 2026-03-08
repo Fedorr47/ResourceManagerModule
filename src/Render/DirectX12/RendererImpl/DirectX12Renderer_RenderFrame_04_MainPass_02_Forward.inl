@@ -160,6 +160,7 @@ graph.AddPass("ForwardMainPass", std::move(mainAtt), [
 	FillPerBatchViewLightingConstants,
 	ResetPerBatchEnvProbeBox,
 	ApplyPerBatchReflectionProbeBox,
+	particleCount,
 	doDepthPrepass](renderGraph::PassContext& ctx)
 {
 	const auto extent = ctx.passExtent;
@@ -383,6 +384,10 @@ graph.AddPass("ForwardMainPass", std::move(mainAtt), [
 			// IMPORTANT: transparent = one object per draw (instanceCount = 1)
 			ctx.commandList.DrawIndexed(batchTransparent.mesh->indexCount, batchTransparent.mesh->indexType, 0, 0, 1, 0);
 		}
+	}
+	if (particleCount > 0u)
+	{
+		DrawParticleBillboards(ctx.commandList, scene, camera, particleCount);
 	}
 
 	// If selected objects are transparent, render outline/highlight AFTER the transparent pass
