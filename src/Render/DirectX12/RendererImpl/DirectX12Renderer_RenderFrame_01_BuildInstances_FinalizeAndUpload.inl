@@ -40,8 +40,9 @@ for (auto& mirrorDraw : planarMirrorDraws)
 	mirrorDraw.instanceOffset = planarMirrorBase + mirrorDraw.instanceOffset;
 }
 
-std::vector<TransparentDraw> transparentDraws;
-transparentDraws.reserve(transparentTmp.size());
+transparentDrawsScratch_.clear();
+transparentDrawsScratch_.reserve(transparentTmp.size());
+auto& transparentDraws = transparentDrawsScratch_;
 for (const auto& transparentInst : transparentTmp)
 {
 	TransparentDraw transparentDraw{};
@@ -59,7 +60,8 @@ std::sort(transparentDraws.begin(), transparentDraws.end(),
 		return first.dist2 > second.dist2; // far -> near
 	});
 
-std::vector<InstanceData> combinedInstances;
+combinedInstancesScratch_.clear();
+auto& combinedInstances = combinedInstancesScratch_;
 const std::uint32_t finalCount =
 layeredReflectionBase + static_cast<std::uint32_t>(reflectionInstancesLayered.size());
 

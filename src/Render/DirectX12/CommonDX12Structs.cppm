@@ -338,4 +338,14 @@ export namespace rendern
 		rhi::TextureHandle arrayTexture{};
 		bool usingReflectionProbeEnv = false;
 	};
+
+	struct alignas(16) DeferredLightingConstants
+	{
+		std::array<float, 16> uInvViewProj{};      // transpose(invViewProj)
+		std::array<float, 4>  uCameraPosAmbient{}; // xyz + ambientStrength
+		std::array<float, 4>  uCameraForward{};    // xyz + pad
+		std::array<float, 4>  uShadowBias{};       // x=dirBaseBiasTexels, y=spotBaseBiasTexels, z=pointBaseBiasTexels, w=slopeScaleTexels
+		std::array<float, 4>  uCounts{};           // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
+	};
+	static_assert(sizeof(DeferredLightingConstants) == 128);
 }

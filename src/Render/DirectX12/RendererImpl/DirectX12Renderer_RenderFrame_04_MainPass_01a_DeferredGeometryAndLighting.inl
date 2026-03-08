@@ -8,9 +8,10 @@
 	const mathUtils::Vec3& camPosLocal = frameCamera.camPos;
 	const mathUtils::Vec3& camFLocal = frameCamera.camForward;
 
-	std::vector<DeferredReflectionProbeGpu> deferredReflectionProbes;
-	std::vector<int> deferredReflectionProbeRemap;
-	deferredReflectionProbeRemap.assign(reflectionProbes_.size(), -1);
+	deferredReflectionProbesScratch_.clear();
+	deferredReflectionProbeRemapScratch_.assign(reflectionProbes_.size(), -1);
+	auto& deferredReflectionProbes = deferredReflectionProbesScratch_;
+	auto& deferredReflectionProbeRemap = deferredReflectionProbeRemapScratch_;
 	const float probeHalfExtent = settings_.reflectionProbeBoxHalfExtent;
 	for (std::size_t probeIndex = 0; probeIndex < reflectionProbes_.size(); ++probeIndex)
 	{
@@ -53,15 +54,6 @@
 			reflectionProbeMetaBuffer_,
 			std::as_bytes(std::span{ deferredReflectionProbes }));
 	}
-	struct alignas(16) DeferredLightingConstants
-	{
-		std::array<float, 16> uInvViewProj{};      // transpose(invViewProj)
-		std::array<float, 4>  uCameraPosAmbient{}; // xyz + ambientStrength
-		std::array<float, 4>  uCameraForward{};    // xyz + pad
-		std::array<float, 4>  uShadowBias{};       // x=dirBaseBiasTexels, y=spotBaseBiasTexels, z=pointBaseBiasTexels, w=slopeScaleTexels
-		std::array<float, 4>  uCounts{};           // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
-	};
-	static_assert(sizeof(DeferredLightingConstants) == 128);
 
 	DeferredLightingConstants deferredConstants{};
 	std::memcpy(deferredConstants.uInvViewProj.data(), mathUtils::ValuePtr(invViewProjT), sizeof(float) * 16);

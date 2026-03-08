@@ -373,6 +373,7 @@ export namespace rendern
 	private:
 		static constexpr std::uint32_t kMaxLights = 64;
 		static constexpr std::uint32_t kDefaultInstanceBufferSizeBytes = 8u * 1024u * 1024u; // 8 MB (combined shadow+main instances)
+		static constexpr std::uint32_t kMaxDeferredReflectionProbes = 255u;
 
 		rhi::IRHIDevice& device_;
 		RendererSettings settings_{};
@@ -448,6 +449,15 @@ export namespace rendern
 		std::vector<ReflectionProbeRuntime> reflectionProbes_;
 		std::vector<int> reflectiveOwnerDrawItems_;           // frame list of owners
 		std::vector<int> drawItemReflectionProbeIndices_;     // size == scene.drawItems.size()
+		std::vector<TransparentDraw> scratchTransparentDraws_;
+		std::vector<InstanceData> scratchCombinedInstances_;
+		std::vector<DeferredReflectionProbeGpu> scratchDeferredReflectionProbes_;
+		std::vector<int> scratchDeferredReflectionProbeRemap_;
+
+		std::vector<TransparentDraw> transparentDrawsScratch_;
+		std::vector<InstanceData> combinedInstancesScratch_;
+		std::vector<DeferredReflectionProbeGpu> deferredReflectionProbesScratch_;
+		std::vector<int> deferredReflectionProbeRemapScratch_;
 		static constexpr std::size_t kMaxReflectionProbes = 16;
 
 		int reflectionCaptureLastAnchorKind_{ 0 }; // 0=auto/none, 1=selected, 2=owner, 3=debugOwnerIndex
