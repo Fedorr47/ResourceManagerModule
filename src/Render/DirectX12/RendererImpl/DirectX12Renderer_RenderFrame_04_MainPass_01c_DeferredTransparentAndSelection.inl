@@ -419,42 +419,134 @@ if (settings_.enableHDR && settings_.enableBloom &&
 	clear.clearDepth = false;
 	clear.clearStencil = false;
 
-	graph.AddSwapChainPass("DeferredPresent", clear,
-		[this, finalSceneColor](renderGraph::PassContext& ctx)
-		{
-			const auto extent = ctx.passExtent;
+	const bool fxaaEnabled = settings_.antiAliasingMode == 1u && psoFXAA_ && fullscreenLayout_;
 
-			ctx.commandList.SetViewport(0, 0,
-				static_cast<int>(extent.width),
-				static_cast<int>(extent.height));
 
-			ctx.commandList.SetState(copyToSwapChainState_);
-			ctx.commandList.BindInputLayout(fullscreenLayout_);
-			ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+	if (fxaaEnabled)
+	{
+		const auto presentLdr = graph.CreateTexture(renderGraph::RGTextureDesc{
+			.extent = scDesc.extent,
+			.format = rhi::Format::RGBA8_UNORM,
+			.usage = renderGraph::ResourceUsage::RenderTarget,
+			.debugName = "DeferredPresentLdr"
+			});
 
-			if (psoToneMap_)
+		renderGraph::PassAttachments att{};
+		att.useSwapChainBackbuffer = false;
+		att.colors = { presentLdr };
+		att.clearDesc.clearColor = false;
+		att.clearDesc.clearDepth = false;
+		att.clearDesc.clearStencil = false;
+
+
+		graph.AddPass("DeferredPresentLdr", std::move(att),
+			[this, finalSceneColor](renderGraph::PassContext& ctx)
 			{
-				ToneMapConstants c{};
-				c.uParams = {
-					settings_.hdrExposure,
-					static_cast<float>(settings_.toneMapMode),
-					2.2f,
-					settings_.enableHDR ? 1.0f : 0.0f
+				const auto extent = ctx.passExtent;
+
+				ctx.commandList.SetViewport(0, 0,
+					static_cast<int>(extent.width),
+					static_cast<int>(extent.height));
+
+				ctx.commandList.SetState(copyToSwapChainState_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+
+				if (psoToneMap_)
+				{
+					ToneMapConstants c{};
+					c.uParams = {
+						settings_.hdrExposure,
+						static_cast<float>(settings_.toneMapMode),
+						2.2f,
+						settings_.enableHDR ? 1.0f : 0.0f
+					};
+
+					ctx.commandList.BindPipeline(psoToneMap_);
+					ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+					ctx.commandList.Draw(3, 0);
+				}
+				else
+				{
+					ctx.commandList.BindPipeline(psoCopyToSwapChain_);
+					ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+					ctx.commandList.Draw(3, 0);
+				}
+			});
+
+		graph.AddSwapChainPass("DeferredPresentFXAA", clear,
+			[this, presentLdr](renderGraph::PassContext& ctx)
+			{
+				const auto extent = ctx.passExtent;
+
+				ctx.commandList.SetViewport(0, 0,
+					static_cast<int>(extent.width),
+					static_cast<int>(extent.height));
+
+				ctx.commandList.SetState(copyToSwapChainState_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+
+				FXAAConstants c{};
+				c.uInvSourceSize = {
+					extent.width ? (1.0f / static_cast<float>(extent.width)) : 0.0f,
+					extent.height ? (1.0f / static_cast<float>(extent.height)) : 0.0f,
+					static_cast<float>(extent.width),
+					static_cast<float>(extent.height)
 				};
 
-				ctx.commandList.BindPipeline(psoToneMap_);
-				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+				c.uParams = {
+					settings_.fxaaSubpix,
+					settings_.fxaaEdgeThreshold,
+					settings_.fxaaEdgeThresholdMin,
+					0.0f
+				};
+
+				ctx.commandList.BindPipeline(psoFXAA_);
+				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(presentLdr));
 				ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
 				ctx.commandList.Draw(3, 0);
-			}
-			else
+			});
+	}
+	else
+	{
+		graph.AddSwapChainPass("DeferredPresent", clear,
+			[this, finalSceneColor](renderGraph::PassContext& ctx)
 			{
-				ctx.commandList.BindPipeline(psoCopyToSwapChain_);
-				ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
-				ctx.commandList.Draw(3, 0);
-			}
-		});
+				const auto extent = ctx.passExtent;
 
+				ctx.commandList.SetViewport(0, 0,
+					static_cast<int>(extent.width),
+					static_cast<int>(extent.height));
+
+				ctx.commandList.SetState(copyToSwapChainState_);
+				ctx.commandList.BindInputLayout(fullscreenLayout_);
+				ctx.commandList.SetPrimitiveTopology(rhi::PrimitiveTopology::TriangleList);
+
+				if (psoToneMap_)
+				{
+					ToneMapConstants c{};
+					c.uParams = {
+						settings_.hdrExposure,
+						static_cast<float>(settings_.toneMapMode),
+						2.2f,
+						settings_.enableHDR ? 1.0f : 0.0f
+					};
+
+					ctx.commandList.BindPipeline(psoToneMap_);
+					ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+					ctx.commandList.SetConstants(0, std::as_bytes(std::span{ &c, 1 }));
+					ctx.commandList.Draw(3, 0);
+				}
+				else
+				{
+					ctx.commandList.BindPipeline(psoCopyToSwapChain_);
+					ctx.commandList.BindTexture2D(0, ctx.resources.GetTexture(finalSceneColor));
+					ctx.commandList.Draw(3, 0);
+				}
+			});
+	}
 	// --- ImGui overlay (optional) ---
 	if (imguiDrawData)
 	{

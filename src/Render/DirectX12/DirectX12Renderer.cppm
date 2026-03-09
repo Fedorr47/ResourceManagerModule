@@ -141,13 +141,6 @@ export namespace rendern
 			}
 		}
 
-		struct ParticleDrawBatch
-		{
-			rhi::TextureDescIndex textureDescIndex{ 0 };
-			std::uint32_t instanceOffset{ 0 };
-			std::uint32_t instanceCount{ 0 };
-		};
-
 		void DrawParticleBillboards(
 			rhi::CommandList& commandList,
 			const Scene& scene,
@@ -459,7 +452,8 @@ export namespace rendern
 		rhi::PipelineHandle psoBloomExtract_{};  // fullscreen bloom threshold/downsample
 		rhi::PipelineHandle psoBloomBlur_{};     // fullscreen bloom blur
 		rhi::PipelineHandle psoBloomComposite_{}; // fullscreen SceneColor + Bloom
-		rhi::PipelineHandle psoToneMap_{};       // fullscreen tonemap SceneColor -> swapchain
+		rhi::PipelineHandle psoToneMap_{};       // fullscreen tonemap SceneColor -> RGBA8 target / swapchain
+		rhi::PipelineHandle psoFXAA_{};          // fullscreen FXAA RGBA8 target -> swapchain
 		rhi::PipelineHandle psoCopyToSwapChain_{}; // fullscreen copy SceneColor -> swapchain
 		rhi::PipelineHandle psoParticles_{};      // instanced billboard particles (procedural)
 		rhi::PipelineHandle psoParticlesTextured_{}; // instanced billboard particles (textured)

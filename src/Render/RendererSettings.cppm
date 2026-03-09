@@ -42,6 +42,10 @@ export namespace rendern
 		std::array<float, 3> fogColor{ 0.60f, 0.70f, 0.80f };
 
 		// HDR / tone mapping / bloom.
+		std::uint32_t antiAliasingMode{ 0u }; // 0=None, 1=FXAA
+		float fxaaSubpix{ 0.75f };
+		float fxaaEdgeThreshold{ 0.166f };
+		float fxaaEdgeThresholdMin{ 0.0833f };
 		bool enableHDR{ true };
 		std::uint32_t toneMapMode{ 2u }; // 0=None, 1=Reinhard, 2=ACES
 		float hdrExposure{ 1.0f };

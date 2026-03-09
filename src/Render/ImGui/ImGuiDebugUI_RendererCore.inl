@@ -40,7 +40,7 @@ namespace rendern::ui
 
         const char* items[] = { "Linear", "Exp", "Exp2" };
         int mode = static_cast<int>(rs.fogMode);
-        if (ImGui::Combo("Mode", &mode, items, IM_ARRAYSIZE(items)))
+        if (ImGui::Combo("Mode##Fog", &mode, items, IM_ARRAYSIZE(items)))
         {
             if (mode < 0) mode = 0;
             if (mode > 2) mode = 2;
@@ -77,6 +77,36 @@ namespace rendern::ui
         ImGui::Separator();
     }
 
+    static void DrawAntiAliasingSection(rendern::RendererSettings& rs)
+    {
+        if (!ImGui::CollapsingHeader("Anti-Aliasing", ImGuiTreeNodeFlags_DefaultOpen))
+            return;
+
+        const char* items[] = { "None", "FXAA" };
+        int aaMode = static_cast<int>(rs.antiAliasingMode);
+        if (ImGui::Combo("Mode##AA", &aaMode, items, IM_ARRAYSIZE(items)))
+        {
+            if (aaMode < 0) aaMode = 0;
+            if (aaMode > 1) aaMode = 1;
+            rs.antiAliasingMode = static_cast<std::uint32_t>(aaMode);
+        }
+
+        const bool fxaaEnabled = rs.antiAliasingMode == 1u;
+        ImGui::BeginDisabled(!fxaaEnabled);
+        ImGui::SliderFloat("FXAA Subpix", &rs.fxaaSubpix, 0.0f, 1.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("FXAA Edge Threshold", &rs.fxaaEdgeThreshold, 0.0312f, 0.333f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+        ImGui::SliderFloat("FXAA Edge Threshold Min", &rs.fxaaEdgeThresholdMin, 0.0f, 0.125f, "%.4f", ImGuiSliderFlags_AlwaysClamp);
+
+        if (ImGui::Button("FXAA defaults"))
+        {
+            rs.fxaaSubpix = 0.75f;
+            rs.fxaaEdgeThreshold = 0.166f;
+            rs.fxaaEdgeThresholdMin = 0.0833f;
+        }
+
+        ImGui::EndDisabled();
+        ImGui::Separator();
+    }
 
     static void DrawHdrBloomSection(rendern::RendererSettings& rs)
     {
@@ -269,6 +299,7 @@ namespace rendern::ui
 
         DrawSSAOSection(rs);
         DrawFogSection(rs);
+        DrawAntiAliasingSection(rs);
         DrawHdrBloomSection(rs);
 
         DrawCameraDebugSection(scene, camCtl);

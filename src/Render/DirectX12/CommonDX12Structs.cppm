@@ -364,6 +364,13 @@ export namespace rendern
 	};
 	static_assert(sizeof(ToneMapConstants) % 16 == 0);
 
+	struct alignas(16) FXAAConstants
+	{
+		mathUtils::Vec4 uInvSourceSize{}; // x=1/width, y=1/height
+		mathUtils::Vec4 uParams{};        // x=subpix, y=edgeThreshold, z=edgeThresholdMin, w=pad
+	};
+	static_assert(sizeof(FXAAConstants) % 16 == 0);
+
 	struct FrameCameraData
 	{
 		mathUtils::Mat4 proj{ 1.0f };
@@ -391,4 +398,11 @@ export namespace rendern
 		std::array<float, 4>  uCounts{};           // x = lightCount, y = spotShadowCount, z = pointShadowCount, w = activeReflectionProbeCount
 	};
 	static_assert(sizeof(DeferredLightingConstants) == 128);
+
+	struct ParticleDrawBatch
+	{
+		rhi::TextureDescIndex textureDescIndex{ 0 };
+		std::uint32_t instanceOffset{ 0 };
+		std::uint32_t instanceCount{ 0 };
+	};
 }
