@@ -62,6 +62,7 @@ MeshHandle GetOrLoadMeshHandle_(const LevelAsset& asset, AssetManager& assets, c
 	p.debugName = it->second.debugName;
 	p.flipUVs = it->second.flipUVs;
 	p.submeshIndex = it->second.submeshIndex;
+	p.bakeNodeTransforms = it->second.bakeNodeTransforms;
 	return assets.LoadMeshAsync(meshId, std::move(p));
 }
 

@@ -45,6 +45,7 @@ export namespace rendern
 		// Assimp-backed formats. Ignored by OBJ.
 		bool flipUVs{ true };
 		std::optional<std::uint32_t> submeshIndex{};
+		bool bakeNodeTransforms{ true };
 	};
 
 
@@ -266,7 +267,7 @@ public:
 					}
 					else
 					{
-						cpuOpt = rendern::LoadAssimp(abs, propsCopy.flipUVs, propsCopy.submeshIndex);
+						cpuOpt = rendern::LoadAssimp(abs, propsCopy.flipUVs, propsCopy.submeshIndex, propsCopy.bakeNodeTransforms);
 					}
 				}
 				catch (const std::exception& e)

@@ -62,6 +62,7 @@ LevelInstance InstantiateLevel(Scene& scene, AssetManager& assets, BindlessTable
 		p.debugName = md.debugName;
 		p.flipUVs = md.flipUVs;
 		p.submeshIndex = md.submeshIndex;
+		p.bakeNodeTransforms = md.bakeNodeTransforms;
 		meshHandles.emplace(id, assets.LoadMeshAsync(id, std::move(p)));
 	}
 

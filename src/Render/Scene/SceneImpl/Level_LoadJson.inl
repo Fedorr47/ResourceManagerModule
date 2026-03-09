@@ -29,6 +29,7 @@
 				def.path = GetStringOpt(md, "path");
 				def.debugName = GetStringOpt(md, "debugName");
 				def.flipUVs = GetBoolOpt(md, "flipUVs", true);
+				def.bakeNodeTransforms = GetBoolOpt(md, "bakeNodeTransforms", true);
 				if (auto* submeshV = TryGet(md, "submeshIndex"))
 				{
 					if (!submeshV->IsNumber())

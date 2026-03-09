@@ -7,6 +7,7 @@ struct LevelMeshDef
 	std::string debugName;
 	bool flipUVs{ true };
 	std::optional<std::uint32_t> submeshIndex{};
+	bool bakeNodeTransforms{ true };
 };
 
 struct LevelModelDef

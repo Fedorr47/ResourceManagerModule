@@ -58,6 +58,10 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 			{
 				ss << ", \"submeshIndex\": " << *md.submeshIndex;
 			}
+			if (!md.bakeNodeTransforms)
+			{
+				ss << ", \"bakeNodeTransforms\": false";
+			}
 			ss << "}";
 		}
 		if (!keys.empty()) ss << "\n  ";

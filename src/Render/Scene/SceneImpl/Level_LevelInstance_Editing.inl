@@ -279,52 +279,6 @@ int AddNode(LevelAsset& asset,
 	return newIndex;
 }
 
-std::string SanitizeAssetToken(std::string s)
-{
-	for (char& c : s)
-	{
-		const bool ok =
-			(c >= 'a' && c <= 'z') ||
-			(c >= 'A' && c <= 'Z') ||
-			(c >= '0' && c <= '9') ||
-			c == '_' || c == '-' || c == '.';
-		if (!ok)
-		{
-			c = '_';
-		}
-	}
-	if (s.empty())
-	{
-		s = "asset";
-	}
-	return s;
-}
-
-std::string MakeRelativeImportedTexturePath(
-	std::string_view modelPath,
-	std::string_view rawTexturePath)
-{
-	namespace fs = std::filesystem;
-
-	const fs::path modelAbs = corefs::ResolveAsset(std::filesystem::path(std::string(modelPath)));
-	const fs::path modelDir = modelAbs.parent_path();
-
-	fs::path texPath(rawTexturePath);
-	fs::path resolved = texPath.is_absolute() ? texPath : (modelDir / texPath);
-	resolved = fs::weakly_canonical(resolved);
-
-	const fs::path assetRoot = corefs::FindAssetRoot();
-	std::error_code ec;
-	fs::path rel = fs::relative(resolved, assetRoot, ec);
-	if (!ec && !rel.empty())
-	{
-		return rel.generic_string();
-	}
-
-	// fallback: keep original
-	return resolved.generic_string();
-}
-
 void EnsureImportedTexture(
 	LevelAsset& asset,
 	std::string_view textureId,
@@ -354,14 +308,13 @@ void EnsureImportedTexture(
 void BindImportedTexture(
 	LevelAsset& asset,
 	LevelMaterialDef& md,
-	std::string_view modelPath,
 	std::string_view modelId,
 	std::uint32_t materialIndex,
 	std::string_view slotName,
 	const std::optional<ImportedMaterialTextureRef>& texRef,
 	bool srgb)
 {
-	if (!texRef || texRef->path.empty() || texRef->embedded)
+	if (!texRef || texRef->path.empty())
 	{
 		return;
 	}
@@ -369,27 +322,8 @@ void BindImportedTexture(
 	const std::string texId =
 		std::string(modelId) + "__mat_" + std::to_string(materialIndex) + "__" + std::string(slotName);
 
-	const std::string relPath = MakeRelativeImportedTexturePath(modelPath, texRef->path);
-
-	EnsureImportedTexture(asset, texId, relPath, srgb);
+	EnsureImportedTexture(asset, texId, texRef->path, srgb);
 	md.textureBindings[std::string(slotName)] = texId;
-}
-
-std::string ResolveImportedTexturePath(
-	const ImportedMaterialTextureRef& texRef,
-	const ImportedModelScene& imported,
-	std::string_view modelPath)
-{
-	if (!texRef.embedded)
-	{
-		return MakeRelativeImportedTexturePath(modelPath, texRef.path);
-	}
-
-	const std::filesystem::path modelAbs = corefs::ResolveAsset(std::filesystem::path(std::string(modelPath)));
-	const ImportedModelScene* dummy = &imported; // just to keep signature consistent
-	(void)dummy;
-
-	return {};
 }
 
 // Import an FBX/Assimp scene as regular Level nodes + mesh defs.
@@ -400,19 +334,62 @@ int ImportModelSceneAsNodes(LevelAsset& asset,
 	AssetManager& assets,
 	std::string_view modelId,
 	int parentNodeIndex = -1,
-	bool createMaterialPlaceholders = true)
+	bool createMaterialPlaceholders = true,
+	bool importSkeletonNodes = false,
+	bool cleanupExistingImportedArtifacts = true)
 {
+	namespace fs = std::filesystem;
 	auto modelIt = asset.models.find(std::string(modelId));
 	if (modelIt == asset.models.end())
 	{
 		throw std::runtime_error("Level: unknown modelId for scene import: " + std::string(modelId));
 	}
 
-	const ImportedModelScene imported = LoadAssimpScene(modelIt->second.path, modelIt->second.flipUVs);
+	auto MakeAssetRelativePath = [](const fs::path& absolutePath) -> std::string
+		{
+			const fs::path assetRoot = corefs::FindAssetRoot();
+			std::error_code ec;
+			const fs::path rel = fs::relative(absolutePath, assetRoot, ec);
+			if (!ec && !rel.empty())
+			{
+				return rel.generic_string();
+			}
+			return absolutePath.generic_string();
+		};
+
+	if (!modelIt->second.path.empty())
+	{
+		fs::path modelPath(modelIt->second.path);
+		if (!modelPath.is_absolute())
+		{
+			modelPath = corefs::ResolveAsset(modelPath);
+		}
+		modelIt->second.path = MakeAssetRelativePath(modelPath);
+	}
+
+	if (cleanupExistingImportedArtifacts)
+	{
+		const std::string assetPrefix = std::string(modelId) + "__";
+		for (auto it = asset.meshes.begin(); it != asset.meshes.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? asset.meshes.erase(it) : std::next(it);
+		}
+		for (auto it = asset.materials.begin(); it != asset.materials.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? asset.materials.erase(it) : std::next(it);
+		}
+		for (auto it = asset.textures.begin(); it != asset.textures.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? asset.textures.erase(it) : std::next(it);
+		}
+	}
+
+	const ImportedModelScene imported = LoadAssimpScene(modelIt->second.path, modelIt->second.flipUVs, importSkeletonNodes, true);
 	if (imported.nodes.empty())
 	{
 		return -1;
 	}
+
 
 	if (createMaterialPlaceholders)
 	{
@@ -422,20 +399,13 @@ int ImportModelSceneAsNodes(LevelAsset& asset,
 			const std::string matId = std::string(modelId) + "__mat_" + std::to_string(i);
 
 			LevelMaterialDef md{};
-			if (auto it = asset.materials.find(matId); it != asset.materials.end())
-			{
-				md = it->second;
-			}
-
 			md.material.params.baseColor = mathUtils::Vec4(1.0f, 1.0f, 1.0f, 1.0f);
-
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "albedo", srcMat.baseColor, true);
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "normal", srcMat.normal, false);
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "metallic", srcMat.metallic, false);
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "roughness", srcMat.roughness, false);
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "ao", srcMat.ao, false);
-			BindImportedTexture(asset, md, modelIt->second.path, modelId, static_cast<std::uint32_t>(i), "emissive", srcMat.emissive, true);
-
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "albedo", srcMat.baseColor, true);
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "normal", srcMat.normal, false);
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "metallic", srcMat.metallic, false);
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "roughness", srcMat.roughness, false);
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "ao", srcMat.ao, false);
+			BindImportedTexture(asset, md, modelId, static_cast<std::uint32_t>(i), "emissive", srcMat.emissive, true);
 			if (!md.textureBindings.empty())
 			{
 				md.material.permFlags |= MaterialPerm::UseTex;
@@ -467,17 +437,15 @@ int ImportModelSceneAsNodes(LevelAsset& asset,
 		for (const std::uint32_t submeshIndex : srcNode.submeshes)
 		{
 			const std::string meshId = std::string(modelId) + "__mesh_" + std::to_string(submeshIndex);
-			if (asset.meshes.find(meshId) == asset.meshes.end())
-			{
-				LevelMeshDef meshDef{};
-				meshDef.path = modelIt->second.path;
-				meshDef.debugName = modelIt->second.debugName.empty()
-					? (std::string(modelId) + "_mesh_" + std::to_string(submeshIndex))
-					: (modelIt->second.debugName + "_mesh_" + std::to_string(submeshIndex));
-				meshDef.flipUVs = modelIt->second.flipUVs;
-				meshDef.submeshIndex = submeshIndex;
-				asset.meshes.emplace(meshId, std::move(meshDef));
-			}
+			LevelMeshDef meshDef{};
+			meshDef.path = modelIt->second.path;
+			meshDef.debugName = modelIt->second.debugName.empty()
+				? (std::string(modelId) + "_mesh_" + std::to_string(submeshIndex))
+				: (modelIt->second.debugName + "_mesh_" + std::to_string(submeshIndex));
+			meshDef.flipUVs = modelIt->second.flipUVs;
+			meshDef.submeshIndex = submeshIndex;
+			meshDef.bakeNodeTransforms = false;
+			asset.meshes[meshId] = std::move(meshDef);
 
 			std::string materialId;
 			if (static_cast<std::size_t>(submeshIndex) < imported.submeshes.size())

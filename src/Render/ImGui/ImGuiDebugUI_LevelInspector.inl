@@ -174,19 +174,29 @@ namespace rendern::ui::level_ui_detail
 
         ImGui::Spacing();
         ImGui::InputText("OBJ path", st.importPathBuf, sizeof(st.importPathBuf));
-        ImGui::InputText("Asset path", st.importPathBuf, sizeof(st.importPathBuf));
+        ImGui::InputText("Asset id (optional)", st.importAssetIdBuf, sizeof(st.importAssetIdBuf));
         ImGui::Checkbox("Flip UVs on import", &st.importFlipUVs);
+
+        const auto makeImportBaseId = [&](const char* fallback) -> std::string
+        {
+            std::string base = std::string(st.importAssetIdBuf);
+            if (base.empty())
+            {
+                base = std::filesystem::path(std::string(st.importPathBuf)).stem().string();
+            }
+            if (base.empty())
+            {
+                base = fallback;
+            }
+            return base;
+        };
 
         if (ImGui::Button("Import mesh into library"))
         {
             const std::string pathStr = std::string(st.importPathBuf);
             if (!pathStr.empty())
             {
-                std::string base = std::filesystem::path(pathStr).stem().string();
-                if (base.empty())
-                    base = "mesh";
-
-                const std::string meshId = MakeUniqueMeshId(level, base);
+                const std::string meshId = MakeUniqueMeshId(level, makeImportBaseId("mesh"));
 
                 rendern::LevelMeshDef def{};
                 def.path = pathStr;
@@ -213,11 +223,8 @@ namespace rendern::ui::level_ui_detail
             const std::string pathStr = std::string(st.importPathBuf);
             if (!pathStr.empty())
             {
-                std::string base = std::filesystem::path(pathStr).stem().string();
-                if (base.empty())
-                    base = "mesh";
-
-                const std::string meshId = MakeUniqueMeshId(level, base);
+                const std::string base = makeImportBaseId("mesh");
+                const std::string meshId = level.meshes.contains(base) ? base : MakeUniqueMeshId(level, base);
 
                 if (!level.meshes.contains(meshId))
                 {
@@ -236,18 +243,14 @@ namespace rendern::ui::level_ui_detail
 
         ImGui::Spacing();
         ImGui::SeparatorText("Model / Scene Import");
-        ImGui::Checkbox("Create placeholder materials on scene import", &st.importSceneCreateMaterialPlaceholders);
+        ImGui::Checkbox("Import skeleton/bone nodes", &st.importSceneSkeletonNodes);
 
         if (ImGui::Button("Import model into library"))
         {
             const std::string pathStr = std::string(st.importPathBuf);
             if (!pathStr.empty())
             {
-                std::string base = std::filesystem::path(pathStr).stem().string();
-                if (base.empty())
-                    base = "model";
-
-                const std::string modelId = MakeUniqueModelId(level, base);
+                const std::string modelId = MakeUniqueModelId(level, makeImportBaseId("model"));
                 rendern::LevelModelDef def{};
                 def.path = pathStr;
                 def.debugName = modelId;
@@ -261,10 +264,7 @@ namespace rendern::ui::level_ui_detail
             const std::string pathStr = std::string(st.importPathBuf);
             if (!pathStr.empty())
             {
-                std::string base = std::filesystem::path(pathStr).stem().string();
-                if (base.empty())
-                    base = "model";
-
+                const std::string base = makeImportBaseId("model");
                 const std::string modelId = level.models.contains(base) ? base : MakeUniqueModelId(level, base);
                 if (!level.models.contains(modelId))
                 {
@@ -287,10 +287,7 @@ namespace rendern::ui::level_ui_detail
             const std::string pathStr = std::string(st.importPathBuf);
             if (!pathStr.empty())
             {
-                std::string base = std::filesystem::path(pathStr).stem().string();
-                if (base.empty())
-                    base = "model";
-
+                const std::string base = makeImportBaseId("model");
                 const std::string modelId = level.models.contains(base) ? base : MakeUniqueModelId(level, base);
                 if (!level.models.contains(modelId))
                 {
@@ -303,7 +300,15 @@ namespace rendern::ui::level_ui_detail
 
                 try
                 {
-                    const int firstIdx = levelInst.ImportModelSceneAsNodes(level, scene, assets, modelId, parentForNew, st.importSceneCreateMaterialPlaceholders);
+                    const int firstIdx = levelInst.ImportModelSceneAsNodes(
+                        level,
+                        scene,
+                        assets,
+                        modelId,
+                        parentForNew,
+                        st.importSceneCreateMaterialPlaceholders,
+                        st.importSceneSkeletonNodes,
+                        true);
                     st.selectedNode = firstIdx;
                     st.selectedParticleEmitter = -1;
                 }

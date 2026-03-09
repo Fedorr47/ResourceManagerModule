@@ -17,7 +17,11 @@ import :file_system;
 
 export namespace rendern
 {
-    inline MeshCPU LoadAssimp(const std::filesystem::path& pathIn, bool flipUVs = true, std::optional<std::uint32_t> submeshIndex = std::nullopt)
+    inline MeshCPU LoadAssimp(
+        const std::filesystem::path& pathIn,
+        bool flipUVs = true,
+        std::optional<std::uint32_t> submeshIndex = std::nullopt,
+        bool bakeNodeTransforms = true)
     {
         namespace fs = std::filesystem;
 
@@ -31,8 +35,12 @@ export namespace rendern
             aiProcess_Triangulate |
             aiProcess_JoinIdenticalVertices |
             aiProcess_GenSmoothNormals |
-            aiProcess_PreTransformVertices |
             aiProcess_ImproveCacheLocality;
+
+        if (bakeNodeTransforms)
+        {
+            flags |= aiProcess_PreTransformVertices;
+        }
 
         if (flipUVs)
         {
