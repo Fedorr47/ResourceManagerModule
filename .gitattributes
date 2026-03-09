@@ -1,1 +1,2 @@
+*.fbx filter=lfs diff=lfs merge=lfs -text
 assets/models/Ch15_nonPBR.fbx filter=lfs diff=lfs merge=lfs -text
