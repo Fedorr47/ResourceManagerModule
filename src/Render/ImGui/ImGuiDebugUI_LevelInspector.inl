@@ -1,5 +1,95 @@
 namespace rendern::ui::level_ui_detail
 {
+    static constexpr const char* kDemoSmokeTextureId = "particle_smoke_soft_01";
+    static constexpr const char* kDemoSmokeTexturePath = "textures/particles/soft_smoke_01.png";
+
+    static std::string MakeUniqueParticleEmitterName(const rendern::LevelAsset& level, std::string_view base)
+    {
+        auto NameExists = [&](std::string_view candidate) noexcept
+            {
+                for (const rendern::ParticleEmitter& emitter : level.particleEmitters)
+                {
+                    if (emitter.name == candidate)
+                    {
+                        return true;
+                    }
+                }
+                return false;
+            };
+
+        std::string result = std::string(base.empty() ? std::string_view("ParticleEmitter") : base);
+        if (!NameExists(result))
+        {
+            return result;
+        }
+
+        for (int suffix = 2; suffix <= 9999; ++suffix)
+        {
+            std::string candidate = result + std::to_string(suffix);
+            if (!NameExists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return result + "_Copy";
+    }
+
+    static void EnsureDemoSmokeTexture(rendern::LevelAsset& level, AssetManager& assets)
+    {
+        auto it = level.textures.find(kDemoSmokeTextureId);
+        if (it == level.textures.end())
+        {
+            rendern::LevelTextureDef def{};
+            def.kind = rendern::LevelTextureKind::Tex2D;
+            def.props.dimension = TextureDimension::Tex2D;
+            def.props.filePath = kDemoSmokeTexturePath;
+            def.props.srgb = true;
+            def.props.generateMips = true;
+            def.props.flipY = false;
+            it = level.textures.emplace(kDemoSmokeTextureId, std::move(def)).first;
+        }
+
+        TextureProperties props = it->second.props;
+        if (props.filePath.empty())
+        {
+            props.dimension = TextureDimension::Tex2D;
+            props.filePath = kDemoSmokeTexturePath;
+            props.srgb = true;
+            props.generateMips = true;
+            props.flipY = false;
+            it->second.props = props;
+        }
+
+        assets.LoadTextureAsync(kDemoSmokeTextureId, std::move(props));
+    }
+
+    static rendern::ParticleEmitter MakeDemoSmokeEmitter(const rendern::LevelAsset& level, const rendern::Scene& scene, const rendern::CameraController& camCtl)
+    {
+        rendern::ParticleEmitter emitter{};
+        emitter.name = MakeUniqueParticleEmitterName(level, "SmokeSoft");
+        emitter.textureId = kDemoSmokeTextureId;
+        emitter.position = ComputeSpawnTransform(scene, camCtl).position;
+        emitter.positionJitter = mathUtils::Vec3(0.18f, 0.04f, 0.18f);
+        emitter.velocityMin = mathUtils::Vec3(-0.08f, 0.28f, -0.08f);
+        emitter.velocityMax = mathUtils::Vec3(0.08f, 0.62f, 0.08f);
+        emitter.colorBegin = mathUtils::Vec4(0.95f, 0.95f, 0.95f, 0.55f);
+        emitter.colorEnd = mathUtils::Vec4(0.55f, 0.58f, 0.60f, 0.0f);
+        emitter.sizeMin = 0.28f;
+        emitter.sizeMax = 0.42f;
+        emitter.sizeBegin = 0.24f;
+        emitter.sizeEnd = 0.95f;
+        emitter.lifetimeMin = 1.2f;
+        emitter.lifetimeMax = 2.1f;
+        emitter.spawnRate = 18.0f;
+        emitter.burstCount = 8u;
+        emitter.maxParticles = 256u;
+        emitter.looping = true;
+        emitter.duration = 0.0f;
+        emitter.startDelay = 0.0f;
+        return emitter;
+    }
+
     static void DrawCreateImportSection(
         rendern::LevelAsset& level,
         rendern::LevelInstance& levelInst,
@@ -66,12 +156,21 @@ namespace rendern::ui::level_ui_detail
         if (ImGui::Button("Add Particle Emitter"))
         {
             rendern::ParticleEmitter emitter{};
-            emitter.name = "ParticleEmitter";
+            emitter.name = MakeUniqueParticleEmitterName(level, "ParticleEmitter");
             emitter.position = ComputeSpawnTransform(scene, camCtl).position;
             const int newIdx = levelInst.AddParticleEmitter(level, scene, emitter);
             st.selectedNode = -1;
             st.selectedParticleEmitter = newIdx;
         }
+        ImGui::SameLine();
+        if (ImGui::Button("Add Demo Smoke Emitter"))
+        {
+            EnsureDemoSmokeTexture(level, assets);
+            const int newIdx = levelInst.AddParticleEmitter(level, scene, MakeDemoSmokeEmitter(level, scene, camCtl));
+            st.selectedNode = -1;
+            st.selectedParticleEmitter = newIdx;
+        }
+        ImGui::TextDisabled("Demo texture: %s", kDemoSmokeTexturePath);
 
         ImGui::Spacing();
         ImGui::InputText("OBJ path", st.importPathBuf, sizeof(st.importPathBuf));
