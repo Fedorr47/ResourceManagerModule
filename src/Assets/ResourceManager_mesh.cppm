@@ -23,6 +23,7 @@ import :mesh;
 import :math_utils;
 import :obj_loader;
 import :file_system;
+import :assimp_loader;
 
 // NOTE: Mesh loading is CPU-side (ObjLoader) and does NOT touch the renderer.
 // GPU upload/destruction is deferred via IRenderQueue (same pattern as textures).
@@ -243,7 +244,24 @@ public:
 				{
 					// Resolve via assets/ root unless absolute.
 					const auto abs = corefs::ResolveAsset(std::filesystem::path(path));
-					cpuOpt = rendern::LoadObj(abs);
+					auto ToLower = [](std::string s)
+						{
+							for (char& c : s)
+							{
+								c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+							}
+							return s;
+						};
+
+					const std::string ext = ToLower(abs.extension().string());
+					if (ext == ".obj")
+					{
+						cpuOpt = rendern::LoadObj(abs);
+					}
+					else
+					{
+						cpuOpt = rendern::LoadAssimp(abs, /*flipUVs*/ true);
+					}
 				}
 				catch (const std::exception& e)
 				{

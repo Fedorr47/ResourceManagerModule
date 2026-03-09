@@ -178,6 +178,24 @@ FetchContent_MakeAvailable(stb)
 add_library(stb_headers INTERFACE)
 target_include_directories(stb_headers INTERFACE "${stb_SOURCE_DIR}")
 
+# ------------------------------------------------------------
+# Assimp
+# ------------------------------------------------------------
+FetchContent_Declare(assimp
+  GIT_REPOSITORY https://github.com/assimp/assimp.git
+  GIT_TAG v6.0.4
+)
+set(ASSIMP_BUILD_ASSIMP_TOOLS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ASSIMP_INSTALL OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(ASSIMP_BUILD_ALL_IMPORTERS_BY_DEFAULT ON CACHE BOOL "" FORCE)
+FetchContent_MakeAvailable(assimp)
+
+if (TARGET assimp AND NOT TARGET assimp::assimp)
+  add_library(assimp::assimp ALIAS assimp)
+endif()
+
 
 # ------------------------------------------------------------
 # ImGui (DX12 + Win32 only)
@@ -323,6 +341,7 @@ set(COMMON_MODULES
   Render/Scene/CameraController.cppm
 
   Render/Model/ObjLoader.cppm
+  Render/Model/AssimpLoader.cppm
   Render/Model/Mesh/Mesh.cppm
 
   Render/Decoders/TextureDecoderSTB.cppm
@@ -385,6 +404,7 @@ target_sources(CoreEngineModuleLib
 target_link_libraries(CoreEngineModuleLib
   PUBLIC
     stb_headers
+    assimp::assimp
 )
 
 # GL-only deps (link AFTER CoreEngineModuleLib exists)
@@ -421,6 +441,11 @@ add_custom_command(TARGET app POST_BUILD
           "${CMAKE_SOURCE_DIR}/assets"
           "$<TARGET_FILE_DIR:app>/assets"
 )
+
+add_custom_command(TARGET app POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different
+        $<TARGET_FILE:assimp::assimp>
+        $<TARGET_FILE_DIR:app>)
 
 target_compile_features(app PRIVATE cxx_std_23)
 target_link_libraries(app PRIVATE CoreEngineModuleLib)
