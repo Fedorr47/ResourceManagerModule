@@ -22,3 +22,6 @@ export import :shader_files;
 export import :texture_decoder_stb;
 export import :file_system;
 export import :mesh;
+export import :skeleton;
+export import :animation_clip;
+export import :skinned_mesh;

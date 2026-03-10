@@ -344,6 +344,9 @@ set(COMMON_MODULES
   Render/Model/AssimpLoader.cppm
   Render/Model/AssimpSceneLoader.cppm
   Render/Model/Mesh/Mesh.cppm
+  Render/Model/Skeleton.cppm
+  Render/Model/AnimationClip.cppm
+  Render/Model/SkinnedMesh.cppm
 
   Render/Decoders/TextureDecoderSTB.cppm
 

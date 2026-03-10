@@ -99,6 +99,12 @@ DXGI_FORMAT ToDXGIVertexFormat(rhi::VertexFormat format)
         return DXGI_FORMAT_R32G32B32A32_FLOAT;
     case rhi::VertexFormat::R8G8B8A8_UNORM:
         return DXGI_FORMAT_R8G8B8A8_UNORM;
+    case rhi::VertexFormat::R16G16B16A16_UINT:
+        return DXGI_FORMAT_R16G16B16A16_UINT;
+    case rhi::VertexFormat::R16G16B16A16_UNORM:
+        return DXGI_FORMAT_R16G16B16A16_UNORM;
+    case rhi::VertexFormat::R32G32B32A32_UINT:
+        return DXGI_FORMAT_R32G32B32A32_UINT;
     default:
         return DXGI_FORMAT_UNKNOWN;
     }
@@ -212,6 +218,10 @@ const char* SemanticName(rhi::VertexSemantic semantic)
         return "COLOR";
     case rhi::VertexSemantic::Tangent:
         return "TANGENT";
+    case rhi::VertexSemantic::BoneIndices:
+        return "BLENDINDICES";
+    case rhi::VertexSemantic::BoneWeights:
+        return "BLENDWEIGHT";
     default:
         return "TEXCOORD";
     }

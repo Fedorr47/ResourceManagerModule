@@ -123,7 +123,10 @@ export namespace rhi
 		R32G32B32_FLOAT,
 		R32G32_FLOAT,
 		R32G32B32A32_FLOAT,
-		R8G8B8A8_UNORM
+		R8G8B8A8_UNORM,
+		R16G16B16A16_UINT,
+		R16G16B16A16_UNORM,
+		R32G32B32A32_UINT
 	};
 
 	enum class VertexSemantic : std::uint8_t
@@ -132,7 +135,9 @@ export namespace rhi
 		Normal,
 		TexCoord,
 		Color,
-		Tangent
+		Tangent,
+		BoneIndices,
+		BoneWeights
 	};
 
 	enum class CullMode : std::uint8_t

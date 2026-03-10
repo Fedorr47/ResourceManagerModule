@@ -101,6 +101,10 @@ namespace
 			return 3;
 		case rhi::VertexSemantic::Tangent:
 			return 4;
+		case rhi::VertexSemantic::BoneIndices:
+			return 5;
+		case rhi::VertexSemantic::BoneWeights:
+			return 6;
 		default:
 			return 0;
 		}
@@ -316,6 +320,7 @@ namespace
 		GLint componentCount{};
 		GLenum type{};
 		GLboolean normalized{};
+		GLboolean integerInput{};
 		GLuint offsetBytes{};
 		std::uint32_t inputSlot{};
 	};
@@ -344,6 +349,18 @@ namespace
 		}
 	}
 
+	static bool IsIntegerVertexFormat(rhi::VertexFormat format) noexcept
+	{
+		switch (format)
+		{
+		case rhi::VertexFormat::R16G16B16A16_UINT:
+		case rhi::VertexFormat::R32G32B32A32_UINT:
+			return true;
+		default:
+			return false;
+		}
+	}
+
 	static void VertexFormatToGL(rhi::VertexFormat format, GLint& outComponents, GLenum& outType)
 	{
 		switch (format)
@@ -355,7 +372,6 @@ namespace
 		case rhi::VertexFormat::R32G32_FLOAT:
 			outComponents = 2;
 			outType = GL_FLOAT;
-			outType = GL_FLOAT;
 			break;
 		case rhi::VertexFormat::R32G32B32A32_FLOAT:
 			outComponents = 4;
@@ -364,6 +380,18 @@ namespace
 		case rhi::VertexFormat::R8G8B8A8_UNORM:
 			outComponents = 4;
 			outType = GL_UNSIGNED_BYTE;
+			break;
+		case rhi::VertexFormat::R16G16B16A16_UINT:
+			outComponents = 4;
+			outType = GL_UNSIGNED_SHORT;
+			break;
+		case rhi::VertexFormat::R16G16B16A16_UNORM:
+			outComponents = 4;
+			outType = GL_UNSIGNED_SHORT;
+			break;
+		case rhi::VertexFormat::R32G32B32A32_UINT:
+			outComponents = 4;
+			outType = GL_UNSIGNED_INT;
 			break;
 		default:
 			outComponents = 4;
@@ -749,6 +777,7 @@ void DestroyFramebuffer(FrameBufferHandle framebuffer) noexcept override
 				out.componentCount = comps;
 				out.type = type;
 				out.normalized = (attribute.normalized ? GL_TRUE : GL_FALSE);
+				out.integerInput = (IsIntegerVertexFormat(attribute.format) ? GL_TRUE : GL_FALSE);
 				out.offsetBytes = static_cast<GLuint>(attribute.offsetBytes);
 				out.inputSlot = attribute.inputSlot;
 
@@ -1126,13 +1155,25 @@ void DestroyFramebuffer(FrameBufferHandle framebuffer) noexcept override
 				glEnableVertexAttribArray(loc);
 
 				const std::uintptr_t ptrOffset = static_cast<std::uintptr_t>(key.vbOffset) + static_cast<std::uintptr_t>(attribute.offsetBytes);
-				glVertexAttribPointer(
-					loc,
-					attribute.componentCount,
-					attribute.type,
-					attribute.normalized,
-					stride,
-					reinterpret_cast<const void*>(ptrOffset));
+				if (attribute.integerInput == GL_TRUE)
+				{
+					glVertexAttribIPointer(
+						loc,
+						attribute.componentCount,
+						attribute.type,
+						stride,
+						reinterpret_cast<const void*>(ptrOffset));
+				}
+				else
+				{
+					glVertexAttribPointer(
+						loc,
+						attribute.componentCount,
+						attribute.type,
+						attribute.normalized,
+						stride,
+						reinterpret_cast<const void*>(ptrOffset));
+				}
 			}
 
 			glBindVertexArray(0);
