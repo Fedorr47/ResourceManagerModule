@@ -242,8 +242,47 @@ namespace rendern::ui::level_ui_detail
         }
 
         ImGui::Spacing();
+        ImGui::SeparatorText("Skinned Import");
+        if (ImGui::Button("Import skinned mesh into library"))
+        {
+            const std::string pathStr = std::string(st.importPathBuf);
+            if (!pathStr.empty())
+            {
+                const std::string skinnedId = MakeUniqueSkinnedMeshId(level, makeImportBaseId("skinned"));
+                rendern::LevelSkinnedMeshDef def{};
+                def.path = pathStr;
+                def.debugName = skinnedId;
+                def.flipUVs = st.importFlipUVs;
+                level.skinnedMeshes.emplace(skinnedId, std::move(def));
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Create skinned object"))
+        {
+            const std::string pathStr = std::string(st.importPathBuf);
+            if (!pathStr.empty())
+            {
+                const std::string base = makeImportBaseId("skinned");
+                const std::string skinnedId = level.skinnedMeshes.contains(base) ? base : MakeUniqueSkinnedMeshId(level, base);
+                if (!level.skinnedMeshes.contains(skinnedId))
+                {
+                    rendern::LevelSkinnedMeshDef def{};
+                    def.path = pathStr;
+                    def.debugName = skinnedId;
+                    def.flipUVs = st.importFlipUVs;
+                    level.skinnedMeshes.emplace(skinnedId, std::move(def));
+                }
+
+                const int newIdx = levelInst.AddNode(level, scene, assets, "", "", parentForNew, ComputeSpawnTransform(scene, camCtl), skinnedId);
+                levelInst.SetNodeSkinnedMesh(level, scene, assets, newIdx, skinnedId);
+                st.selectedNode = newIdx;
+                st.selectedParticleEmitter = -1;
+            }
+        }
+
+        ImGui::Spacing();
         ImGui::SeparatorText("Model / Scene Import");
-        ImGui::Checkbox("Import skeleton/bone nodes", &st.importSceneSkeletonNodes);
+        ImGui::Checkbox("Import skeleton/bone nodes (scene debug only)", &st.importSceneSkeletonNodes);
 
         if (ImGui::Button("Import model into library"))
         {
@@ -415,8 +454,44 @@ namespace rendern::ui::level_ui_detail
         }
 
         {
+            std::vector<std::string> items;
+            items.reserve(derived.skinnedMeshIds.size() + 2);
+            items.push_back("(none)");
+            for (const auto& id : derived.skinnedMeshIds) items.push_back(id);
+
+            if (!node.skinnedMesh.empty() && !level.skinnedMeshes.contains(node.skinnedMesh))
+                items.push_back(std::string("<missing> ") + node.skinnedMesh);
+
+            int current = 0;
+            if (!node.skinnedMesh.empty())
+            {
+                for (std::size_t i = 1; i < items.size(); ++i)
+                {
+                    if (items[i] == node.skinnedMesh)
+                    {
+                        current = static_cast<int>(i);
+                        break;
+                    }
+                }
+            }
+
+            std::vector<const char*> citems;
+            citems.reserve(items.size());
+            for (auto& s : items) citems.push_back(s.c_str());
+
+            if (ImGui::Combo("Skinned Mesh", &current, citems.data(), static_cast<int>(citems.size())))
+            {
+                if (current == 0)
+                    levelInst.SetNodeSkinnedMesh(level, scene, assets, st.selectedNode, "");
+                else
+                    levelInst.SetNodeSkinnedMesh(level, scene, assets, st.selectedNode, items[static_cast<std::size_t>(current)]);
+            }
+        }
+
+        {
             const bool isModelNode = !node.model.empty();
-            ImGui::TextDisabled("Node kind: %s", isModelNode ? "Model" : (!node.mesh.empty() ? "Mesh" : "Empty"));
+            const bool isSkinnedNode = !node.skinnedMesh.empty();
+            ImGui::TextDisabled("Node kind: %s", isSkinnedNode ? "Skinned" : (isModelNode ? "Model" : (!node.mesh.empty() ? "Mesh" : "Empty")));
             if (isModelNode)
             {
                 auto itModel = level.models.find(node.model);
@@ -468,6 +543,183 @@ namespace rendern::ui::level_ui_detail
                     {
                         ImGui::TextDisabled("Failed to read model metadata.");
                     }
+                }
+            }
+        }
+
+        {
+            const bool isSkinnedNode = !node.skinnedMesh.empty();
+            const int skinnedDrawIndex = levelInst.GetNodeSkinnedDrawIndex(st.selectedNode);
+            rendern::SkinnedDrawItem* skinnedItem = levelInst.GetSkinnedDrawItem(scene, skinnedDrawIndex);
+            if (isSkinnedNode)
+            {
+                auto itSkinned = level.skinnedMeshes.find(node.skinnedMesh);
+                if (itSkinned != level.skinnedMeshes.end())
+                {
+                    ImGui::TextDisabled("Skinned path: %s", itSkinned->second.path.c_str());
+                }
+
+                ImGui::SeparatorText("Animation");
+                if (skinnedItem && skinnedItem->asset)
+                {
+                    const auto& skeleton = skinnedItem->asset->mesh.skeleton;
+                    const std::size_t boneCount = skeleton.bones.size();
+                    const std::size_t clipCount = skinnedItem->asset->clips.size();
+                    const std::string activeClipName =
+                        (skinnedItem->activeClipIndex >= 0 && static_cast<std::size_t>(skinnedItem->activeClipIndex) < skinnedItem->asset->clips.size())
+                        ? skinnedItem->asset->clips[static_cast<std::size_t>(skinnedItem->activeClipIndex)].name
+                        : std::string("<none>");
+
+                    ImGui::Text("Bones: %d", static_cast<int>(boneCount));
+                    ImGui::Text("Clips: %d", static_cast<int>(clipCount));
+                    ImGui::Text("Active clip: %s", activeClipName.c_str());
+                    ImGui::Text("Palette size: %d", static_cast<int>(skinnedItem->animator.skinMatrices.size()));
+
+                    std::vector<std::string> clipItems;
+                    clipItems.reserve(skinnedItem->asset->clips.size() + 1);
+                    clipItems.push_back("(bind pose)");
+                    for (const auto& clip : skinnedItem->asset->clips)
+                    {
+                        clipItems.push_back(clip.name.empty() ? std::string("<unnamed clip>") : clip.name);
+                    }
+
+                    int clipCurrent = 0;
+                    if (skinnedItem->activeClipIndex >= 0)
+                    {
+                        clipCurrent = skinnedItem->activeClipIndex + 1;
+                    }
+                    std::vector<const char*> clipCItems;
+                    clipCItems.reserve(clipItems.size());
+                    for (auto& s : clipItems) clipCItems.push_back(s.c_str());
+                    if (ImGui::Combo("Clip", &clipCurrent, clipCItems.data(), static_cast<int>(clipCItems.size())))
+                    {
+                        if (clipCurrent <= 0)
+                        {
+                            node.animationClip.clear();
+                            skinnedItem->activeClipIndex = -1;
+                            skinnedItem->debugForceBindPose = true;
+                            skinnedItem->autoplay = false;
+                            skinnedItem->animator.paused = true;
+                            ResetAnimatorToBindPose(skinnedItem->animator, skinnedItem->asset->mesh.skeleton);
+                            EvaluateAnimator(skinnedItem->animator);
+                        }
+                        else
+                        {
+                            const int newClipIndex = clipCurrent - 1;
+                            node.animationClip = skinnedItem->asset->clips[static_cast<std::size_t>(newClipIndex)].name;
+                            skinnedItem->activeClipIndex = newClipIndex;
+                            skinnedItem->debugForceBindPose = false;
+                            SetAnimatorClip(
+                                skinnedItem->animator,
+                                skinnedItem->asset->mesh.skeleton,
+                                skinnedItem->asset->clips,
+                                newClipIndex,
+                                node.animationLoop,
+                                node.animationPlayRate,
+                                true);
+                            skinnedItem->autoplay = node.animationAutoplay;
+                            skinnedItem->animator.paused = !node.animationAutoplay;
+                            EvaluateAnimator(skinnedItem->animator);
+                        }
+                    }
+
+                    bool autoplay = node.animationAutoplay;
+                    if (ImGui::Checkbox("Autoplay", &autoplay))
+                    {
+                        node.animationAutoplay = autoplay;
+                        skinnedItem->autoplay = autoplay;
+                        if (autoplay)
+                        {
+                            skinnedItem->debugForceBindPose = false;
+                            skinnedItem->animator.paused = false;
+                        }
+                        else
+                        {
+                            skinnedItem->animator.paused = true;
+                        }
+                        EvaluateAnimator(skinnedItem->animator);
+                    }
+
+                    bool loop = node.animationLoop;
+                    if (ImGui::Checkbox("Loop", &loop))
+                    {
+                        node.animationLoop = loop;
+                        skinnedItem->animator.looping = loop;
+                        if (skinnedItem->animator.clip)
+                        {
+                            skinnedItem->animator.timeSeconds = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, loop);
+                        }
+                        EvaluateAnimator(skinnedItem->animator);
+                    }
+
+                    float playRate = node.animationPlayRate;
+                    if (ImGui::SliderFloat("Play rate", &playRate, 0.0f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
+                    {
+                        node.animationPlayRate = playRate;
+                        skinnedItem->animator.playRate = playRate;
+                    }
+
+                    bool bindPose = skinnedItem->debugForceBindPose;
+                    if (ImGui::Checkbox("Bind pose preview", &bindPose))
+                    {
+                        skinnedItem->debugForceBindPose = bindPose;
+                        if (bindPose)
+                        {
+                            skinnedItem->autoplay = false;
+                            skinnedItem->animator.paused = true;
+                            ResetAnimatorToBindPose(skinnedItem->animator, skinnedItem->asset->mesh.skeleton);
+                        }
+                        EvaluateAnimator(skinnedItem->animator);
+                    }
+
+                    if (ImGui::Button(skinnedItem->autoplay && !skinnedItem->animator.paused ? "Pause" : "Play"))
+                    {
+                        const bool willPlay = skinnedItem->animator.paused || !skinnedItem->autoplay;
+                        node.animationAutoplay = willPlay;
+                        skinnedItem->autoplay = willPlay;
+                        skinnedItem->animator.paused = !willPlay;
+                        if (willPlay)
+                        {
+                            skinnedItem->debugForceBindPose = false;
+                        }
+                    }
+                    ImGui::SameLine();
+                    if (ImGui::Button("Restart clip"))
+                    {
+                        skinnedItem->animator.timeSeconds = 0.0f;
+                        skinnedItem->debugForceBindPose = false;
+                        EvaluateAnimator(skinnedItem->animator);
+                    }
+
+                    if (skinnedItem->animator.clip != nullptr)
+                    {
+                        const float clipDurationSeconds = (skinnedItem->animator.clip->ticksPerSecond > 0.0f)
+                            ? (skinnedItem->animator.clip->durationTicks / skinnedItem->animator.clip->ticksPerSecond)
+                            : 0.0f;
+                        float scrubTime = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, skinnedItem->animator.looping);
+                        if (ImGui::SliderFloat("Time", &scrubTime, 0.0f, std::max(0.0f, clipDurationSeconds), "%.3f", ImGuiSliderFlags_AlwaysClamp))
+                        {
+                            skinnedItem->animator.timeSeconds = scrubTime;
+                            skinnedItem->animator.paused = true;
+                            skinnedItem->autoplay = false;
+                            node.animationAutoplay = false;
+                            skinnedItem->debugForceBindPose = false;
+                            EvaluateAnimator(skinnedItem->animator);
+                        }
+                        ImGui::TextDisabled("Duration: %.3f s", clipDurationSeconds);
+                    }
+                    else
+                    {
+                        ImGui::TextDisabled("No active clip. Skeleton stays in bind pose.");
+                    }
+
+                    ImGui::SeparatorText("Skinned Debug");
+                    ImGui::Checkbox("Draw selected skeleton", &scene.editorDrawSelectedSkinnedSkeleton);
+                    ImGui::Checkbox("Draw selected max bounds", &scene.editorDrawSelectedSkinnedBounds);
+                }
+                else
+                {
+                    ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
                 }
             }
         }
@@ -582,6 +834,16 @@ namespace rendern::ui::level_ui_detail
                 {
                     levelInst.SetNodeMaterialOverride(level, scene, assets, newIdx, submeshIndex, materialId);
                 }
+            }
+            if (!node.skinnedMesh.empty())
+            {
+                levelInst.SetNodeSkinnedMesh(level, scene, assets, newIdx, node.skinnedMesh);
+                rendern::LevelNode& dup = level.nodes[static_cast<std::size_t>(newIdx)];
+                dup.animationClip = node.animationClip;
+                dup.animationAutoplay = node.animationAutoplay;
+                dup.animationLoop = node.animationLoop;
+                dup.animationPlayRate = node.animationPlayRate;
+                levelInst.SetNodeSkinnedMesh(level, scene, assets, newIdx, node.skinnedMesh);
             }
             st.selectedNode = newIdx;
             st.selectedParticleEmitter = -1;

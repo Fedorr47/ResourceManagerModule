@@ -564,6 +564,11 @@ void SetNodeMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, int node
 	LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
 	n.mesh = std::string(meshId);
 	n.model.clear();
+	n.skinnedMesh.clear();
+	n.animationClip.clear();
+	n.animationAutoplay = true;
+	n.animationLoop = true;
+	n.animationPlayRate = 1.0f;
 	n.materialOverrides.clear();
 
 	EnsureEntityForNode_(asset, nodeIndex);
@@ -583,6 +588,11 @@ void SetNodeModel(LevelAsset& asset, Scene& scene, AssetManager& assets, int nod
 	LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
 	n.model = std::string(modelId);
 	n.mesh.clear();
+	n.skinnedMesh.clear();
+	n.animationClip.clear();
+	n.animationAutoplay = true;
+	n.animationLoop = true;
+	n.animationPlayRate = 1.0f;
 
 	EnsureEntityForNode_(asset, nodeIndex);
 	EnsureDrawForNode_(asset, scene, assets, nodeIndex);
@@ -607,6 +617,43 @@ void SetNodeMaterialOverride(LevelAsset& asset, Scene& scene, AssetManager& asse
 	{
 		n.materialOverrides[submeshIndex] = std::string(materialId);
 	}
+
+	EnsureEntityForNode_(asset, nodeIndex);
+	EnsureDrawForNode_(asset, scene, assets, nodeIndex);
+	SyncEntityRenderableForNode_(asset, scene, nodeIndex);
+	SyncEditorRuntimeBindings(asset, scene);
+	ValidateRuntimeMappingsDebug(asset, scene);
+}
+
+
+void SetNodeSkinnedMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex, std::string_view skinnedMeshId)
+{
+	if (!IsNodeAlive(asset, nodeIndex))
+	{
+		return;
+	}
+
+	LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
+	if (n.skinnedMesh != skinnedMeshId)
+	{
+		n.animationClip.clear();
+	}
+	if (skinnedMeshId.empty())
+	{
+		n.animationClip.clear();
+		n.animationAutoplay = true;
+		n.animationLoop = true;
+		n.animationPlayRate = 1.0f;
+	}
+	else
+	{
+		n.animationPlayRate = std::max(0.0f, n.animationPlayRate);
+	}
+	
+	n.skinnedMesh = std::string(skinnedMeshId);
+	n.mesh.clear();
+	n.model.clear();
+	n.materialOverrides.clear();
 
 	EnsureEntityForNode_(asset, nodeIndex);
 	EnsureDrawForNode_(asset, scene, assets, nodeIndex);
@@ -844,6 +891,15 @@ void SyncTransformsIfDirty(const LevelAsset& asset, Scene& scene)
 std::size_t GetSkinnedDrawCount(const Scene& scene) const noexcept
 {
 	return scene.skinnedDrawItems.size();
+}
+
+SkinnedDrawItem* GetSkinnedDrawItem(Scene& scene, int skinnedDrawIndex) noexcept
+{
+	if (skinnedDrawIndex < 0 || static_cast<std::size_t>(skinnedDrawIndex) >= scene.skinnedDrawItems.size())
+	{
+		return nullptr;
+	}
+	return &scene.skinnedDrawItems[static_cast<std::size_t>(skinnedDrawIndex)];
 }
 
 const SkinnedDrawItem* GetSkinnedDrawItem(const Scene& scene, int skinnedDrawIndex) const noexcept

@@ -26,6 +26,7 @@ namespace rendern::ui::level_ui_detail
         std::vector<int> roots;
         std::vector<std::string> meshIds;
         std::vector<std::string> modelIds;
+        std::vector<std::string> skinnedMeshIds;
         std::vector<std::string> materialIds;
     };
 
@@ -89,6 +90,11 @@ namespace rendern::ui::level_ui_detail
         out.modelIds.reserve(level.models.size());
         for (const auto& [id, _] : level.models) out.modelIds.push_back(id);
         std::sort(out.modelIds.begin(), out.modelIds.end());
+
+        out.skinnedMeshIds.clear();
+        out.skinnedMeshIds.reserve(level.skinnedMeshes.size());
+        for (const auto& [id, _] : level.skinnedMeshes) out.skinnedMeshIds.push_back(id);
+        std::sort(out.skinnedMeshIds.begin(), out.skinnedMeshIds.end());
 
         out.materialIds.clear();
         out.materialIds.reserve(level.materials.size());
@@ -155,6 +161,24 @@ namespace rendern::ui::level_ui_detail
             def.debugName = std::string(id);
             level.meshes.emplace(std::string(id), std::move(def));
         }
+    }
+
+    static std::string MakeUniqueSkinnedMeshId(const rendern::LevelAsset& level, std::string base)
+    {
+        std::string id = SanitizeId(std::move(base));
+        if (id.empty())
+            id = "skinned";
+
+        if (!level.skinnedMeshes.contains(id))
+            return id;
+
+        for (int suffix = 2; suffix < 10000; ++suffix)
+        {
+            std::string tryId = id + "_" + std::to_string(suffix);
+            if (!level.skinnedMeshes.contains(tryId))
+                return tryId;
+        }
+        return id + "_x";
     }
 
     static rendern::Transform ComputeSpawnTransform(const rendern::Scene& scene, const rendern::CameraController& camCtl)

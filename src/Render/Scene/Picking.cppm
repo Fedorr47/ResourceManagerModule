@@ -179,14 +179,31 @@ export namespace rendern
                     return;
                 }
 
-                if (!renderable.mesh)
-                {
-                    return;
-                }
-
-                const auto& meshBounds = renderable.mesh->GetBounds();
                 mathUtils::Vec3 wmin{}, wmax{};
-                TransformAABB(meshBounds.aabbMin, meshBounds.aabbMax, world.world, wmin, wmax);
+                if (renderable.isSkinned)
+                {
+                    const SkinnedDrawItem* skinned = levelInst.GetSkinnedDrawItem(scene, renderable.skinnedDrawIndex);
+                    if (!skinned || !skinned->asset)
+                    {
+                        return;
+                    }
+
+                    const auto& bounds =
+                        (skinned->asset->mesh.bounds.maxAnimatedBounds.sphereRadius > 0.0f)
+                        ? skinned->asset->mesh.bounds.maxAnimatedBounds
+                        : skinned->asset->mesh.bounds.bindPoseBounds;
+                    TransformAABB(bounds.aabbMin, bounds.aabbMax, world.world, wmin, wmax);
+                }
+                else
+                {
+                    if (!renderable.mesh)
+                    {
+                        return;
+                    }
+
+                    const auto& meshBounds = renderable.mesh->GetBounds();
+                    TransformAABB(meshBounds.aabbMin, meshBounds.aabbMax, world.world, wmin, wmax);
+                }
 
                 float t = 0.0f;
                 if (!IntersectRayAABB(ray, wmin, wmax, t))

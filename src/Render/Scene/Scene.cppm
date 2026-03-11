@@ -354,6 +354,7 @@ export namespace rendern
 		AnimatorState animator{};
 		bool autoplay{ true };
 		int activeClipIndex{ -1 };
+		bool debugForceBindPose{ false };
 	};
 
 	class Scene
@@ -398,6 +399,10 @@ export namespace rendern
 		// Multi-selection (runtime-only). Indices into Scene::skinnedDrawItems.
 		std::vector<int> editorSelectedSkinnedDrawItems;
 
+		// Skinned debug visualization (runtime-only).
+		bool editorDrawSelectedSkinnedSkeleton{ false };
+		bool editorDrawSelectedSkinnedBounds{ false };
+
 		// Reflection capture owner (runtime-only).
 		// Node index is stable (LevelAsset::nodes). DrawItem index is derived from LevelInstance mapping.
 		int editorReflectionCaptureOwnerNode{ -1 };
@@ -437,6 +442,8 @@ export namespace rendern
 			editorSelectedSkinnedDrawItem = -1;
 			editorSelectedDrawItems.clear();
 			editorSelectedSkinnedDrawItems.clear();
+			editorDrawSelectedSkinnedSkeleton = false;
+			editorDrawSelectedSkinnedBounds = false;
 			editorReflectionCaptureOwnerNode = -1;
 			editorReflectionCaptureOwnerDrawItem = -1;
 			editorGizmoMode = GizmoMode::Translate;
@@ -780,9 +787,20 @@ export namespace rendern
 					InitializeAnimator(item.animator, &item.asset->mesh.skeleton, clip);
 				}
 
-				if (item.autoplay)
+				if (item.debugForceBindPose)
+				{
+					ResetAnimatorToBindPose(item.animator, item.asset->mesh.skeleton);
+					EvaluateAnimator(item.animator);
+					continue;
+				}
+
+				if (item.autoplay && !item.animator.paused)
 				{
 					UpdateAnimator(item.animator, dt);
+				}
+				else
+				{
+					EvaluateAnimator(item.animator);
 				}
 			}
 		}

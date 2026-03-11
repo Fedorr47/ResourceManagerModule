@@ -9,9 +9,6 @@
     "sphere": {"path": "models/sphere.obj", "debugName": "sphere.obj"},
     "watermelon": {"path": "models/watermelon.obj", "debugName": "watermelon.obj"}
   },
-  "models": {
-    "models_Ch15_nonPBR_fbx": {"path": "models\\Ch15_nonPBR.fbx", "flipUVs": true, "debugName": "models_Ch15_nonPBR_fbx"}
-  },
   "textures": {
     "Ship_AO": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship Ao_Blender.jpg", "srgb": false, "mips": true, "flipY": false},
     "Ship_Albedo": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship_color_4.jpg", "srgb": true, "mips": true, "flipY": false},
@@ -21,11 +18,6 @@
     "Ship_Roughness": {"kind": "tex2d", "path": "textures/Intergalactic Spaceship_rough.jpg", "srgb": false, "mips": true, "flipY": false},
     "Skybox": {"kind": "cube", "source": "cross", "cross": "textures/skybox/Cubemap_Sky_03-512x512.png", "srgb": true, "mips": true, "flipY": false},
     "brick": {"kind": "tex2d", "path": "textures/brick.png", "srgb": true, "mips": true, "flipY": false},
-    "models_Ch15_nonPBR_fbx_2__mat_0__albedo": {"kind": "tex2d", "path": "imported/Ch15_nonPBR_0f8b60e6a721e661/Ch15_nonPBR_albedo_embedded_1.png", "srgb": true, "mips": true, "flipY": false},
-    "models_Ch15_nonPBR_fbx_2__mat_0__normal": {"kind": "tex2d", "path": "imported/Ch15_nonPBR_0f8b60e6a721e661/Ch15_nonPBR_normal_embedded_2.png", "srgb": false, "mips": true, "flipY": false},
-    "models_Ch15_nonPBR_fbx_2__mat_1__albedo": {"kind": "tex2d", "path": "imported/Ch15_nonPBR_0f8b60e6a721e661/Ch15_nonPBR_albedo_embedded_6.png", "srgb": true, "mips": true, "flipY": false},
-    "models_Ch15_nonPBR_fbx_2__mat_1__emissive": {"kind": "tex2d", "path": "imported/Ch15_nonPBR_0f8b60e6a721e661/Ch15_nonPBR_emissive_embedded_4.png", "srgb": true, "mips": true, "flipY": false},
-    "models_Ch15_nonPBR_fbx_2__mat_1__normal": {"kind": "tex2d", "path": "imported/Ch15_nonPBR_0f8b60e6a721e661/Ch15_nonPBR_normal_embedded_7.png", "srgb": false, "mips": true, "flipY": false},
     "watermelon_albedo": {"kind": "tex2d", "path": "textures/watermelon_albedo.jpg", "srgb": true, "mips": true, "flipY": false},
     "watermelon_normal": {"kind": "tex2d", "path": "textures/watermelon_normal.jpg", "srgb": true, "mips": true, "flipY": false},
     "watermelon_roughness": {"kind": "tex2d", "path": "textures/watermelon_roughness.jpg", "srgb": true, "mips": true, "flipY": false}
@@ -37,15 +29,6 @@
     "glass": {"baseColor": [0.200000,0.600000,1.000000,0.350000], "shininess": 128.000000, "specStrength": 0.900000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.080000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow", "transparent"], "textures": {}},
     "ground": {"baseColor": [0.800000,0.800000,0.800000,1.000000], "shininess": 16.000000, "specStrength": 0.500000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.900000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow"], "textures": {}},
     "mirror": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 256.000000, "specStrength": 1.000000, "shadowBias": 0.000000, "metallic": 1.000000, "roughness": 0.020000, "ao": 1.000000, "emissiveStrength": 1.000000, "envSource": "reflectionCapture", "flags": ["useShadow"], "textures": {}},
-    "models_Ch15_nonPBR_fbx_2__mat_0": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 64.000000, "specStrength": 0.500000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.750000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useTex", "useShadow"], "textures": {
-      "albedo": "models_Ch15_nonPBR_fbx_2__mat_0__albedo",
-      "normal": "models_Ch15_nonPBR_fbx_2__mat_0__normal"
-    }},
-    "models_Ch15_nonPBR_fbx_2__mat_1": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 64.000000, "specStrength": 0.500000, "shadowBias": 0.000000, "metallic": 0.000000, "roughness": 0.750000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useTex", "useShadow"], "textures": {
-      "albedo": "models_Ch15_nonPBR_fbx_2__mat_1__albedo",
-      "emissive": "models_Ch15_nonPBR_fbx_2__mat_1__emissive",
-      "normal": "models_Ch15_nonPBR_fbx_2__mat_1__normal"
-    }},
     "planar_mirror": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 64.000000, "specStrength": 0.500000, "shadowBias": 0.000000, "metallic": 1.000000, "roughness": 0.020000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["planarMirror"], "textures": {}},
     "ship": {"baseColor": [1.000000,1.000000,1.000000,1.000000], "shininess": 64.000000, "specStrength": 0.500000, "shadowBias": 0.001500, "metallic": 1.000000, "roughness": 1.000000, "ao": 1.000000, "emissiveStrength": 1.000000, "flags": ["useShadow"], "textures": {
       "albedo": "Ship_Albedo",
@@ -61,7 +44,7 @@
       "roughness": "watermelon_roughness"
     }}
   },
-  "camera": {"position": [-1.307149,1.593934,1.530929], "target": [-0.824462,1.007492,0.880468], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
+  "camera": {"position": [3.093865,0.806249,1.642079], "target": [2.575723,0.545151,0.827612], "up": [0.000000,1.000000,0.000000], "fovYDeg": 60.000000, "nearZ": 0.010000, "farZ": 200.000000},
   "lights": [
     {"type": "directional", "position": [0.000000,0.000000,0.000000], "direction": [-0.357771,-0.894427,-0.268328], "color": [1.000000,1.000000,1.000000], "intensity": 1.000000, "range": 10.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.120000, "attQuadratic": 0.040000},
     {"type": "point", "position": [-1.350000,5.100000,-0.720436], "direction": [0.000000,-1.000000,0.000000], "color": [1.000000,1.000000,1.000000], "intensity": 1.000000, "range": 120.000000, "innerHalfAngleDeg": 12.000000, "outerHalfAngleDeg": 20.000000, "attConstant": 1.000000, "attLinear": 0.020000, "attQuadratic": 0.004000},
@@ -78,10 +61,6 @@
     {"name": "Cube_2_2", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [0.000000,2.300000,1.512242], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,1.000000,1.000000]}},
     {"name": "Wall", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [7.464041,0.399407,6.333714], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,2.096679,3.320850]}},
     {"name": "PlanarMirror", "parent": -1, "visible": true, "mesh": "quad", "material": "planar_mirror", "transform": {"position": [6.895704,0.555758,4.328910], "rotationDegrees": [0.000000,-90.000000,0.000000], "scale": [2.139083,0.730530,3.000000]}},
-    {"name": "Wall", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [7.472649,0.410678,3.008554], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,2.096679,3.320850]}},
-    {"name": "RootNode", "parent": -1, "visible": true, "transform": {"matrix": [1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000]}},
-    {"name": "Ch15", "parent": 7, "visible": true, "transform": {"matrix": [1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,0.000000,0.000000,1.000000,0.000000,0.000000,-1.311945,0.000000,1.000000]}},
-    {"name": "Ch15_mesh_0", "parent": 8, "visible": true, "mesh": "models_Ch15_nonPBR_fbx_2__mesh_0", "material": "models_Ch15_nonPBR_fbx_2__mat_0", "transform": {"position": [0.000000,0.728000,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [0.010000,0.010000,0.010000]}},
-    {"name": "Ch15_mesh_1", "parent": 8, "visible": true, "mesh": "models_Ch15_nonPBR_fbx_2__mesh_1", "material": "models_Ch15_nonPBR_fbx_2__mat_1", "transform": {"position": [0.000000,0.727617,0.000000], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [0.010000,0.010000,0.010000]}}
+    {"name": "Wall", "parent": -1, "visible": true, "mesh": "cube", "material": "cube", "transform": {"position": [7.472649,0.410678,3.008554], "rotationDegrees": [0.000000,0.000000,0.000000], "scale": [1.000000,2.096679,3.320850]}}
   ]
 }

@@ -223,6 +223,11 @@ for (std::size_t skinnedDrawIndex = 0; skinnedDrawIndex < scene.GetSkinnedDrawIt
 	{
 		continue;
 	}
+	const mathUtils::Mat4 model = item.transform.ToMatrix();
+	if (!IsVisible(item.asset.get(), model, cameraFrustum, doFrustumCulling))
+	{
+		continue;
+	}
 	MaterialParams params{};
 	MaterialPerm perm = MaterialPerm::UseShadow;
 	if (item.material.id != 0)
@@ -247,7 +252,7 @@ for (std::size_t skinnedDrawIndex = 0; skinnedDrawIndex < scene.GetSkinnedDrawIt
 	draw.mesh = &GetOrCreateSkinnedMeshRHI(item.asset);
 	draw.material = params;
 	draw.materialHandle = item.material;
-	draw.model = item.transform.ToMatrix();
+	draw.model = model;
 	draw.paletteOffset = static_cast<std::uint32_t>(skinnedPaletteMatrices.size());
 	draw.boneCount = static_cast<std::uint32_t>(item.animator.skinMatrices.size());
 	draw.sourceSkinnedDrawIndex = static_cast<int>(skinnedDrawIndex);

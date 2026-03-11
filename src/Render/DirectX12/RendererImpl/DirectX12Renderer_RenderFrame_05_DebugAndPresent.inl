@@ -631,6 +631,78 @@ if (scene.editorGizmoMode == GizmoMode::Scale && scene.editorScaleGizmo.enabled 
 	}
 }
 
+
+
+// Selected skinned debug visualization.
+if (scene.editorDrawSelectedSkinnedSkeleton || scene.editorDrawSelectedSkinnedBounds)
+{
+	auto TransformAabbToWorld = [](const mathUtils::Vec3& bmin, const mathUtils::Vec3& bmax, const mathUtils::Mat4& m,
+		mathUtils::Vec3& outMin, mathUtils::Vec3& outMax)
+		{
+			const mathUtils::Vec3 corners[8] =
+			{
+				{ bmin.x, bmin.y, bmin.z }, { bmax.x, bmin.y, bmin.z }, { bmin.x, bmax.y, bmin.z }, { bmax.x, bmax.y, bmin.z },
+				{ bmin.x, bmin.y, bmax.z }, { bmax.x, bmin.y, bmax.z }, { bmin.x, bmax.y, bmax.z }, { bmax.x, bmax.y, bmax.z },
+			};
+			outMin = mathUtils::Vec3(std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity(), std::numeric_limits<float>::infinity());
+			outMax = mathUtils::Vec3(-std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity(), -std::numeric_limits<float>::infinity());
+			for (const mathUtils::Vec3& corner : corners)
+			{
+				const mathUtils::Vec3 worldCorner = mathUtils::TransformPoint(m, corner);
+				outMin = mathUtils::MinVec3(outMin, worldCorner);
+				outMax = mathUtils::MaxVec3(outMax, worldCorner);
+			}
+		};
+
+	for (const int skinnedIndex : scene.editorSelectedSkinnedDrawItems)
+	{
+		if (skinnedIndex < 0 || static_cast<std::size_t>(skinnedIndex) >= scene.skinnedDrawItems.size())
+		{
+			continue;
+		}
+		const SkinnedDrawItem& item = scene.skinnedDrawItems[static_cast<std::size_t>(skinnedIndex)];
+		if (!item.asset)
+		{
+			continue;
+		}
+
+		const mathUtils::Mat4 model = item.transform.ToMatrix();
+		const std::uint32_t skeletonColor = debugDraw::PackRGBA8(255, 210, 80, 255);
+		const std::uint32_t boundsColor = debugDraw::PackRGBA8(80, 255, 255, 255);
+
+		if (scene.editorDrawSelectedSkinnedBounds)
+		{
+			const SkinnedBounds& bounds =
+				(item.asset->mesh.bounds.maxAnimatedBounds.sphereRadius > 0.0f)
+				? item.asset->mesh.bounds.maxAnimatedBounds
+				: item.asset->mesh.bounds.bindPoseBounds;
+			mathUtils::Vec3 wmin{}, wmax{};
+			TransformAabbToWorld(bounds.aabbMin, bounds.aabbMax, model, wmin, wmax);
+			AddAabbLines(wmin, wmax, boundsColor);
+		}
+
+		if (scene.editorDrawSelectedSkinnedSkeleton &&
+			item.animator.skeleton != nullptr &&
+			item.animator.globalMatrices.size() == item.animator.skeleton->bones.size())
+		{
+			for (std::size_t boneIndex = 0; boneIndex < item.animator.skeleton->bones.size(); ++boneIndex)
+			{
+				const auto& bone = item.animator.skeleton->bones[boneIndex];
+				const mathUtils::Vec3 bonePos = mathUtils::TransformPoint(model * item.animator.globalMatrices[boneIndex], mathUtils::Vec3(0.0f, 0.0f, 0.0f));
+				if (bone.parentIndex >= 0 && static_cast<std::size_t>(bone.parentIndex) < item.animator.globalMatrices.size())
+				{
+					const mathUtils::Vec3 parentPos = mathUtils::TransformPoint(model * item.animator.globalMatrices[static_cast<std::size_t>(bone.parentIndex)], mathUtils::Vec3(0.0f, 0.0f, 0.0f));
+					debugList.AddLine(parentPos, bonePos, skeletonColor, true);
+				}
+				else
+				{
+					debugList.AddAxesCross(bonePos, 0.03f, skeletonColor, true);
+				}
+			}
+		}
+	}
+}
+
 // Pick ray (from the editor UI) visualized in the main view via DebugDraw.
 if (scene.debugPickRay.enabled)
 {

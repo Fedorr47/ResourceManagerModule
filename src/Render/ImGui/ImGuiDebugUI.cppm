@@ -25,6 +25,8 @@ import :math_utils;
 import :level;
 import :asset_manager;
 import :assimp_scene_loader;
+import :animator;
+import :animation_clip;
 
 export namespace rendern::ui
 {

@@ -25,6 +25,7 @@ module;
 #include <utility>
 #include <vector>
 #include <memory>
+#include <limits>
 #include <unordered_map>
 #include "assert.h"
 
