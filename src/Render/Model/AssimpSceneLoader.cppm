@@ -16,6 +16,8 @@ module;
 #include <string_view>
 #include <system_error>
 #include <vector>
+#include <unordered_map>
+#include <unordered_set>
 
 export module core:assimp_scene_loader;
 
@@ -304,36 +306,127 @@ export namespace rendern
             return assetRoot / "imported" / MakeModelImportKey(modelAbsPath);
         }
 
-        void CopyFileIfDifferent(const std::filesystem::path& src, const std::filesystem::path& dst)
+        struct ImportedTextureWriteTracker
+        {
+            std::unordered_set<std::string> writtenPaths;
+            std::unordered_map<std::string, std::size_t> writeAttempts;
+        };
+
+        std::string MakeWriteDiagnostic(const std::filesystem::path& path, std::size_t attempt)
         {
             namespace fs = std::filesystem;
             std::error_code ec;
+            const bool exists = fs::exists(path, ec) && !ec;
+            std::string diag = " | attempt=" + std::to_string(attempt);
+            diag += " | exists=" + std::string(exists ? "true" : "false");
+            if (exists)
+            {
+                ec.clear();
+                const auto fileSize = fs::file_size(path, ec);
+                diag += " | file_size=";
+                diag += ec ? std::string("<error:") + ec.message() + ">" : std::to_string(fileSize);
+            }
+            return diag;
+        }
+
+        void CopyFileIfDifferent(const std::filesystem::path& src, const std::filesystem::path& dst, ImportedTextureWriteTracker* tracker = nullptr)
+        {
+            namespace fs = std::filesystem;
+            const std::string key = NormalizeLexically(dst).generic_string();
+            std::size_t attempt = 1;
+            if (tracker)
+            {
+                attempt = ++tracker->writeAttempts[key];
+                if (tracker->writtenPaths.contains(key))
+                {
+                    return;
+                }
+            }
+
+            std::error_code ec;
             fs::create_directories(dst.parent_path(), ec);
+
+            ec.clear();
+            const bool dstExists = fs::exists(dst, ec) && !ec;
+            if (dstExists)
+            {
+                std::error_code srcEc;
+                const auto srcSize = fs::file_size(src, srcEc);
+                std::error_code dstEc;
+                const auto dstSize = fs::file_size(dst, dstEc);
+                if (!srcEc && !dstEc && srcSize == dstSize)
+                {
+                    if (tracker)
+                    {
+                        tracker->writtenPaths.insert(key);
+                    }
+                    return;
+                }
+            }
+
             ec.clear();
             fs::copy_file(src, dst, fs::copy_options::overwrite_existing, ec);
             if (ec)
             {
-                throw std::runtime_error("Failed to copy imported texture from " + src.string() + " to " + dst.string() + ": " + ec.message());
+                throw std::runtime_error(
+                    "Failed to copy imported texture from " + src.string() + " to " + dst.string() + ": " + ec.message() +
+                    MakeWriteDiagnostic(dst, attempt));
+            }
+            if (tracker)
+            {
+                tracker->writtenPaths.insert(key);
             }
         }
 
-        void WriteBytesToFile(const std::filesystem::path& path, const void* data, std::size_t size)
+        void WriteBytesToFile(const std::filesystem::path& path, const void* data, std::size_t size, ImportedTextureWriteTracker* tracker = nullptr)
         {
+            const std::string key = NormalizeLexically(path).generic_string();
+            std::size_t attempt = 1;
+            if (tracker)
+            {
+                attempt = ++tracker->writeAttempts[key];
+                if (tracker->writtenPaths.contains(key))
+                {
+                    return;
+                }
+            }
+
             std::error_code ec;
             std::filesystem::create_directories(path.parent_path(), ec);
+
+            ec.clear();
+            const bool exists = std::filesystem::exists(path, ec) && !ec;
+            if (exists)
+            {
+                ec.clear();
+                const auto fileSize = std::filesystem::file_size(path, ec);
+                if (!ec && fileSize == size)
+                {
+                    if (tracker)
+                    {
+                        tracker->writtenPaths.insert(key);
+                    }
+                    return;
+                }
+            }
+
             std::ofstream f(path, std::ios::binary | std::ios::trunc);
             if (!f)
             {
-                throw std::runtime_error("Failed to open imported texture for write: " + path.string());
+                throw std::runtime_error("Failed to open imported texture for write: " + path.string() + MakeWriteDiagnostic(path, attempt));
             }
             f.write(static_cast<const char*>(data), static_cast<std::streamsize>(size));
             if (!f)
             {
-                throw std::runtime_error("Failed to write imported texture: " + path.string());
+                throw std::runtime_error("Failed to write imported texture: " + path.string() + MakeWriteDiagnostic(path, attempt));
+            }
+            if (tracker)
+            {
+                tracker->writtenPaths.insert(key);
             }
         }
 
-        void WriteUncompressedAiTextureAsTga(const std::filesystem::path& path, const aiTexture* tex)
+        void WriteUncompressedAiTextureAsTga(const std::filesystem::path& path, const aiTexture* tex, ImportedTextureWriteTracker* tracker = nullptr)
         {
             if (!tex || tex->mHeight == 0)
             {
@@ -361,7 +454,7 @@ export namespace rendern
                 dst[i * 4 + 2] = s.r;
                 dst[i * 4 + 3] = s.a;
             }
-            WriteBytesToFile(path, bytes.data(), bytes.size());
+            WriteBytesToFile(path, bytes.data(), bytes.size(), tracker);
         }
 
         std::string NormalizeExt(std::string ext)
@@ -384,7 +477,8 @@ export namespace rendern
         std::optional<std::string> CopyExternalTextureToImportedFolder(
             const std::filesystem::path& modelAbsPath,
             std::string_view rawTexturePath,
-            std::string_view slotName)
+            std::string_view slotName,
+            ImportedTextureWriteTracker* tracker = nullptr)
         {
             const auto resolved = TryResolveTexturePath(modelAbsPath, rawTexturePath);
             if (!resolved)
@@ -404,7 +498,7 @@ export namespace rendern
                 resolved->extension().string());
 
             const std::filesystem::path dst = dstDir / filename;
-            CopyFileIfDifferent(*resolved, dst);
+            CopyFileIfDifferent(*resolved, dst, tracker);
             return MakeAssetRelativePath(dst);
         }
 
@@ -412,7 +506,8 @@ export namespace rendern
             const aiScene* scene,
             const std::filesystem::path& modelAbsPath,
             std::uint32_t embeddedIndex,
-            std::string_view slotName)
+            std::string_view slotName,
+            ImportedTextureWriteTracker* tracker = nullptr)
         {
             if (!scene || embeddedIndex >= scene->mNumTextures)
             {
@@ -443,7 +538,7 @@ export namespace rendern
                     ext);
 
                 outPath = outDir / filename;
-                WriteBytesToFile(outPath, tex->pcData, static_cast<std::size_t>(tex->mWidth));
+                WriteBytesToFile(outPath, tex->pcData, static_cast<std::size_t>(tex->mWidth), tracker);
             }
             else
             {
@@ -454,7 +549,7 @@ export namespace rendern
                     "tga");
 
                 outPath = outDir / filename;
-                WriteUncompressedAiTextureAsTga(outPath, tex);
+                WriteUncompressedAiTextureAsTga(outPath, tex, tracker);
             }
 
             return MakeAssetRelativePath(outPath);
@@ -466,7 +561,8 @@ export namespace rendern
             aiMaterial* mat,
             aiTextureType type,
             std::string_view slotName,
-            bool materializeTextures)
+            bool materializeTextures,
+            ImportedTextureWriteTracker* tracker = nullptr)
         {
             if (!mat)
             {
@@ -494,7 +590,7 @@ export namespace rendern
 
                     if (materializeTextures)
                     {
-                        out.path = ExportEmbeddedTextureToImportedFolder(scene, modelAbsPath, idx, slotName);
+                        out.path = ExportEmbeddedTextureToImportedFolder(scene, modelAbsPath, idx, slotName, tracker);
                     }
                     else
                     {
@@ -512,7 +608,7 @@ export namespace rendern
             // External texture path
             if (materializeTextures)
             {
-                if (auto copied = CopyExternalTextureToImportedFolder(modelAbsPath, raw, slotName))
+                if (auto copied = CopyExternalTextureToImportedFolder(modelAbsPath, raw, slotName, tracker))
                 {
                     ImportedMaterialTextureRef out{};
                     out.path = *copied;
@@ -589,6 +685,7 @@ export namespace rendern
         }
 
         ImportedModelScene out{};
+        ImportedTextureWriteTracker textureWriteTracker{};
         out.submeshes.reserve(scene->mNumMeshes);
         for (unsigned mi = 0; mi < scene->mNumMeshes; ++mi)
         {
@@ -610,17 +707,17 @@ export namespace rendern
                 ? std::string(name.C_Str())
                 : ("Material_" + std::to_string(mi));
 
-            info.baseColor = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_BASE_COLOR, "albedo", materializeTextures);
-            if (!info.baseColor) info.baseColor = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_DIFFUSE, "albedo", materializeTextures);
-            info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_NORMAL_CAMERA, "normal", materializeTextures);
-            if (!info.normal) info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_NORMALS, "normal", materializeTextures);
-            if (!info.normal) info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_HEIGHT, "normal", materializeTextures);
-            info.metallic = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_METALNESS, "metallic", materializeTextures);
-            info.roughness = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_DIFFUSE_ROUGHNESS, "roughness", materializeTextures);
-            info.ao = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_AMBIENT_OCCLUSION, "ao", materializeTextures);
-            if (!info.ao) info.ao = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_LIGHTMAP, "ao", materializeTextures);
-            info.emissive = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_EMISSIVE, "emissive", materializeTextures);
-            if (!info.emissive) info.emissive = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_EMISSION_COLOR, "emissive", materializeTextures);
+            info.baseColor = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_BASE_COLOR, "albedo", materializeTextures, &textureWriteTracker);
+            if (!info.baseColor) info.baseColor = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_DIFFUSE, "albedo", materializeTextures, &textureWriteTracker);
+            info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_NORMAL_CAMERA, "normal", materializeTextures, &textureWriteTracker);
+            if (!info.normal) info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_NORMALS, "normal", materializeTextures, &textureWriteTracker);
+            if (!info.normal) info.normal = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_HEIGHT, "normal", materializeTextures, &textureWriteTracker);
+            info.metallic = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_METALNESS, "metallic", materializeTextures, &textureWriteTracker);
+            info.roughness = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_DIFFUSE_ROUGHNESS, "roughness", materializeTextures, &textureWriteTracker);
+            info.ao = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_AMBIENT_OCCLUSION, "ao", materializeTextures, &textureWriteTracker);
+            if (!info.ao) info.ao = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_LIGHTMAP, "ao", materializeTextures, &textureWriteTracker);
+            info.emissive = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_EMISSIVE, "emissive", materializeTextures, &textureWriteTracker);
+            if (!info.emissive) info.emissive = ReadAndNormalizeTextureRef(scene, path, mat, aiTextureType_EMISSION_COLOR, "emissive", materializeTextures, &textureWriteTracker);
             out.materials.push_back(std::move(info));
         }
 

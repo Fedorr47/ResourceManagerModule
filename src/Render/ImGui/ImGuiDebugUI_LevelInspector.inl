@@ -254,6 +254,7 @@ namespace rendern::ui::level_ui_detail
                 def.debugName = skinnedId;
                 def.flipUVs = st.importFlipUVs;
                 level.skinnedMeshes.emplace(skinnedId, std::move(def));
+                levelInst.ImportSkinnedMaterials(level, scene, assets, skinnedId, pathStr, st.importFlipUVs);
             }
         }
         ImGui::SameLine();
@@ -273,7 +274,8 @@ namespace rendern::ui::level_ui_detail
                     level.skinnedMeshes.emplace(skinnedId, std::move(def));
                 }
 
-                const int newIdx = levelInst.AddNode(level, scene, assets, "", "", parentForNew, ComputeSpawnTransform(scene, camCtl), skinnedId);
+                const std::string defaultMaterialId = levelInst.ImportSkinnedMaterials(level, scene, assets, skinnedId, pathStr, st.importFlipUVs);
+                const int newIdx = levelInst.AddNode(level, scene, assets, "", defaultMaterialId, parentForNew, ComputeSpawnTransform(scene, camCtl), skinnedId);
                 levelInst.SetNodeSkinnedMesh(level, scene, assets, newIdx, skinnedId);
                 st.selectedNode = newIdx;
                 st.selectedParticleEmitter = -1;

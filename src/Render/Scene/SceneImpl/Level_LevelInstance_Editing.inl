@@ -359,6 +359,73 @@ void BindImportedTexture(
 	md.textureBindings[normalizedSlot] = texId;
 }
 
+std::string ImportSkinnedMaterials(
+	LevelAsset& asset,
+	Scene& scene,
+	AssetManager& assets,
+	std::string_view skinnedId,
+	std::string_view sourcePath,
+	bool flipUVs,
+	bool cleanupExistingImportedArtifacts = true)
+{
+	const std::string assetPrefix = std::string(skinnedId) + "__";
+	if (cleanupExistingImportedArtifacts)
+	{
+		for (auto it = asset.materials.begin(); it != asset.materials.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? asset.materials.erase(it) : std::next(it);
+		}
+		for (auto it = asset.textures.begin(); it != asset.textures.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? asset.textures.erase(it) : std::next(it);
+		}
+		for (auto it = materialHandles_.begin(); it != materialHandles_.end();)
+		{
+			it = (it->first.rfind(assetPrefix, 0) == 0) ? materialHandles_.erase(it) : std::next(it);
+		}
+		pendingBindings_.erase(
+			std::remove_if(
+				pendingBindings_.begin(),
+				pendingBindings_.end(),
+				[&](const PendingMaterialBinding& pb)
+				{
+					return pb.textureId.rfind(assetPrefix, 0) == 0;
+				}),
+			pendingBindings_.end());
+	}
+
+	const ImportedModelScene imported = LoadAssimpScene(std::string(sourcePath), flipUVs, false, true);
+	std::string defaultMaterialId;
+	for (std::size_t i = 0; i < imported.materials.size(); ++i)
+	{
+		const ImportedMaterialInfo& srcMat = imported.materials[i];
+		const std::string matId = std::string(skinnedId) + "__mat_" + std::to_string(i);
+
+		LevelMaterialDef md{};
+		md.material.params.baseColor = mathUtils::Vec4(1.0f, 1.0f, 1.0f, 1.0f);
+		md.material.permFlags |= MaterialPerm::Skinning;
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "albedo", srcMat.baseColor, true);
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "normal", srcMat.normal, false);
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "metallic", srcMat.metallic, false);
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "roughness", srcMat.roughness, false);
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "ao", srcMat.ao, false);
+		BindImportedTexture(asset, assets, md, skinnedId, static_cast<std::uint32_t>(i), "emissive", srcMat.emissive, true);
+		if (!md.textureBindings.empty())
+		{
+			md.material.permFlags |= MaterialPerm::UseTex;
+		}
+
+		asset.materials[matId] = std::move(md);
+		[[maybe_unused]] const MaterialHandle runtimeMat = EnsureMaterial(asset, scene, matId);
+		if (defaultMaterialId.empty())
+		{
+			defaultMaterialId = matId;
+		}
+	}
+
+	return defaultMaterialId;
+}
+
 // Import an FBX/Assimp scene as regular Level nodes + mesh defs.
 // Each imported Assimp mesh becomes a dedicated Level mesh entry that points to the same source file
 // with a submeshIndex override, so saved JSON remains editable and runtime stays mesh-based.
@@ -648,6 +715,25 @@ void SetNodeSkinnedMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, i
 	else
 	{
 		n.animationPlayRate = std::max(0.0f, n.animationPlayRate);
+		if (n.material.empty())
+		{
+			auto it = asset.skinnedMeshes.find(std::string(skinnedMeshId));
+			if (it != asset.skinnedMeshes.end())
+			{
+				const std::string defaultMaterialId = ImportSkinnedMaterials(
+					asset,
+					scene,
+					assets,
+					it->first,
+					it->second.path,
+					it->second.flipUVs,
+					false);
+				if (!defaultMaterialId.empty())
+				{
+					n.material = defaultMaterialId;
+				}
+			}
+		}
 	}
 	
 	n.skinnedMesh = std::string(skinnedMeshId);
