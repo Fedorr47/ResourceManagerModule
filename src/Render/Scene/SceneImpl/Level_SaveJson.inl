@@ -257,6 +257,11 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 					ss << "\"clip\": ";
 					WriteJsonEscaped(ss, state.clipName);
 				}
+				if (!state.clipSourceAssetId.empty())
+				{
+					ss << ", \"clipSourceAssetId\": ";
+					WriteJsonEscaped(ss, state.clipSourceAssetId);
+				}
 				if (!state.looping)
 				{
 					ss << ", \"loop\": false";

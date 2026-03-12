@@ -245,6 +245,7 @@ LevelAsset LoadLevelAssetFromJson(std::string_view levelRelativePath)
 					AnimationStateDesc stateDesc;
 					stateDesc.name = stateName;
 					stateDesc.clipName = GetStringOpt(sd, "clip");
+					stateDesc.clipSourceAssetId = GetStringOpt(sd, "clipSourceAssetId");
 					stateDesc.looping = GetBoolOpt(sd, "loop", true);
 					stateDesc.playRate = GetFloatOpt(sd, "playRate", 1.0f);
 					if (auto* blendV = TryGet(sd, "blend1D"))
@@ -296,9 +297,9 @@ LevelAsset LoadLevelAssetFromJson(std::string_view levelRelativePath)
 							stateDesc.clipName = stateDesc.blend1D.front().clipName;
 						}
 					}
-					if (stateDesc.clipName.empty() && stateDesc.blend1D.empty())
+					if (stateDesc.clipName.empty() && stateDesc.clipSourceAssetId.empty() && stateDesc.blend1D.empty())
 					{
-						throw std::runtime_error("Level JSON: animationControllers." + id + ".states." + stateName + " must define clip or blend1D");
+						throw std::runtime_error("Level JSON: animationControllers." + id + ".states." + stateName + " must define clip, clipSourceAssetId, or blend1D");
 					}
 					def.states.push_back(std::move(stateDesc));
 				}

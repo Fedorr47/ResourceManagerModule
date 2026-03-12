@@ -228,6 +228,7 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 				stored.controller,
 				stored.asset->mesh.skeleton,
 				stored.asset->clips,
+				stored.asset->clipSourceAssetIds,
 				controllerIt->second,
 				node.animationAutoplay,
 				!node.animationAutoplay,

@@ -69,6 +69,7 @@ export namespace rendern
 	{
 		std::string name;
 		std::string clipName;
+		std::string clipSourceAssetId;
 		std::string blendParameter;
 		std::vector<AnimationBlend1DPoint> blend1D;
 		bool looping{ true };
@@ -112,6 +113,7 @@ export namespace rendern
 		AnimationControllerMode mode{ AnimationControllerMode::LegacyClip };
 		const Skeleton* skeleton{ nullptr };
 		const std::vector<AnimationClip>* clips{ nullptr };
+		const std::vector<std::string>* clipSourceAssetIds{ nullptr };
 
 		std::string controllerAssetId;
 		std::string currentStateName;
@@ -263,6 +265,51 @@ export namespace rendern
 			return clip->durationTicks / clip->ticksPerSecond;
 		}
 
+
+		[[nodiscard]] inline int ResolveClipIndexForState(
+			const AnimationControllerRuntime& runtime,
+			const AnimationStateDesc& state) noexcept
+		{
+			if (runtime.clips == nullptr)
+			{
+				return -1;
+			}
+
+			const std::vector<AnimationClip>& clips = *runtime.clips;
+
+			const bool hasSourceIds =
+				runtime.clipSourceAssetIds != nullptr &&
+				runtime.clipSourceAssetIds->size() == clips.size();
+
+			const bool useSourceFilter =
+				!state.clipSourceAssetId.empty() && hasSourceIds;
+
+			if (useSourceFilter)
+			{
+				if (!state.clipName.empty())
+				{
+					for (std::size_t i = 0; i < clips.size(); ++i)
+					{
+						if ((*runtime.clipSourceAssetIds)[i] == state.clipSourceAssetId &&
+							clips[i].name == state.clipName)
+						{
+							return static_cast<int>(i);
+						}
+					}
+				}
+
+				for (std::size_t i = 0; i < clips.size(); ++i)
+				{
+					if ((*runtime.clipSourceAssetIds)[i] == state.clipSourceAssetId)
+					{
+						return static_cast<int>(i);
+					}
+				}
+			}
+
+			return ResolveClipIndexByName(clips, state.clipName);
+		}
+
 		inline void SetAnimatorNormalizedTime(AnimatorState& animator, float normalizedTime) noexcept
 		{
 			const float durationSeconds = ClipDurationSeconds(animator.clip);
@@ -404,7 +451,7 @@ export namespace rendern
 				else
 				{
 					runtime.resolvedStateClipIndices[i] =
-						ResolveClipIndexByName(*runtime.clips, state.clipName);
+						ResolveClipIndexForState(runtime, runtime.stateMachineAsset->states[i]);
 				}
 			}
 		}
@@ -808,6 +855,7 @@ export namespace rendern
 		runtime.mode = AnimationControllerMode::LegacyClip;
 		runtime.skeleton = &skeleton;
 		runtime.clips = &clips;
+		runtime.clipSourceAssetIds = nullptr;
 		runtime.stateMachineAsset = nullptr;
 		runtime.currentStateIndex = -1;
 		runtime.resolvedStateClipIndices.clear();
@@ -829,6 +877,7 @@ export namespace rendern
 		AnimationControllerRuntime& runtime,
 		const Skeleton& skeleton,
 		const std::vector<AnimationClip>& clips,
+		const std::vector<std::string>& clipSourceAssetIds,
 		const AnimationControllerAsset& asset,
 		bool autoplay,
 		bool paused,
@@ -838,6 +887,7 @@ export namespace rendern
 		runtime.mode = AnimationControllerMode::StateMachine;
 		runtime.skeleton = &skeleton;
 		runtime.clips = &clips;
+		runtime.clipSourceAssetIds = &clipSourceAssetIds;
 		runtime.stateMachineAsset = &asset;
 		runtime.controllerAssetId = asset.id;
 		runtime.autoplay = autoplay;
@@ -867,12 +917,14 @@ export namespace rendern
 		AnimationControllerRuntime& runtime,
 		const Skeleton& skeleton,
 		const std::vector<AnimationClip>& clips,
+		const std::vector<std::string>& clipSourceAssetIds,
 		bool autoplay,
 		bool paused,
 		bool forceBindPose)
 	{
 		runtime.skeleton = &skeleton;
 		runtime.clips = &clips;
+		runtime.clipSourceAssetIds = &clipSourceAssetIds;
 		runtime.autoplay = autoplay;
 		runtime.paused = paused;
 		runtime.forceBindPose = forceBindPose;

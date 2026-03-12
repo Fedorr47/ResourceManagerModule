@@ -807,6 +807,7 @@ export namespace rendern
 						item.controller,
 						item.asset->mesh.skeleton,
 						item.asset->clips,
+						item.asset->clipSourceAssetIds,
 						item.autoplay,
 						item.animator.paused,
 						item.debugForceBindPose);

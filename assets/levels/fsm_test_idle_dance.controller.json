@@ -1,0 +1,49 @@
+{
+  "parameters": {
+    "Dance": {
+      "type": "bool",
+      "default": false
+    },
+    "Speed": {
+      "type": "float",
+      "default": 0.0
+    }
+  },
+  "defaultState": "Idle",
+  "states": {
+    "Idle": {
+      "clip": "",
+      "clipSourceAssetId": "breathing_idle",
+      "loop": true,
+      "playRate": 1.0
+    },
+    "Dance": {
+      "clip": "",
+      "clipSourceAssetId": "swing_dancing",
+      "loop": true,
+      "playRate": 1.0
+    }
+  },
+  "transitions": [
+    {
+      "from": "Idle",
+      "to": "Dance",
+      "conditions": [
+        {
+          "parameter": "Dance",
+          "op": "IfTrue"
+        }
+      ]
+    },
+    {
+      "from": "Dance",
+      "to": "Idle",
+      "conditions": [
+        {
+          "parameter": "Dance",
+          "op": "IfFalse"
+        }
+      ]
+    }
+  ]
+}
