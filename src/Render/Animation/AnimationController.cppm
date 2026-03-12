@@ -80,6 +80,7 @@ export namespace rendern
 		std::string toState;
 		bool hasExitTime{ false };
 		float exitTimeNormalized{ 1.0f };
+		float blendDurationSeconds{ 0.15f };
 		std::vector<AnimationConditionDesc> conditions;
 	};
 
@@ -110,6 +111,13 @@ export namespace rendern
 		const AnimationControllerAsset* stateMachineAsset{ nullptr };
 		int currentStateIndex{ -1 };
 		std::vector<int> resolvedStateClipIndices;
+
+		bool transitionActive{ false };
+		int transitionSourceStateIndex{ -1 };
+		std::string transitionSourceStateName;
+		float transitionElapsedSeconds{ 0.0f };
+		float transitionDurationSeconds{ 0.0f };
+		AnimatorState transitionSourceAnimator{};
 
 		int legacyClipIndex{ -1 };
 		bool autoplay{ true };
@@ -376,6 +384,16 @@ export namespace rendern
 		{
 			return transition.fromState.empty() || transition.fromState == "*" || transition.fromState == currentState;
 		}
+
+		inline void ResetBlendState(AnimationControllerRuntime& runtime)
+		{
+			runtime.transitionActive = false;
+			runtime.transitionSourceStateIndex = -1;
+			runtime.transitionSourceStateName.clear();
+			runtime.transitionElapsedSeconds = 0.0f;
+			runtime.transitionDurationSeconds = 0.0f;
+			runtime.transitionSourceAnimator = {};
+		}
 	}
 
 	inline void ResetAnimationParameters(AnimationParameterStore& store)
@@ -408,7 +426,7 @@ export namespace rendern
 	}
 
 	template <typename T>
-	concept AnimationParameterTypeC = 
+	concept AnimationParameterTypeC =
 		std::same_as<std::remove_cvref_t<T>, bool> ||
 		std::same_as<std::remove_cvref_t<T>, int> ||
 		std::same_as<std::remove_cvref_t<T>, float>;
@@ -510,6 +528,7 @@ export namespace rendern
 		runtime.stateMachineAsset = nullptr;
 		runtime.currentStateIndex = -1;
 		runtime.resolvedStateClipIndices.clear();
+		detail::ResetBlendState(runtime);
 		runtime.legacyClipIndex = clipIndex;
 		runtime.autoplay = autoplay;
 		runtime.looping = looping;
@@ -540,6 +559,7 @@ export namespace rendern
 		runtime.paused = paused;
 		runtime.forceBindPose = forceBindPose;
 		detail::ResolveStateClipIndices(runtime);
+		detail::ResetBlendState(runtime);
 
 		if (!sameAsset)
 		{
@@ -577,6 +597,10 @@ export namespace rendern
 			{
 				detail::ApplyRuntimeState(runtime, runtime.currentStateIndex);
 			}
+			if (runtime.transitionActive)
+			{
+				detail::ResetBlendState(runtime);
+			}
 		}
 	}
 
@@ -606,14 +630,20 @@ export namespace rendern
 
 			if (runtime.forceBindPose)
 			{
+				detail::ResetBlendState(runtime);
 				ResetAnimatorToBindPose(animator, *runtime.skeleton);
-				EvaluateAnimator(animator);
+				BuildAnimatorMatrices(animator);
 				return;
 			}
 
 			if (runtime.autoplay && !runtime.paused)
 			{
 				AdvanceAnimator(animator, deltaSeconds);
+				if (runtime.transitionActive)
+				{
+					runtime.transitionElapsedSeconds += deltaSeconds;
+					AdvanceAnimator(runtime.transitionSourceAnimator, deltaSeconds);
+				}
 			}
 
 			int targetStateIndex = -1;
@@ -624,7 +654,7 @@ export namespace rendern
 				targetStateIndex = detail::FindStateIndexByName(*runtime.stateMachineAsset, runtime.requestedStateName);
 				runtime.requestedStateName.clear();
 			}
-			else
+			else if (!runtime.transitionActive)
 			{
 				for (const AnimationTransitionDesc& transition : runtime.stateMachineAsset->transitions)
 				{
@@ -658,6 +688,36 @@ export namespace rendern
 
 			if (targetStateIndex >= 0 && targetStateIndex != runtime.currentStateIndex)
 			{
+				const float blendDurationSeconds =
+					(matchedTransition != nullptr)
+					? std::max(0.0f, matchedTransition->blendDurationSeconds)
+					: 0.0f;
+				const int targetClipIndex =
+					(static_cast<std::size_t>(targetStateIndex) < runtime.resolvedStateClipIndices.size())
+					? runtime.resolvedStateClipIndices[static_cast<std::size_t>(targetStateIndex)]
+					: -1;
+				const bool canBlend =
+					blendDurationSeconds > 1e-4f &&
+					runtime.clips != nullptr &&
+					animator.clip != nullptr &&
+					targetClipIndex >= 0 &&
+					static_cast<std::size_t>(targetClipIndex) < runtime.clips->size();
+
+				if (canBlend)
+				{
+					runtime.transitionSourceAnimator = animator;
+					runtime.transitionSourceAnimator.paused = runtime.paused;
+					runtime.transitionSourceStateIndex = runtime.currentStateIndex;
+					runtime.transitionSourceStateName = runtime.currentStateName;
+					runtime.transitionElapsedSeconds = 0.0f;
+					runtime.transitionDurationSeconds = blendDurationSeconds;
+					runtime.transitionActive = true;
+				}
+				else
+				{
+					detail::ResetBlendState(runtime);
+				}
+
 				detail::ApplyRuntimeState(runtime, targetStateIndex);
 				detail::EnsureAnimatorClipMatchesRuntime(runtime, animator, true);
 				if (matchedTransition != nullptr)
@@ -667,6 +727,37 @@ export namespace rendern
 			}
 
 			animator.paused = runtime.paused;
+			if (runtime.transitionActive)
+			{
+				const bool validBlend =
+					IsAnimatorReady(runtime.transitionSourceAnimator) &&
+					runtime.transitionSourceAnimator.skeleton == runtime.skeleton &&
+					runtime.transitionDurationSeconds > 1e-4f;
+				if (!validBlend)
+				{
+					detail::ResetBlendState(runtime);
+					EvaluateAnimator(animator);
+					return;
+				}
+
+				runtime.transitionSourceAnimator.paused = runtime.paused;
+				EvaluateAnimatorLocalPose(runtime.transitionSourceAnimator);
+				EvaluateAnimatorLocalPose(animator);
+
+				const float alpha = std::clamp(
+					runtime.transitionElapsedSeconds / runtime.transitionDurationSeconds,
+					0.0f,
+					1.0f);
+				const std::vector<LocalBoneTransform> targetPose = animator.localPose;
+				BlendLocalPoses(animator.localPose, runtime.transitionSourceAnimator.localPose, targetPose, alpha);
+				BuildAnimatorMatrices(animator);
+				if (alpha >= 1.0f - 1e-6f)
+				{
+					detail::ResetBlendState(runtime);
+				}
+				return;
+			}
+
 			EvaluateAnimator(animator);
 			return;
 		}
@@ -689,7 +780,7 @@ export namespace rendern
 		if (runtime.forceBindPose)
 		{
 			ResetAnimatorToBindPose(animator, *runtime.skeleton);
-			EvaluateAnimator(animator);
+			BuildAnimatorMatrices(animator);
 			return;
 		}
 
@@ -702,4 +793,5 @@ export namespace rendern
 			EvaluateAnimator(animator);
 		}
 	}
+
 }

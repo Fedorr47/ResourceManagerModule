@@ -37,6 +37,39 @@ export namespace rendern
 		std::vector<mathUtils::Mat4> skinMatrices;
 	};
 
+	[[nodiscard]] inline LocalBoneTransform BlendLocalBoneTransform(
+		const LocalBoneTransform& from,
+		const LocalBoneTransform& to,
+		float alpha) noexcept
+	{
+		const float t = std::clamp(alpha, 0.0f, 1.0f);
+		LocalBoneTransform out{};
+		out.translation = mathUtils::Lerp(from.translation, to.translation, t);
+		out.rotation = NlerpQuat(from.rotation, to.rotation, t);
+		out.scale = mathUtils::Lerp(from.scale, to.scale, t);
+		return out;
+	}
+
+	inline void BlendLocalPoses(
+		std::vector<LocalBoneTransform>& outPose,
+		const std::vector<LocalBoneTransform>& fromPose,
+		const std::vector<LocalBoneTransform>& toPose,
+		float alpha)
+	{
+		const std::size_t boneCount = std::min(fromPose.size(), toPose.size());
+		if (boneCount == 0)
+		{
+			outPose.clear();
+			return;
+		}
+
+		outPose.resize(boneCount);
+		for (std::size_t boneIndex = 0; boneIndex < boneCount; ++boneIndex)
+		{
+			outPose[boneIndex] = BlendLocalBoneTransform(fromPose[boneIndex], toPose[boneIndex], alpha);
+		}
+	}
+
 	namespace detail
 	{
 		[[nodiscard]] inline const AnimationClip* GetClipByIndex(
