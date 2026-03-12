@@ -124,6 +124,32 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 	}
 	ss << "},\n";
 
+	// animations
+	ss << "  \"animations\": {";
+	{
+		auto keys = SortedStringKeys(level.animations);
+		for (std::size_t i = 0; i < keys.size(); ++i)
+		{
+			const auto& id = keys[i];
+			const LevelAnimationDef& md = level.animations.at(id);
+			if (i == 0) ss << "\n"; else ss << ",\n";
+			ss << "    ";
+			WriteJsonEscaped(ss, id);
+			ss << ": {\"path\": ";
+			WriteJsonEscaped(ss, md.path);
+			ss << ", \"flipUVs\": ";
+			WriteJsonBool(ss, md.flipUVs);
+			if (!md.debugName.empty())
+			{
+				ss << ", \"debugName\": ";
+				WriteJsonEscaped(ss, md.debugName);
+			}
+			ss << "}";
+		}
+		if (!keys.empty()) ss << "\n  ";
+	}
+	ss << "},\n";
+
 	// textures
 	ss << "  \"textures\": {";
 	{
@@ -451,6 +477,11 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 				firstOverride = false;
 			}
 			ss << "}";
+		}
+		if (!n.animation.empty())
+		{
+			ss << ", \"animation\": ";
+			WriteJsonEscaped(ss, n.animation);
 		}
 		if (!n.animationClip.empty())
 		{

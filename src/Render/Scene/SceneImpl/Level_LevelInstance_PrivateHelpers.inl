@@ -91,9 +91,19 @@ const LevelSkinnedMeshDef& GetSkinnedMeshDef_(const LevelAsset& asset, const std
 	return it->second;
 }
 
-std::shared_ptr<SkinnedAssetBundle> GetOrLoadSkinnedAssetBundle_(const LevelAsset& asset, const std::string& skinnedMeshId)
+const LevelAnimationDef& GetAnimationDef_(const LevelAsset& asset, const std::string& animationId) const
 {
-	if (auto it = skinnedAssetCache_.find(skinnedMeshId); it != skinnedAssetCache_.end())
+	auto it = asset.animations.find(animationId);
+	if (it == asset.animations.end())
+	{
+		throw std::runtime_error("Level: node references unknown animationId: " + animationId);
+	}
+	return it->second;
+}
+
+std::shared_ptr<SkinnedAssetBundle> GetOrLoadBaseSkinnedAssetBundle_(const LevelAsset& asset, const std::string& skinnedMeshId)
+{
+	if (auto it = baseSkinnedAssetCache_.find(skinnedMeshId); it != baseSkinnedAssetCache_.end())
 	{
 		return it->second;
 	}
@@ -101,31 +111,98 @@ std::shared_ptr<SkinnedAssetBundle> GetOrLoadSkinnedAssetBundle_(const LevelAsse
 	const LevelSkinnedMeshDef& def = GetSkinnedMeshDef_(asset, skinnedMeshId);
 	AssimpSkinnedImportResult imported = LoadAssimpSkinnedAsset(def.path, def.flipUVs, def.submeshIndex);
 	auto bundle = std::make_shared<SkinnedAssetBundle>();
+	bundle->debugName = def.debugName;
 	bundle->mesh = std::move(imported.mesh);
 	bundle->clips = std::move(imported.clips);
-	skinnedAssetCache_.emplace(skinnedMeshId, bundle);
+	bundle->clipSourceAssetIds.assign(bundle->clips.size(), std::string{});
+	baseSkinnedAssetCache_.emplace(skinnedMeshId, bundle);
 	return bundle;
 }
 
-[[nodiscard]] int FindAnimationClipIndexByName_(const std::vector<AnimationClip>& clips, std::string_view clipName) const noexcept
+[[nodiscard]] std::string MakeResolvedSkinnedBundleCacheKey_(std::string_view skinnedMeshId, std::string_view animationId) const
 {
+	std::string key(skinnedMeshId);
+	key += "::";
+	key += animationId;
+	return key;
+}
+
+std::shared_ptr<SkinnedAssetBundle> ResolveSkinnedAssetBundleForNode_(const LevelAsset& asset, const LevelNode& node)
+{
+	auto baseBundle = GetOrLoadBaseSkinnedAssetBundle_(asset, node.skinnedMesh);
+	if (node.animation.empty())
+	{
+		return baseBundle;
+	}
+
+	const std::string cacheKey = MakeResolvedSkinnedBundleCacheKey_(node.skinnedMesh, node.animation);
+	if (auto it = resolvedSkinnedAssetCache_.find(cacheKey); it != resolvedSkinnedAssetCache_.end())
+	{
+		return it->second;
+	}
+
+	const LevelAnimationDef& def = GetAnimationDef_(asset, node.animation);
+	AssimpAnimationImportResult imported = LoadAssimpAnimationClips(def.path, baseBundle->mesh.skeleton, def.flipUVs);
+	auto bundle = std::make_shared<SkinnedAssetBundle>(*baseBundle);
+	bundle->clips.reserve(bundle->clips.size() + imported.clips.size());
+	bundle->clipSourceAssetIds.reserve(bundle->clipSourceAssetIds.size() + imported.clips.size());
+	for (auto& clip : imported.clips)
+	{
+		bundle->clipSourceAssetIds.push_back(node.animation);
+		bundle->clips.push_back(std::move(clip));
+	}
+	resolvedSkinnedAssetCache_.emplace(cacheKey, bundle);
+	return bundle;
+}
+
+[[nodiscard]] int FindAnimationClipIndexByName_(const SkinnedAssetBundle& bundle, std::string_view animationAssetId, std::string_view clipName) const noexcept
+{
+	const auto& clips = bundle.clips;
+	const auto clipMatchesSource = [&](std::size_t clipIndex) noexcept
+		{
+			if (animationAssetId.empty())
+			{
+				return true;
+			}
+			if (clipIndex >= bundle.clipSourceAssetIds.size())
+			{
+				return false;
+			}
+			return bundle.clipSourceAssetIds[clipIndex] == animationAssetId;
+		};
+
 	if (clipName.empty())
 	{
-		return clips.empty() ? -1 : 0;
+		for (std::size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+		{
+			if (clipMatchesSource(clipIndex))
+			{
+				return static_cast<int>(clipIndex);
+			}
+		}
+		return -1;
 	}
+
 	for (std::size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
 	{
-		if (clips[clipIndex].name == clipName)
+		if (clipMatchesSource(clipIndex) && clips[clipIndex].name == clipName)
 		{
 			return static_cast<int>(clipIndex);
 		}
 	}
-	return clips.empty() ? -1 : 0;
+	for (std::size_t clipIndex = 0; clipIndex < clips.size(); ++clipIndex)
+	{
+		if (clipMatchesSource(clipIndex))
+		{
+			return static_cast<int>(clipIndex);
+		}
+	}
+	return -1;
 }
 
 int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex, const LevelNode& node)
 {
-	auto bundle = GetOrLoadSkinnedAssetBundle_(asset, node.skinnedMesh);
+	auto bundle = ResolveSkinnedAssetBundleForNode_(asset, node);
 
 	SkinnedDrawItem item{};
 	item.asset = bundle;
@@ -133,7 +210,7 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 	item.transform.useMatrix = true;
 	item.transform.matrix = world_[static_cast<std::size_t>(nodeIndex)];
 	item.autoplay = node.animationAutoplay;
-	item.activeClipIndex = FindAnimationClipIndexByName_(bundle->clips, node.animationClip);
+	item.activeClipIndex = FindAnimationClipIndexByName_(*bundle, node.animation, node.animationClip);
 
 	const int skinnedDrawIndex = static_cast<int>(scene.skinnedDrawItems.size());
 	SkinnedDrawItem& stored = scene.AddSkinnedDraw(std::move(item));

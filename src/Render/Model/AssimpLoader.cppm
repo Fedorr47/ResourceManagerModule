@@ -12,6 +12,7 @@ module;
 #include <limits>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <string_view>
 #include <unordered_map>
 #include <unordered_set>
@@ -620,6 +621,15 @@ export namespace rendern
         std::vector<AnimationClip> clips;
     };
 
+    struct AssimpAnimationImportResult
+    {
+        std::vector<AnimationClip> clips;
+        std::size_t sourceChannelCount{ 0 };
+        std::size_t matchedChannelCount{ 0 };
+        std::size_t ignoredChannelCount{ 0 };
+        std::string diagnosticMessage{};
+    };
+
     MeshCPU LoadAssimp(
         const std::filesystem::path& pathIn,
         bool flipUVs = true,
@@ -974,6 +984,87 @@ export namespace rendern
             perClip.bounds = ComputeClipBounds(out, clip);
             out.bounds.maxAnimatedBounds = MergeBounds(out.bounds.maxAnimatedBounds, perClip.bounds);
             out.bounds.perClipBounds.push_back(std::move(perClip));
+        }
+
+        return result;
+    }
+
+    AssimpAnimationImportResult LoadAssimpAnimationClips(
+        const std::filesystem::path& pathIn,
+        const Skeleton& targetSkeleton,
+        bool flipUVs = true)
+    {
+        std::filesystem::path path = pathIn;
+        if (!path.is_absolute())
+        {
+            path = corefs::ResolveAsset(path);
+        }
+
+        unsigned flags =
+            aiProcess_Triangulate |
+            aiProcess_JoinIdenticalVertices |
+            aiProcess_GenSmoothNormals |
+            aiProcess_CalcTangentSpace |
+            aiProcess_ImproveCacheLocality;
+
+        if (flipUVs)
+        {
+            flags |= aiProcess_FlipUVs;
+        }
+
+        Assimp::Importer importer;
+        const aiScene* scene = importer.ReadFile(path.string(), flags);
+        if (!scene || scene->mNumAnimations == 0)
+        {
+            const char* err = importer.GetErrorString();
+            std::string msg = "Assimp failed to load animation clips: " + path.string();
+            if (err && *err)
+            {
+                msg += " | ";
+                msg += err;
+            }
+            throw std::runtime_error(msg);
+        }
+
+        AssimpAnimationImportResult result{};
+        result.clips.reserve(scene->mNumAnimations);
+        for (unsigned animationIndex = 0; animationIndex < scene->mNumAnimations; ++animationIndex)
+        {
+            const aiAnimation* anim = scene->mAnimations[animationIndex];
+            if (!anim)
+            {
+                continue;
+            }
+
+            AnimationClip clip = BuildAnimationClip(*anim, targetSkeleton, animationIndex);
+            result.sourceChannelCount += clip.channels.size();
+
+            std::vector<BoneAnimationChannel> filteredChannels;
+            filteredChannels.reserve(clip.channels.size());
+            for (auto& channel : clip.channels)
+            {
+                if (channel.boneIndex < 0)
+                {
+                    ++result.ignoredChannelCount;
+                    continue;
+                }
+
+                ++result.matchedChannelCount;
+                filteredChannels.push_back(std::move(channel));
+            }
+
+            clip.channels = std::move(filteredChannels);
+            if (!clip.channels.empty())
+            {
+                result.clips.push_back(std::move(clip));
+            }
+        }
+
+        if (result.matchedChannelCount == 0 || result.clips.empty())
+        {
+            throw std::runtime_error(
+                "Assimp animation import found no compatible bone channels for target skeleton: " +
+                path.string());
         }
 
         return result;

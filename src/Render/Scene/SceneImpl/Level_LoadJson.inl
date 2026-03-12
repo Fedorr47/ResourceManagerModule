@@ -150,6 +150,25 @@
 			}
 		}
 
+		// --- animations ---
+		if (auto* animationsV = TryGet(jsonObject, "animations"))
+		{
+			const JsonObject& animationsO = animationsV->AsObject();
+			for (const auto& [id, defV] : animationsO)
+			{
+				const JsonObject& md = defV.AsObject();
+				LevelAnimationDef def;
+				def.path = GetStringOpt(md, "path");
+				def.debugName = GetStringOpt(md, "debugName");
+				def.flipUVs = GetBoolOpt(md, "flipUVs", true);
+				if (def.path.empty())
+				{
+					throw std::runtime_error("Level JSON: animations." + id + ".path is required");
+				}
+				out.animations.emplace(id, std::move(def));
+			}
+		}
+
 		// --- skinnedMeshes ---
 		if (auto* skinnedV = TryGet(jsonObject, "skinnedMeshes"))
 		{
@@ -441,6 +460,7 @@
 				n.model = GetStringOpt(nd, "model");
 				n.skinnedMesh = GetStringOpt(nd, "skinnedMesh");
 				n.material = GetStringOpt(nd, "material");
+				n.animation = GetStringOpt(nd, "animation");
 				n.animationClip = GetStringOpt(nd, "animationClip");
 				n.animationAutoplay = GetBoolOpt(nd, "animationAutoplay", true);
 				n.animationLoop = GetBoolOpt(nd, "animationLoop", true);

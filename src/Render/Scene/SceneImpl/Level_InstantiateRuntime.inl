@@ -150,68 +150,8 @@ LevelInstance InstantiateLevel(Scene& scene, AssetManager& assets, BindlessTable
 
 		if (!n.skinnedMesh.empty())
 		{
-			auto skinnedIt = asset.skinnedMeshes.find(n.skinnedMesh);
-			if (skinnedIt == asset.skinnedMeshes.end())
-			{
-				throw std::runtime_error("Level JSON: node references unknown skinnedMeshId: " + n.skinnedMesh);
-			}
-
-			std::shared_ptr<SkinnedAssetBundle> bundle;
-			if (auto cacheIt = inst.skinnedAssetCache_.find(n.skinnedMesh); cacheIt != inst.skinnedAssetCache_.end())
-			{
-				bundle = cacheIt->second;
-			}
-			else
-			{
-				AssimpSkinnedImportResult imported = LoadAssimpSkinnedAsset(
-					skinnedIt->second.path,
-					skinnedIt->second.flipUVs,
-					skinnedIt->second.submeshIndex);
-				bundle = std::make_shared<SkinnedAssetBundle>();
-				bundle->mesh = std::move(imported.mesh);
-				bundle->clips = std::move(imported.clips);
-				inst.skinnedAssetCache_.emplace(n.skinnedMesh, bundle);
-			}
-
-			SkinnedDrawItem item{};
-			item.asset = bundle;
-			item.material = n.material.empty() ? MaterialHandle{} : materialHandles.at(n.material);
-			item.transform.useMatrix = true;
-			item.transform.matrix = inst.world_[i];
-			item.autoplay = n.animationAutoplay;
-			if (!bundle->clips.empty())
-			{
-				if (!n.animationClip.empty())
-				{
-					for (std::size_t clipIndex = 0; clipIndex < bundle->clips.size(); ++clipIndex)
-					{
-						if (bundle->clips[clipIndex].name == n.animationClip)
-						{
-							item.activeClipIndex = static_cast<int>(clipIndex);
-							break;
-						}
-					}
-				}
-				if (item.activeClipIndex < 0)
-				{
-					item.activeClipIndex = 0;
-				}
-			}
-
-			const int skinnedDrawIndex = static_cast<int>(scene.skinnedDrawItems.size());
-			SkinnedDrawItem& stored = scene.AddSkinnedDraw(std::move(item));
-			const AnimationClip* activeClip = nullptr;
-			if (stored.activeClipIndex >= 0 && static_cast<std::size_t>(stored.activeClipIndex) < stored.asset->clips.size())
-			{
-				activeClip = &stored.asset->clips[static_cast<std::size_t>(stored.activeClipIndex)];
-			}
-			InitializeAnimator(stored.animator, &stored.asset->mesh.skeleton, activeClip);
-			stored.animator.looping = n.animationLoop;
-			stored.animator.playRate = n.animationPlayRate;
-			stored.animator.paused = !n.animationAutoplay;
-			EvaluateAnimator(stored.animator);
+			const int skinnedDrawIndex = inst.MakeSkinnedDrawForNode_(asset, scene, static_cast<int>(i), n);
 			inst.nodeToSkinnedDraw_[i] = skinnedDrawIndex;
-			inst.skinnedDrawToNode_.push_back(static_cast<int>(i));
 			continue;
 		}
 

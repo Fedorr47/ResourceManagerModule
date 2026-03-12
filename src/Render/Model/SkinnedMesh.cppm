@@ -90,11 +90,24 @@ export namespace rendern
 		rhi::IndexType indexType{ rhi::IndexType::UINT32 };
 	};
 
+	struct ExternalAnimationSourceInfo
+	{
+		std::string assetId{};
+		std::string debugName{};
+		std::size_t clipCount{ 0 };
+		std::size_t sourceChannelCount{ 0 };
+		std::size_t matchedChannelCount{ 0 };
+		std::size_t ignoredChannelCount{ 0 };
+		std::string diagnosticMessage{};
+	};
+
 	struct SkinnedAssetBundle
 	{
 		std::string debugName{};
 		SkinnedMeshCPU mesh{};
 		std::vector<AnimationClip> clips{};
+		std::vector<std::string> clipSourceAssetIds{}; // empty for embedded clips
+		std::vector<ExternalAnimationSourceInfo> externalAnimationSources{};
 	};
 
 	inline void NormalizeBoneWeights(SkinnedVertexDesc& v) noexcept
