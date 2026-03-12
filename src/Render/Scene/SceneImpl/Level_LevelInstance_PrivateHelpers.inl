@@ -205,7 +205,6 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 	item.transform.matrix = world_[static_cast<std::size_t>(nodeIndex)];
 	item.autoplay = node.animationAutoplay;
 	item.activeClipIndex = FindAnimationClipIndexByName_(*bundle, node.animation, node.animationClip);
-	item.controller.controllerAssetId = node.animationController;
 
 	const int skinnedDrawIndex = static_cast<int>(scene.skinnedDrawItems.size());
 	SkinnedDrawItem& stored = scene.AddSkinnedDraw(std::move(item));
