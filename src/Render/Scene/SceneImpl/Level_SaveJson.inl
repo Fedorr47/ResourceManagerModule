@@ -1,3 +1,49 @@
+[[nodiscard]] const char* AnimationParameterTypeToJsonString_(AnimationParameterType type) noexcept
+{
+	switch (type)
+	{
+	case AnimationParameterType::Bool: return "bool";
+	case AnimationParameterType::Int: return "int";
+	case AnimationParameterType::Float: return "float";
+	case AnimationParameterType::Trigger: return "trigger";
+	default: return "bool";
+	}
+}
+
+[[nodiscard]] const char* AnimationConditionOpToJsonString_(AnimationConditionOp op) noexcept
+{
+	switch (op)
+	{
+	case AnimationConditionOp::IfTrue: return "true";
+	case AnimationConditionOp::IfFalse: return "false";
+	case AnimationConditionOp::Greater: return ">";
+	case AnimationConditionOp::GreaterEqual: return ">=";
+	case AnimationConditionOp::Less: return "<";
+	case AnimationConditionOp::LessEqual: return "<=";
+	case AnimationConditionOp::Equal: return "==";
+	case AnimationConditionOp::NotEqual: return "!=";
+	case AnimationConditionOp::Triggered: return "triggered";
+	default: return "true";
+	}
+}
+
+void WriteAnimationParameterLiteral_(std::ostringstream& ss, const AnimationParameterValue& value)
+{
+	switch (value.type)
+	{
+	case AnimationParameterType::Bool:
+	case AnimationParameterType::Trigger:
+		WriteJsonBool(ss, value.type == AnimationParameterType::Trigger ? value.triggerValue : value.boolValue);
+		break;
+	case AnimationParameterType::Int:
+		ss << value.intValue;
+		break;
+	case AnimationParameterType::Float:
+		ss << value.floatValue;
+		break;
+	}
+}
+
 void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAsset& level)
 {
 	namespace fs = std::filesystem;
@@ -145,6 +191,103 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 				WriteJsonEscaped(ss, md.debugName);
 			}
 			ss << "}";
+		}
+		if (!keys.empty()) ss << "\n  ";
+	}
+	ss << "},\n";
+
+	// animationControllers
+	ss << "  \"animationControllers\": {";
+	{
+		auto keys = SortedStringKeys(level.animationControllers);
+		for (std::size_t i = 0; i < keys.size(); ++i)
+		{
+			const auto& id = keys[i];
+			const AnimationControllerAsset& controller = level.animationControllers.at(id);
+			if (i == 0) ss << "\n"; else ss << ",\n";
+			ss << "    ";
+			WriteJsonEscaped(ss, id);
+			ss << ": {";
+			ss << "\"defaultState\": ";
+			WriteJsonEscaped(ss, controller.defaultState);
+			ss << ", \"parameters\": {";
+			for (std::size_t pIndex = 0; pIndex < controller.parameters.size(); ++pIndex)
+			{
+				const AnimationParameterDesc& param = controller.parameters[pIndex];
+				if (pIndex == 0) ss << "\n"; else ss << ",\n";
+				ss << "      ";
+				WriteJsonEscaped(ss, param.name);
+				ss << ": {\"type\": ";
+				WriteJsonEscaped(ss, AnimationParameterTypeToJsonString_(param.defaultValue.type));
+				if (param.defaultValue.type != AnimationParameterType::Trigger ||
+					param.defaultValue.triggerValue || param.defaultValue.boolValue)
+				{
+					ss << ", \"default\": ";
+					WriteAnimationParameterLiteral_(ss, param.defaultValue);
+				}
+				ss << "}";
+			}
+			if (!controller.parameters.empty()) ss << "\n    ";
+			ss << "}, \"states\": {";
+			for (std::size_t sIndex = 0; sIndex < controller.states.size(); ++sIndex)
+			{
+				const AnimationStateDesc& state = controller.states[sIndex];
+				if (sIndex == 0) ss << "\n"; else ss << ",\n";
+				ss << "      ";
+				WriteJsonEscaped(ss, state.name);
+				ss << ": {\"clip\": ";
+				WriteJsonEscaped(ss, state.clipName);
+				if (!state.looping)
+				{
+					ss << ", \"loop\": false";
+				}
+				if (std::fabs(state.playRate - 1.0f) > 1e-6f)
+				{
+					ss << ", \"playRate\": " << state.playRate;
+				}
+				ss << "}";
+			}
+			if (!controller.states.empty()) ss << "\n    ";
+			ss << "}, \"transitions\": [";
+			for (std::size_t tIndex = 0; tIndex < controller.transitions.size(); ++tIndex)
+			{
+				const AnimationTransitionDesc& transition = controller.transitions[tIndex];
+				if (tIndex == 0) ss << "\n"; else ss << ",\n";
+				ss << "      {\"from\": ";
+				WriteJsonEscaped(ss, transition.fromState);
+				ss << ", \"to\": ";
+				WriteJsonEscaped(ss, transition.toState);
+				if (transition.hasExitTime)
+				{
+					ss << ", \"exitTime\": " << transition.exitTimeNormalized;
+				}
+				if (!transition.conditions.empty())
+				{
+					ss << ", \"conditions\": [";
+					for (std::size_t cIndex = 0; cIndex < transition.conditions.size(); ++cIndex)
+					{
+						const AnimationConditionDesc& condition = transition.conditions[cIndex];
+						if (cIndex == 0) ss << "\n"; else ss << ",\n";
+						ss << "        {\"parameter\": ";
+						WriteJsonEscaped(ss, condition.parameter);
+						ss << ", \"op\": ";
+						WriteJsonEscaped(ss, AnimationConditionOpToJsonString_(condition.op));
+						if (condition.op != AnimationConditionOp::IfTrue &&
+							condition.op != AnimationConditionOp::IfFalse &&
+							condition.op != AnimationConditionOp::Triggered)
+						{
+							ss << ", \"value\": ";
+							WriteAnimationParameterLiteral_(ss, condition.value);
+						}
+						ss << "}";
+					}
+					if (!transition.conditions.empty()) ss << "\n      ";
+					ss << "]";
+				}
+				ss << "}";
+			}
+			if (!controller.transitions.empty()) ss << "\n    ";
+			ss << "]}";
 		}
 		if (!keys.empty()) ss << "\n  ";
 	}
@@ -482,6 +625,16 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 		{
 			ss << ", \"animation\": ";
 			WriteJsonEscaped(ss, n.animation);
+		}
+		if (!n.animationController.empty())
+		{
+			ss << ", \"animationController\": ";
+			WriteJsonEscaped(ss, n.animationController);
+		}
+		if (!n.animationController.empty())
+		{
+			ss << ", \"animationController\": ";
+			WriteJsonEscaped(ss, n.animationController);
 		}
 		if (!n.animationClip.empty())
 		{

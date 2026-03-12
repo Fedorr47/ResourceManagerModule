@@ -17,6 +17,7 @@ import :math_utils;
 import :skinned_mesh;
 import :animation_clip;
 import :animator;
+import :animation_controller;
 
 export namespace rendern
 {
@@ -352,6 +353,7 @@ export namespace rendern
 		Transform transform{};
 		MaterialHandle material{};
 		AnimatorState animator{};
+		AnimationControllerRuntime controller{};
 		bool autoplay{ true };
 		int activeClipIndex{ -1 };
 		bool debugForceBindPose{ false };
@@ -760,6 +762,17 @@ export namespace rendern
 					item.animator.paused = true;
 					EvaluateAnimator(item.animator);
 				}
+
+				SyncAnimationControllerLegacyClip(
+					item.controller,
+					asset->mesh.skeleton,
+					asset->clips,
+					item.activeClipIndex,
+					item.autoplay,
+					item.animator.looping,
+					item.animator.playRate,
+					item.animator.paused,
+					item.debugForceBindPose);
 			}
 
 			skinnedDrawItems.push_back(std::move(item));
@@ -775,33 +788,31 @@ export namespace rendern
 					continue;
 				}
 
-				if (!IsAnimatorReady(item.animator))
+				if (IsAnimationControllerUsingLegacyClipMode(item.controller) || item.controller.stateMachineAsset == nullptr)
 				{
-					const AnimationClip* clip = nullptr;
-					if (item.activeClipIndex >= 0 &&
-						static_cast<std::size_t>(item.activeClipIndex) < item.asset->clips.size())
-					{
-						clip = &item.asset->clips[static_cast<std::size_t>(item.activeClipIndex)];
-					}
-
-					InitializeAnimator(item.animator, &item.asset->mesh.skeleton, clip);
-				}
-
-				if (item.debugForceBindPose)
-				{
-					ResetAnimatorToBindPose(item.animator, item.asset->mesh.skeleton);
-					EvaluateAnimator(item.animator);
-					continue;
-				}
-
-				if (item.autoplay && !item.animator.paused)
-				{
-					UpdateAnimator(item.animator, dt);
+					SyncAnimationControllerLegacyClip(
+						item.controller,
+						item.asset->mesh.skeleton,
+						item.asset->clips,
+						item.activeClipIndex,
+						item.autoplay,
+						item.animator.looping,
+						item.animator.playRate,
+						item.animator.paused,
+						item.debugForceBindPose);
 				}
 				else
 				{
-					EvaluateAnimator(item.animator);
+					RefreshAnimationControllerRuntimeBindings(
+						item.controller,
+						item.asset->mesh.skeleton,
+						item.asset->clips,
+						item.autoplay,
+						item.animator.paused,
+						item.debugForceBindPose);
 				}
+
+				UpdateAnimationControllerRuntime(item.controller, item.animator, dt);
 			}
 		}
 

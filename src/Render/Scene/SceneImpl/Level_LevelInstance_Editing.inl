@@ -633,6 +633,7 @@ void SetNodeMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, int node
 	n.model.clear();
 	n.skinnedMesh.clear();
 	n.animation.clear();
+	n.animationController.clear();
 	n.animationClip.clear();
 	n.animationAutoplay = true;
 	n.animationLoop = true;
@@ -658,6 +659,7 @@ void SetNodeModel(LevelAsset& asset, Scene& scene, AssetManager& assets, int nod
 	n.mesh.clear();
 	n.skinnedMesh.clear();
 	n.animation.clear();
+	n.animationController.clear();
 	n.animationClip.clear();
 	n.animationAutoplay = true;
 	n.animationLoop = true;
@@ -706,11 +708,13 @@ void SetNodeSkinnedMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, i
 	if (n.skinnedMesh != skinnedMeshId)
 	{
 		n.animation.clear();
+		n.animationController.clear();
 		n.animationClip.clear();
 	}
 	if (skinnedMeshId.empty())
 	{
 		n.animation.clear();
+		n.animationController.clear();
 		n.animationClip.clear();
 		n.animationAutoplay = true;
 		n.animationLoop = true;
@@ -739,7 +743,7 @@ void SetNodeSkinnedMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, i
 			}
 		}
 	}
-	
+
 	n.skinnedMesh = std::string(skinnedMeshId);
 	n.mesh.clear();
 	n.model.clear();
@@ -772,6 +776,35 @@ void SetNodeAnimationAsset(LevelAsset& asset, Scene& scene, AssetManager& assets
 	n.animation = std::string(animationId);
 	n.animationClip.clear();
 	n.animationAutoplay = true;
+	EnsureDrawForNode_(asset, scene, assets, nodeIndex);
+	SyncEntityRenderableForNode_(asset, scene, nodeIndex);
+	SyncEditorRuntimeBindings(asset, scene);
+	ValidateRuntimeMappingsDebug(asset, scene);
+}
+
+void SetNodeAnimationController(LevelAsset& asset, Scene& scene, AssetManager& assets, int nodeIndex, std::string_view controllerId)
+{
+	if (!IsNodeAlive(asset, nodeIndex))
+	{
+		return;
+	}
+
+	LevelNode& n = asset.nodes[static_cast<std::size_t>(nodeIndex)];
+	if (n.skinnedMesh.empty() && !controllerId.empty())
+	{
+		return;
+	}
+	if (n.animationController == controllerId)
+	{
+		return;
+	}
+
+	n.animationController = std::string(controllerId);
+	if (!controllerId.empty())
+	{
+		n.animationClip.clear();
+		n.animationAutoplay = true;
+	}
 	EnsureDrawForNode_(asset, scene, assets, nodeIndex);
 	SyncEntityRenderableForNode_(asset, scene, nodeIndex);
 	SyncEditorRuntimeBindings(asset, scene);

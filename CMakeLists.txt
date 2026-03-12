@@ -340,13 +340,15 @@ set(COMMON_MODULES
 
   Render/Scene/CameraController.cppm
 
+  Render/Animation/Animator.cppm
+  Render/Animation/AnimationController.cppm
+
   Render/Model/ObjLoader.cppm
   Render/Model/AssimpLoader.cppm
   Render/Model/AssimpSceneLoader.cppm
   Render/Model/Mesh/Mesh.cppm
   Render/Model/Skeleton.cppm
   Render/Model/AnimationClip.cppm
-  Render/Animation/Animator.cppm
   Render/Model/SkinnedMesh.cppm
 
   Render/Decoders/TextureDecoderSTB.cppm

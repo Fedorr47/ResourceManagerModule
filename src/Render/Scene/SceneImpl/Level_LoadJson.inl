@@ -1,3 +1,26 @@
+[[nodiscard]] AnimationParameterType ParseAnimationControllerParameterType_(std::string_view type)
+{
+	if (type == "bool") return AnimationParameterType::Bool;
+	if (type == "int") return AnimationParameterType::Int;
+	if (type == "float") return AnimationParameterType::Float;
+	if (type == "trigger") return AnimationParameterType::Trigger;
+	throw std::runtime_error("Level JSON: animation controller parameter type must be bool|int|float|trigger");
+}
+
+[[nodiscard]] AnimationConditionOp ParseAnimationConditionOp_(std::string_view op)
+{
+	if (op == "true") return AnimationConditionOp::IfTrue;
+	if (op == "false") return AnimationConditionOp::IfFalse;
+	if (op == ">") return AnimationConditionOp::Greater;
+	if (op == ">=") return AnimationConditionOp::GreaterEqual;
+	if (op == "<") return AnimationConditionOp::Less;
+	if (op == "<=") return AnimationConditionOp::LessEqual;
+	if (op == "==" || op == "=") return AnimationConditionOp::Equal;
+	if (op == "!=") return AnimationConditionOp::NotEqual;
+	if (op == "triggered") return AnimationConditionOp::Triggered;
+	throw std::runtime_error("Level JSON: animation controller condition op is invalid");
+}
+	
 	// -----------------------------
 	// Loader API
 	// -----------------------------
@@ -166,6 +189,129 @@
 					throw std::runtime_error("Level JSON: animations." + id + ".path is required");
 				}
 				out.animations.emplace(id, std::move(def));
+			}
+		}
+
+		// --- animationControllers ---
+		if (auto* controllersV = TryGet(jsonObject, "animationControllers"))
+		{
+			const JsonObject& controllersO = controllersV->AsObject();
+			for (const auto& [id, defV] : controllersO)
+			{
+				const JsonObject& cd = defV.AsObject();
+				AnimationControllerAsset def;
+				def.id = id;
+				def.defaultState = GetStringOpt(cd, "defaultState");
+
+				if (auto* paramsV = TryGet(cd, "parameters"))
+				{
+					const JsonObject& paramsO = paramsV->AsObject();
+					for (const auto& [paramName, paramV] : paramsO)
+					{
+						const JsonObject& pd = paramV.AsObject();
+						AnimationParameterDesc paramDesc;
+						paramDesc.name = paramName;
+						paramDesc.defaultValue.type = ParseAnimationControllerParameterType_(GetStringOpt(pd, "type", "bool"));
+						if (auto* defaultV = TryGet(pd, "default"))
+						{
+							switch (paramDesc.defaultValue.type)
+							{
+							case AnimationParameterType::Bool:
+							case AnimationParameterType::Trigger:
+								if (!defaultV->IsBool()) throw std::runtime_error("Level JSON: animation controller bool default must be bool");
+								paramDesc.defaultValue.boolValue = defaultV->AsBool();
+								paramDesc.defaultValue.triggerValue = defaultV->AsBool();
+								break;
+							case AnimationParameterType::Int:
+								if (!defaultV->IsNumber()) throw std::runtime_error("Level JSON: animation controller int default must be number");
+								paramDesc.defaultValue.intValue = static_cast<int>(defaultV->AsNumber());
+								break;
+							case AnimationParameterType::Float:
+								if (!defaultV->IsNumber()) throw std::runtime_error("Level JSON: animation controller float default must be number");
+								paramDesc.defaultValue.floatValue = static_cast<float>(defaultV->AsNumber());
+								break;
+							}
+						}
+						def.parameters.push_back(std::move(paramDesc));
+					}
+				}
+
+				if (auto* statesV = TryGet(cd, "states"))
+				{
+					const JsonObject& statesO = statesV->AsObject();
+					for (const auto& [stateName, stateV] : statesO)
+					{
+						const JsonObject& sd = stateV.AsObject();
+						AnimationStateDesc stateDesc;
+						stateDesc.name = stateName;
+						stateDesc.clipName = GetStringOpt(sd, "clip");
+						stateDesc.looping = GetBoolOpt(sd, "loop", true);
+						stateDesc.playRate = GetFloatOpt(sd, "playRate", 1.0f);
+						def.states.push_back(std::move(stateDesc));
+					}
+				}
+				if (def.states.empty())
+				{
+					throw std::runtime_error("Level JSON: animationControllers." + id + ".states must not be empty");
+				}
+
+				if (auto* transitionsV = TryGet(cd, "transitions"))
+				{
+					const JsonArray& transitionsA = transitionsV->AsArray();
+					for (const JsonValue& transitionV : transitionsA)
+					{
+						const JsonObject& td = transitionV.AsObject();
+						AnimationTransitionDesc transitionDesc;
+						transitionDesc.fromState = GetStringOpt(td, "from");
+						transitionDesc.toState = GetStringOpt(td, "to");
+						if (transitionDesc.toState.empty())
+						{
+							throw std::runtime_error("Level JSON: animation controller transition .to is required");
+						}
+						transitionDesc.hasExitTime = TryGet(td, "exitTime") != nullptr;
+						transitionDesc.exitTimeNormalized = GetFloatOpt(td, "exitTime", 1.0f);
+
+						if (auto* conditionsV = TryGet(td, "conditions"))
+						{
+							const JsonArray& conditionsA = conditionsV->AsArray();
+							for (const JsonValue& conditionV : conditionsA)
+							{
+								const JsonObject& condO = conditionV.AsObject();
+								AnimationConditionDesc conditionDesc;
+								conditionDesc.parameter = GetStringOpt(condO, "parameter");
+								conditionDesc.op = ParseAnimationConditionOp_(GetStringOpt(condO, "op", "true"));
+								if (const AnimationParameterDesc* paramDesc = FindAnimationParameterDesc(def, conditionDesc.parameter))
+								{
+									conditionDesc.value.type = paramDesc->defaultValue.type;
+								}
+								if (auto* valueV = TryGet(condO, "value"))
+								{
+									switch (conditionDesc.value.type)
+									{
+									case AnimationParameterType::Bool:
+									case AnimationParameterType::Trigger:
+										if (!valueV->IsBool()) throw std::runtime_error("Level JSON: animation controller condition bool value must be bool");
+										conditionDesc.value.boolValue = valueV->AsBool();
+										conditionDesc.value.triggerValue = valueV->AsBool();
+										break;
+									case AnimationParameterType::Int:
+										if (!valueV->IsNumber()) throw std::runtime_error("Level JSON: animation controller condition int value must be number");
+										conditionDesc.value.intValue = static_cast<int>(valueV->AsNumber());
+										break;
+									case AnimationParameterType::Float:
+										if (!valueV->IsNumber()) throw std::runtime_error("Level JSON: animation controller condition float value must be number");
+										conditionDesc.value.floatValue = static_cast<float>(valueV->AsNumber());
+										break;
+									}
+								}
+								transitionDesc.conditions.push_back(std::move(conditionDesc));
+							}
+						}
+						def.transitions.push_back(std::move(transitionDesc));
+					}
+				}
+
+				out.animationControllers.emplace(id, std::move(def));
 			}
 		}
 
@@ -461,6 +607,8 @@
 				n.skinnedMesh = GetStringOpt(nd, "skinnedMesh");
 				n.material = GetStringOpt(nd, "material");
 				n.animation = GetStringOpt(nd, "animation");
+				n.animationController = GetStringOpt(nd, "animationController");
+				n.animationController = GetStringOpt(nd, "animationController");
 				n.animationClip = GetStringOpt(nd, "animationClip");
 				n.animationAutoplay = GetBoolOpt(nd, "animationAutoplay", true);
 				n.animationLoop = GetBoolOpt(nd, "animationLoop", true);

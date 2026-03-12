@@ -30,6 +30,7 @@ import :math_utils;
 import :assimp_scene_loader;
 import :assimp_loader;
 import :animator;
+import :animation_controller;
 import :animation_clip;
 
 // ------------------------------------------------------------

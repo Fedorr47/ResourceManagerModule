@@ -211,6 +211,7 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 	item.transform.matrix = world_[static_cast<std::size_t>(nodeIndex)];
 	item.autoplay = node.animationAutoplay;
 	item.activeClipIndex = FindAnimationClipIndexByName_(*bundle, node.animation, node.animationClip);
+	item.controller.controllerAssetId = node.animationController;
 
 	const int skinnedDrawIndex = static_cast<int>(scene.skinnedDrawItems.size());
 	SkinnedDrawItem& stored = scene.AddSkinnedDraw(std::move(item));
@@ -223,7 +224,50 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 	stored.animator.looping = node.animationLoop;
 	stored.animator.playRate = node.animationPlayRate;
 	stored.animator.paused = !node.animationAutoplay;
-	EvaluateAnimator(stored.animator);
+	stored.controller.controllerAssetId = node.animationController;
+
+	if (!node.animationController.empty())
+	{
+		auto controllerIt = asset.animationControllers.find(node.animationController);
+		if (controllerIt != asset.animationControllers.end())
+		{
+			BindAnimationControllerStateMachine(
+				stored.controller,
+				stored.asset->mesh.skeleton,
+				stored.asset->clips,
+				controllerIt->second,
+				node.animationAutoplay,
+				!node.animationAutoplay,
+				stored.debugForceBindPose);
+		}
+		else
+		{
+			SyncAnimationControllerLegacyClip(
+				stored.controller,
+				stored.asset->mesh.skeleton,
+				stored.asset->clips,
+				stored.activeClipIndex,
+				node.animationAutoplay,
+				node.animationLoop,
+				node.animationPlayRate,
+				stored.animator.paused,
+				stored.debugForceBindPose);
+		}
+	}
+	else
+	{
+		SyncAnimationControllerLegacyClip(
+			stored.controller,
+			stored.asset->mesh.skeleton,
+			stored.asset->clips,
+			stored.activeClipIndex,
+			node.animationAutoplay,
+			node.animationLoop,
+			node.animationPlayRate,
+			stored.animator.paused,
+			stored.debugForceBindPose);
+	}
+	UpdateAnimationControllerRuntime(stored.controller, stored.animator, 0.0f);
 
 	if (skinnedDrawToNode_.size() < scene.skinnedDrawItems.size())
 	{

@@ -178,18 +178,18 @@ namespace rendern::ui::level_ui_detail
         ImGui::Checkbox("Flip UVs on import", &st.importFlipUVs);
 
         const auto makeImportBaseId = [&](const char* fallback) -> std::string
-        {
-            std::string base = std::string(st.importAssetIdBuf);
-            if (base.empty())
             {
-                base = std::filesystem::path(std::string(st.importPathBuf)).stem().string();
-            }
-            if (base.empty())
-            {
-                base = fallback;
-            }
-            return base;
-        };
+                std::string base = std::string(st.importAssetIdBuf);
+                if (base.empty())
+                {
+                    base = std::filesystem::path(std::string(st.importPathBuf)).stem().string();
+                }
+                if (base.empty())
+                {
+                    base = fallback;
+                }
+                return base;
+            };
 
         if (ImGui::Button("Import mesh into library"))
         {
@@ -551,10 +551,16 @@ namespace rendern::ui::level_ui_detail
 
         {
             const bool isSkinnedNode = !node.skinnedMesh.empty();
-            int skinnedDrawIndex = levelInst.GetNodeSkinnedDrawIndex(st.selectedNode);
-            rendern::SkinnedDrawItem* skinnedItem = levelInst.GetSkinnedDrawItem(scene, skinnedDrawIndex);
             if (isSkinnedNode)
             {
+                auto RefreshSkinnedRuntime = [&]() -> rendern::SkinnedDrawItem*
+                    {
+                        const int drawIndex = levelInst.GetNodeSkinnedDrawIndex(st.selectedNode);
+                        return levelInst.GetSkinnedDrawItem(scene, drawIndex);
+                    };
+
+                rendern::SkinnedDrawItem* skinnedItem = RefreshSkinnedRuntime();
+
                 auto itSkinned = level.skinnedMeshes.find(node.skinnedMesh);
                 if (itSkinned != level.skinnedMeshes.end())
                 {
@@ -562,14 +568,19 @@ namespace rendern::ui::level_ui_detail
                 }
 
                 ImGui::SeparatorText("Animation");
-                if (skinnedItem && skinnedItem->asset)
+
+                if (!skinnedItem || !skinnedItem->asset)
+                {
+                    ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
+                }
+                else
                 {
                     const auto& skeleton = skinnedItem->asset->mesh.skeleton;
                     const std::size_t boneCount = skeleton.bones.size();
                     const std::size_t clipCount = skinnedItem->asset->clips.size();
                     const std::string activeClipName =
-                        (skinnedItem->activeClipIndex >= 0 && static_cast<std::size_t>(skinnedItem->activeClipIndex) < skinnedItem->asset->clips.size())
-                        ? skinnedItem->asset->clips[static_cast<std::size_t>(skinnedItem->activeClipIndex)].name
+                        (skinnedItem->animator.clip != nullptr)
+                        ? skinnedItem->animator.clip->name
                         : std::string("<none>");
 
                     ImGui::Text("Bones: %d", static_cast<int>(boneCount));
@@ -601,6 +612,7 @@ namespace rendern::ui::level_ui_detail
                     std::vector<const char*> animationAssetCItems;
                     animationAssetCItems.reserve(animationAssetItems.size());
                     for (auto& s : animationAssetItems) animationAssetCItems.push_back(s.c_str());
+
                     if (ImGui::Combo("Animation asset", &animationAssetCurrent, animationAssetCItems.data(), static_cast<int>(animationAssetCItems.size())))
                     {
                         const std::string selectedAnimationAsset =
@@ -608,200 +620,373 @@ namespace rendern::ui::level_ui_detail
                             ? std::string{}
                         : animationAssetItems[static_cast<std::size_t>(animationAssetCurrent)];
                         levelInst.SetNodeAnimationAsset(level, scene, assets, st.selectedNode, selectedAnimationAsset);
-                        skinnedDrawIndex = levelInst.GetNodeSkinnedDrawIndex(st.selectedNode);
-                        skinnedItem = levelInst.GetSkinnedDrawItem(scene, skinnedDrawIndex);
+                        skinnedItem = RefreshSkinnedRuntime();
                     }
-                    if (!skinnedItem || !skinnedItem->asset)
+
+                    if (skinnedItem && skinnedItem->asset)
                     {
-                        ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
-                    }
-                    else
-                    {
-                        if (!node.animation.empty())
+                        std::vector<std::string> controllerItems;
+                        controllerItems.reserve(level.animationControllers.size() + 1);
+                        controllerItems.push_back("(legacy clip mode)");
+                        for (const auto& [controllerId, _] : level.animationControllers)
                         {
-                            for (const auto& sourceInfo : skinnedItem->asset->externalAnimationSources)
-                            {
-                                if (sourceInfo.assetId == node.animation)
-                                {
-                                    ImGui::TextDisabled(
-                                        "External import: clips=%d matched=%d/%d ignored=%d",
-                                        static_cast<int>(sourceInfo.clipCount),
-                                        static_cast<int>(sourceInfo.matchedChannelCount),
-                                        static_cast<int>(sourceInfo.sourceChannelCount),
-                                        static_cast<int>(sourceInfo.ignoredChannelCount));
-                                    if (!sourceInfo.diagnosticMessage.empty())
-                                    {
-                                        ImGui::TextDisabled("%s", sourceInfo.diagnosticMessage.c_str());
-                                    }
-                                    break;
-                                }
-                            }
-                        }
-                        std::vector<int> visibleClipIndices;
-                        std::vector<std::string> clipItems;
-                        visibleClipIndices.reserve(skinnedItem->asset->clips.size());
-                        clipItems.reserve(skinnedItem->asset->clips.size() + 1);
-                        clipItems.push_back("(bind pose)");
-                        for (std::size_t clipIndex = 0; clipIndex < skinnedItem->asset->clips.size(); ++clipIndex)
-                        {
-                            const bool sourceMatches =
-                                node.animation.empty()
-                                ? (clipIndex < skinnedItem->asset->clipSourceAssetIds.size() && skinnedItem->asset->clipSourceAssetIds[clipIndex].empty())
-                                : (clipIndex < skinnedItem->asset->clipSourceAssetIds.size() && skinnedItem->asset->clipSourceAssetIds[clipIndex] == node.animation);
-                            if (!sourceMatches)
-                            {
-                                continue;
-                            }
-                            visibleClipIndices.push_back(static_cast<int>(clipIndex));
-                            const auto& clip = skinnedItem->asset->clips[clipIndex];
-                            clipItems.push_back(clip.name.empty() ? std::string("<unnamed clip>") : clip.name);
+                            controllerItems.push_back(controllerId);
                         }
 
-                        int clipCurrent = 0;
-                        if (skinnedItem->activeClipIndex >= 0)
+                        int controllerCurrent = 0;
+                        if (!node.animationController.empty())
                         {
-                            for (std::size_t visibleIndex = 0; visibleIndex < visibleClipIndices.size(); ++visibleIndex)
+                            for (std::size_t controllerIndex = 1; controllerIndex < controllerItems.size(); ++controllerIndex)
                             {
-                                if (visibleClipIndices[visibleIndex] == skinnedItem->activeClipIndex)
+                                if (controllerItems[controllerIndex] == node.animationController)
                                 {
-                                    clipCurrent = static_cast<int>(visibleIndex) + 1;
+                                    controllerCurrent = static_cast<int>(controllerIndex);
                                     break;
                                 }
                             }
                         }
-                        std::vector<const char*> clipCItems;
-                        clipCItems.reserve(clipItems.size());
-                        for (auto& s : clipItems) clipCItems.push_back(s.c_str());
-                        if (ImGui::Combo("Clip", &clipCurrent, clipCItems.data(), static_cast<int>(clipCItems.size())))
+
+                        std::vector<const char*> controllerCItems;
+                        controllerCItems.reserve(controllerItems.size());
+                        for (auto& s : controllerItems) controllerCItems.push_back(s.c_str());
+
+                        if (ImGui::Combo("Animation controller", &controllerCurrent, controllerCItems.data(), static_cast<int>(controllerCItems.size())))
                         {
-                            if (clipCurrent <= 0)
+                            const std::string selectedController =
+                                (controllerCurrent <= 0)
+                                ? std::string{}
+                            : controllerItems[static_cast<std::size_t>(controllerCurrent)];
+                            levelInst.SetNodeAnimationController(level, scene, assets, st.selectedNode, selectedController);
+                            skinnedItem = RefreshSkinnedRuntime();
+                        }
+
+                        if (skinnedItem && skinnedItem->asset)
+                        {
+                            if (!node.animation.empty())
                             {
-                                node.animationClip.clear();
-                                skinnedItem->activeClipIndex = -1;
-                                skinnedItem->debugForceBindPose = true;
-                                skinnedItem->autoplay = false;
-                                skinnedItem->animator.paused = true;
-                                ResetAnimatorToBindPose(skinnedItem->animator, skinnedItem->asset->mesh.skeleton);
-                                EvaluateAnimator(skinnedItem->animator);
+                                for (const auto& sourceInfo : skinnedItem->asset->externalAnimationSources)
+                                {
+                                    if (sourceInfo.assetId == node.animation)
+                                    {
+                                        ImGui::TextDisabled(
+                                            "External import: clips=%d matched=%d/%d ignored=%d",
+                                            static_cast<int>(sourceInfo.clipCount),
+                                            static_cast<int>(sourceInfo.matchedChannelCount),
+                                            static_cast<int>(sourceInfo.sourceChannelCount),
+                                            static_cast<int>(sourceInfo.ignoredChannelCount));
+                                        if (!sourceInfo.diagnosticMessage.empty())
+                                        {
+                                            ImGui::TextDisabled("%s", sourceInfo.diagnosticMessage.c_str());
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+
+                            const bool usingController =
+                                skinnedItem->controller.mode == rendern::AnimationControllerMode::StateMachine &&
+                                skinnedItem->controller.stateMachineAsset != nullptr;
+
+                            if (usingController)
+                            {
+                                ImGui::Text("Controller state: %s", skinnedItem->controller.currentStateName.c_str());
+
+                                const rendern::AnimationControllerAsset& controllerAsset = *skinnedItem->controller.stateMachineAsset;
+                                if (!controllerAsset.states.empty())
+                                {
+                                    std::vector<const char*> stateItems;
+                                    stateItems.reserve(controllerAsset.states.size());
+                                    int stateCurrent = 0;
+                                    for (std::size_t stateIndex = 0; stateIndex < controllerAsset.states.size(); ++stateIndex)
+                                    {
+                                        stateItems.push_back(controllerAsset.states[stateIndex].name.c_str());
+                                        if (controllerAsset.states[stateIndex].name == skinnedItem->controller.currentStateName)
+                                        {
+                                            stateCurrent = static_cast<int>(stateIndex);
+                                        }
+                                    }
+
+                                    if (ImGui::Combo("State override", &stateCurrent, stateItems.data(), static_cast<int>(stateItems.size())))
+                                    {
+                                        RequestAnimationControllerState(
+                                            skinnedItem->controller,
+                                            controllerAsset.states[static_cast<std::size_t>(stateCurrent)].name);
+                                        UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                    }
+                                }
+
+                                if (!controllerAsset.parameters.empty())
+                                {
+                                    ImGui::SeparatorText("Controller Parameters");
+                                    for (const rendern::AnimationParameterDesc& paramDesc : controllerAsset.parameters)
+                                    {
+                                        rendern::AnimationParameterValue* runtimeParam =
+                                            FindAnimationParameter(skinnedItem->controller.parameters, paramDesc.name);
+                                        if (runtimeParam == nullptr)
+                                        {
+                                            skinnedItem->controller.parameters.values[paramDesc.name] = paramDesc.defaultValue;
+                                            runtimeParam = FindAnimationParameter(skinnedItem->controller.parameters, paramDesc.name);
+                                        }
+                                        if (runtimeParam == nullptr)
+                                        {
+                                            continue;
+                                        }
+
+                                        switch (paramDesc.defaultValue.type)
+                                        {
+                                        case rendern::AnimationParameterType::Bool:
+                                        {
+                                            bool value = runtimeParam->boolValue;
+                                            const std::string label = paramDesc.name + "##anim_bool";
+                                            if (ImGui::Checkbox(label.c_str(), &value))
+                                            {
+                                                SetAnimationParameter(skinnedItem->controller.parameters, paramDesc.name, value);
+                                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                            }
+                                            break;
+                                        }
+                                        case rendern::AnimationParameterType::Int:
+                                        {
+                                            int value = runtimeParam->intValue;
+                                            const std::string label = paramDesc.name + "##anim_int";
+                                            if (ImGui::InputInt(label.c_str(), &value))
+                                            {
+                                                SetAnimationParameter(skinnedItem->controller.parameters, paramDesc.name, value);
+                                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                            }
+                                            break;
+                                        }
+                                        case rendern::AnimationParameterType::Float:
+                                        {
+                                            float value = runtimeParam->floatValue;
+                                            const std::string label = paramDesc.name + "##anim_float";
+                                            if (ImGui::DragFloat(label.c_str(), &value, 0.01f))
+                                            {
+                                                SetAnimationParameter(skinnedItem->controller.parameters, paramDesc.name, value);
+                                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                            }
+                                            break;
+                                        }
+                                        case rendern::AnimationParameterType::Trigger:
+                                        {
+                                            const std::string label = "Fire " + paramDesc.name + "##anim_trigger";
+                                            if (ImGui::Button(label.c_str()))
+                                            {
+                                                FireAnimationTrigger(skinnedItem->controller.parameters, paramDesc.name);
+                                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                            }
+                                            break;
+                                        }
+                                        }
+                                    }
+                                }
                             }
                             else
                             {
-                                const int newClipIndex = visibleClipIndices[static_cast<std::size_t>(clipCurrent - 1)];
-                                node.animationClip = skinnedItem->asset->clips[static_cast<std::size_t>(newClipIndex)].name;
-                                skinnedItem->activeClipIndex = newClipIndex;
-                                skinnedItem->debugForceBindPose = false;
-                                SetAnimatorClip(
-                                    skinnedItem->animator,
-                                    skinnedItem->asset->mesh.skeleton,
-                                    skinnedItem->asset->clips,
-                                    newClipIndex,
-                                    node.animationLoop,
-                                    node.animationPlayRate,
-                                    true);
-                                skinnedItem->autoplay = node.animationAutoplay;
-                                skinnedItem->animator.paused = !node.animationAutoplay;
-                                EvaluateAnimator(skinnedItem->animator);
-                            }
-                        }
-                    }
+                                std::vector<int> visibleClipIndices;
+                                std::vector<std::string> clipItems;
+                                visibleClipIndices.reserve(skinnedItem->asset->clips.size());
+                                clipItems.reserve(skinnedItem->asset->clips.size() + 1);
+                                clipItems.push_back("(bind pose)");
+                                for (std::size_t clipIndex = 0; clipIndex < skinnedItem->asset->clips.size(); ++clipIndex)
+                                {
+                                    const bool sourceMatches =
+                                        node.animation.empty()
+                                        ? (clipIndex < skinnedItem->asset->clipSourceAssetIds.size() && skinnedItem->asset->clipSourceAssetIds[clipIndex].empty())
+                                        : (clipIndex < skinnedItem->asset->clipSourceAssetIds.size() && skinnedItem->asset->clipSourceAssetIds[clipIndex] == node.animation);
+                                    if (!sourceMatches)
+                                    {
+                                        continue;
+                                    }
+                                    visibleClipIndices.push_back(static_cast<int>(clipIndex));
+                                    const auto& clip = skinnedItem->asset->clips[clipIndex];
+                                    clipItems.push_back(clip.name.empty() ? std::string("<unnamed clip>") : clip.name);
+                                }
 
-                    bool autoplay = node.animationAutoplay;
-                    if (ImGui::Checkbox("Autoplay", &autoplay))
-                    {
-                        node.animationAutoplay = autoplay;
-                        skinnedItem->autoplay = autoplay;
-                        if (autoplay)
-                        {
-                            skinnedItem->debugForceBindPose = false;
-                            skinnedItem->animator.paused = false;
+                                int clipCurrent = 0;
+                                if (skinnedItem->activeClipIndex >= 0)
+                                {
+                                    for (std::size_t visibleIndex = 0; visibleIndex < visibleClipIndices.size(); ++visibleIndex)
+                                    {
+                                        if (visibleClipIndices[visibleIndex] == skinnedItem->activeClipIndex)
+                                        {
+                                            clipCurrent = static_cast<int>(visibleIndex) + 1;
+                                            break;
+                                        }
+                                    }
+                                }
+
+                                std::vector<const char*> clipCItems;
+                                clipCItems.reserve(clipItems.size());
+                                for (auto& s : clipItems) clipCItems.push_back(s.c_str());
+
+                                if (ImGui::Combo("Clip", &clipCurrent, clipCItems.data(), static_cast<int>(clipCItems.size())))
+                                {
+                                    if (clipCurrent <= 0)
+                                    {
+                                        node.animationClip.clear();
+                                        skinnedItem->activeClipIndex = -1;
+                                        skinnedItem->debugForceBindPose = true;
+                                        skinnedItem->autoplay = false;
+                                        skinnedItem->animator.paused = true;
+                                        SyncAnimationControllerLegacyClip(
+                                            skinnedItem->controller,
+                                            skinnedItem->asset->mesh.skeleton,
+                                            skinnedItem->asset->clips,
+                                            skinnedItem->activeClipIndex,
+                                            false,
+                                            node.animationLoop,
+                                            node.animationPlayRate,
+                                            true,
+                                            true);
+                                        UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                    }
+                                    else
+                                    {
+                                        const int newClipIndex = visibleClipIndices[static_cast<std::size_t>(clipCurrent - 1)];
+                                        node.animationClip = skinnedItem->asset->clips[static_cast<std::size_t>(newClipIndex)].name;
+                                        skinnedItem->activeClipIndex = newClipIndex;
+                                        skinnedItem->debugForceBindPose = false;
+                                        skinnedItem->autoplay = node.animationAutoplay;
+                                        skinnedItem->animator.paused = !node.animationAutoplay;
+                                        SyncAnimationControllerLegacyClip(
+                                            skinnedItem->controller,
+                                            skinnedItem->asset->mesh.skeleton,
+                                            skinnedItem->asset->clips,
+                                            newClipIndex,
+                                            node.animationAutoplay,
+                                            node.animationLoop,
+                                            node.animationPlayRate,
+                                            !node.animationAutoplay,
+                                            false);
+                                        UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                    }
+                                }
+                            }
+
+                            bool autoplay = node.animationAutoplay;
+                            if (ImGui::Checkbox("Autoplay", &autoplay))
+                            {
+                                node.animationAutoplay = autoplay;
+                                skinnedItem->autoplay = autoplay;
+                                skinnedItem->controller.autoplay = autoplay;
+                                if (autoplay)
+                                {
+                                    skinnedItem->debugForceBindPose = false;
+                                    skinnedItem->controller.forceBindPose = false;
+                                    skinnedItem->animator.paused = false;
+                                    skinnedItem->controller.paused = false;
+                                }
+                                else
+                                {
+                                    skinnedItem->animator.paused = true;
+                                    skinnedItem->controller.paused = true;
+                                }
+                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                            }
+
+                            if (!usingController)
+                            {
+                                bool loop = node.animationLoop;
+                                if (ImGui::Checkbox("Loop", &loop))
+                                {
+                                    node.animationLoop = loop;
+                                    skinnedItem->animator.looping = loop;
+                                    skinnedItem->controller.looping = loop;
+                                    if (skinnedItem->animator.clip)
+                                    {
+                                        skinnedItem->animator.timeSeconds = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, loop);
+                                    }
+                                    UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                }
+
+                                float playRate = node.animationPlayRate;
+                                if (ImGui::SliderFloat("Play rate", &playRate, 0.0f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
+                                {
+                                    node.animationPlayRate = playRate;
+                                    skinnedItem->animator.playRate = playRate;
+                                    skinnedItem->controller.playRate = playRate;
+                                }
+                            }
+
+                            bool bindPose = skinnedItem->debugForceBindPose;
+                            if (ImGui::Checkbox("Bind pose preview", &bindPose))
+                            {
+                                skinnedItem->debugForceBindPose = bindPose;
+                                skinnedItem->controller.forceBindPose = bindPose;
+                                if (bindPose)
+                                {
+                                    skinnedItem->autoplay = false;
+                                    skinnedItem->controller.autoplay = false;
+                                    skinnedItem->animator.paused = true;
+                                    skinnedItem->controller.paused = true;
+                                    ResetAnimatorToBindPose(skinnedItem->animator, skinnedItem->asset->mesh.skeleton);
+                                }
+                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                            }
+
+                            if (ImGui::Button(skinnedItem->autoplay && !skinnedItem->animator.paused ? "Pause" : "Play"))
+                            {
+                                const bool willPlay = skinnedItem->animator.paused || !skinnedItem->autoplay;
+                                node.animationAutoplay = willPlay;
+                                skinnedItem->autoplay = willPlay;
+                                skinnedItem->controller.autoplay = willPlay;
+                                skinnedItem->animator.paused = !willPlay;
+                                skinnedItem->controller.paused = !willPlay;
+                                if (willPlay)
+                                {
+                                    skinnedItem->debugForceBindPose = false;
+                                    skinnedItem->controller.forceBindPose = false;
+                                }
+                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                            }
+                            ImGui::SameLine();
+                            if (ImGui::Button("Restart clip"))
+                            {
+                                skinnedItem->animator.timeSeconds = 0.0f;
+                                skinnedItem->debugForceBindPose = false;
+                                skinnedItem->controller.forceBindPose = false;
+                                UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                            }
+
+                            if (!usingController && skinnedItem->animator.clip != nullptr)
+                            {
+                                const float clipDurationSeconds = (skinnedItem->animator.clip->ticksPerSecond > 0.0f)
+                                    ? (skinnedItem->animator.clip->durationTicks / skinnedItem->animator.clip->ticksPerSecond)
+                                    : 0.0f;
+                                float scrubTime = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, skinnedItem->animator.looping);
+                                if (ImGui::SliderFloat("Time", &scrubTime, 0.0f, std::max(0.0f, clipDurationSeconds), "%.3f", ImGuiSliderFlags_AlwaysClamp))
+                                {
+                                    skinnedItem->animator.timeSeconds = scrubTime;
+                                    skinnedItem->animator.paused = true;
+                                    skinnedItem->controller.paused = true;
+                                    skinnedItem->autoplay = false;
+                                    skinnedItem->controller.autoplay = false;
+                                    node.animationAutoplay = false;
+                                    skinnedItem->debugForceBindPose = false;
+                                    skinnedItem->controller.forceBindPose = false;
+                                    UpdateAnimationControllerRuntime(skinnedItem->controller, skinnedItem->animator, 0.0f);
+                                }
+                                ImGui::TextDisabled("Duration: %.3f s", clipDurationSeconds);
+                            }
+                            else if (skinnedItem->animator.clip == nullptr)
+                            {
+                                ImGui::TextDisabled("No active clip. Skeleton stays in bind pose.");
+                            }
+
+                            ImGui::SeparatorText("Skinned Debug");
+                            ImGui::Checkbox("Draw selected skeleton", &scene.editorDrawSelectedSkinnedSkeleton);
+                            ImGui::Checkbox("Draw selected max bounds", &scene.editorDrawSelectedSkinnedBounds);
                         }
                         else
                         {
-                            skinnedItem->animator.paused = true;
+                            ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
                         }
-                        EvaluateAnimator(skinnedItem->animator);
-                    }
-
-                    bool loop = node.animationLoop;
-                    if (ImGui::Checkbox("Loop", &loop))
-                    {
-                        node.animationLoop = loop;
-                        skinnedItem->animator.looping = loop;
-                        if (skinnedItem->animator.clip)
-                        {
-                            skinnedItem->animator.timeSeconds = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, loop);
-                        }
-                        EvaluateAnimator(skinnedItem->animator);
-                    }
-
-                    float playRate = node.animationPlayRate;
-                    if (ImGui::SliderFloat("Play rate", &playRate, 0.0f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp))
-                    {
-                        node.animationPlayRate = playRate;
-                        skinnedItem->animator.playRate = playRate;
-                    }
-
-                    bool bindPose = skinnedItem->debugForceBindPose;
-                    if (ImGui::Checkbox("Bind pose preview", &bindPose))
-                    {
-                        skinnedItem->debugForceBindPose = bindPose;
-                        if (bindPose)
-                        {
-                            skinnedItem->autoplay = false;
-                            skinnedItem->animator.paused = true;
-                            ResetAnimatorToBindPose(skinnedItem->animator, skinnedItem->asset->mesh.skeleton);
-                        }
-                        EvaluateAnimator(skinnedItem->animator);
-                    }
-
-                    if (ImGui::Button(skinnedItem->autoplay && !skinnedItem->animator.paused ? "Pause" : "Play"))
-                    {
-                        const bool willPlay = skinnedItem->animator.paused || !skinnedItem->autoplay;
-                        node.animationAutoplay = willPlay;
-                        skinnedItem->autoplay = willPlay;
-                        skinnedItem->animator.paused = !willPlay;
-                        if (willPlay)
-                        {
-                            skinnedItem->debugForceBindPose = false;
-                        }
-                    }
-                    ImGui::SameLine();
-                    if (ImGui::Button("Restart clip"))
-                    {
-                        skinnedItem->animator.timeSeconds = 0.0f;
-                        skinnedItem->debugForceBindPose = false;
-                        EvaluateAnimator(skinnedItem->animator);
-                    }
-
-                    if (skinnedItem->animator.clip != nullptr)
-                    {
-                        const float clipDurationSeconds = (skinnedItem->animator.clip->ticksPerSecond > 0.0f)
-                            ? (skinnedItem->animator.clip->durationTicks / skinnedItem->animator.clip->ticksPerSecond)
-                            : 0.0f;
-                        float scrubTime = NormalizeAnimationTimeSeconds(*skinnedItem->animator.clip, skinnedItem->animator.timeSeconds, skinnedItem->animator.looping);
-                        if (ImGui::SliderFloat("Time", &scrubTime, 0.0f, std::max(0.0f, clipDurationSeconds), "%.3f", ImGuiSliderFlags_AlwaysClamp))
-                        {
-                            skinnedItem->animator.timeSeconds = scrubTime;
-                            skinnedItem->animator.paused = true;
-                            skinnedItem->autoplay = false;
-                            node.animationAutoplay = false;
-                            skinnedItem->debugForceBindPose = false;
-                            EvaluateAnimator(skinnedItem->animator);
-                        }
-                        ImGui::TextDisabled("Duration: %.3f s", clipDurationSeconds);
                     }
                     else
                     {
-                        ImGui::TextDisabled("No active clip. Skeleton stays in bind pose.");
+                        ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
                     }
-
-                    ImGui::SeparatorText("Skinned Debug");
-                    ImGui::Checkbox("Draw selected skeleton", &scene.editorDrawSelectedSkinnedSkeleton);
-                    ImGui::Checkbox("Draw selected max bounds", &scene.editorDrawSelectedSkinnedBounds);
-                }
-                else
-                {
-                    ImGui::TextDisabled("Runtime skinned draw is not instantiated.");
                 }
             }
         }
@@ -923,10 +1108,10 @@ namespace rendern::ui::level_ui_detail
                 rendern::LevelNode& dup = level.nodes[static_cast<std::size_t>(newIdx)];
                 dup.animation = node.animation;
                 dup.animationClip = node.animationClip;
+                dup.animationController = node.animationController;
                 dup.animationAutoplay = node.animationAutoplay;
                 dup.animationLoop = node.animationLoop;
                 dup.animationPlayRate = node.animationPlayRate;
-                levelInst.SetNodeSkinnedMesh(level, scene, assets, newIdx, node.skinnedMesh);
             }
             st.selectedNode = newIdx;
             st.selectedParticleEmitter = -1;
@@ -949,7 +1134,7 @@ namespace rendern::ui::level_ui_detail
         }
     }
 
-    static void DrawParticleEmitterSelectionInspector(
+    void DrawParticleEmitterSelectionInspector(
         rendern::LevelAsset& level,
         rendern::LevelInstance& levelInst,
         rendern::Scene& scene,
@@ -1094,7 +1279,7 @@ namespace rendern::ui::level_ui_detail
         }
     }
 
-    static void DrawLightSelectionInspector(rendern::Scene& scene, LevelEditorUIState& st)
+    void DrawLightSelectionInspector(rendern::Scene& scene, LevelEditorUIState& st)
     {
         scene.EditorSanitizeLightSelection(scene.lights.size());
         st.selectedNode = -1;
@@ -1106,7 +1291,7 @@ namespace rendern::ui::level_ui_detail
         rendern::ui::DrawLightInspectorDetails(scene);
     }
 
-    static void DrawSelectionInspector(
+    void DrawSelectionInspector(
         rendern::LevelAsset& level,
         rendern::LevelInstance& levelInst,
         AssetManager& assets,
@@ -1166,7 +1351,7 @@ namespace rendern::ui::level_ui_detail
         }
     }
 
-    static void DrawInspectorPanel(
+    void DrawInspectorPanel(
         rendern::LevelAsset& level,
         rendern::LevelInstance& levelInst,
         AssetManager& assets,

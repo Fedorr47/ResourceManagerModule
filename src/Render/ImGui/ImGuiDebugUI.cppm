@@ -27,6 +27,7 @@ import :asset_manager;
 import :assimp_scene_loader;
 import :animator;
 import :animation_clip;
+import :animation_controller;
 
 export namespace rendern::ui
 {
