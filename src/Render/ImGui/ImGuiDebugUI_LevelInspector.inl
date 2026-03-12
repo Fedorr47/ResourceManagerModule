@@ -735,7 +735,7 @@ namespace rendern::ui::level_ui_detail
                                         (recentNotifies.size() > 6)
                                         ? recentNotifies.size() - 6
                                         : 0;
-                                    for (std::size_t notifyIndex = firstNotify; notifyIndex < recentNotifies.size(); ++notifyIndex)
+                                    /*for (std::size_t notifyIndex = firstNotify; notifyIndex < recentNotifies.size(); ++notifyIndex)
                                     {
                                         const auto& notify = recentNotifies[notifyIndex];
                                         ImGui::BulletText(
@@ -744,7 +744,7 @@ namespace rendern::ui::level_ui_detail
                                             notify.id.c_str(),
                                             notify.stateName.c_str(),
                                             notify.normalizedTime);
-                                    }
+                                    }*/
                                 }
 
                                 const rendern::AnimationControllerAsset& controllerAsset = *skinnedItem->controller.stateMachineAsset;
