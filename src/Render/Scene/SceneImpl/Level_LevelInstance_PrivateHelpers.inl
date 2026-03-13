@@ -272,6 +272,7 @@ int MakeSkinnedDrawForNode_(const LevelAsset& asset, Scene& scene, int nodeIndex
 	stored.controller.rootMotionMode = node.animationInPlace
 		? AnimationRootMotionMode::InPlace
 		: AnimationRootMotionMode::Allow;
+	stored.controller.rootMotionBoneName = node.animationRootMotionBone;
 
 	if (!node.animationController.empty())
 	{

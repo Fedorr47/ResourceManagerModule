@@ -130,7 +130,11 @@ export namespace rendern
 
                     if (action != nullptr)
                     {
-                        if (outIntent.attackPressed)
+                        if (outIntent.jumpPressed)
+                        {
+                            GameplayRuntime::QueueActionRequest_(*action, GameplayActionKind::Jump);
+                        }
+                        else if (outIntent.attackPressed)
                         {
                             GameplayRuntime::QueueActionRequest_(*action, GameplayActionKind::LightAttack);
                         }
@@ -643,6 +647,13 @@ export namespace rendern
                 return GameplayActionKind::Interact;
             }
 
+            if (NotifyIdMatchesAnyAlias_(
+                notifyId,
+                { "JumpBegin", "JumpStart", "Jump" }))
+            {
+                return GameplayActionKind::Jump;
+            }
+
             return GameplayActionKind::None;
         }
 
@@ -720,7 +731,7 @@ export namespace rendern
 
             if (NotifyIdMatchesAnyAlias_(
                 event.id,
-                { "ActionBegin", "ActionStart", "AttackBegin", "AttackStart", "LightAttackBegin", "LightAttackStart", "InteractBegin", "InteractStart" }))
+                { "ActionBegin", "ActionStart", "AttackBegin", "AttackStart", "LightAttackBegin", "LightAttackStart", "InteractBegin", "InteractStart", "JumpBegin", "JumpStart" }))
             {
                 notifyState.actionStartedThisFrame = true;
                 if (action != nullptr)
@@ -743,7 +754,7 @@ export namespace rendern
 
             if (NotifyIdMatchesAnyAlias_(
                 event.id,
-                { "ActionEnd", "ActionFinish", "ActionFinished", "AttackEnd", "AttackFinish", "AttackFinished", "LightAttackEnd", "InteractEnd", "InteractFinish" }))
+                { "ActionEnd", "ActionFinish", "ActionFinished", "AttackEnd", "AttackFinish", "AttackFinished", "LightAttackEnd", "InteractEnd", "InteractFinish", "JumpEnd", "JumpFinish" }))
             {
                 notifyState.actionFinishedThisFrame = true;
                 if (action != nullptr)
@@ -936,8 +947,10 @@ export namespace rendern
                 const bool hasRequest = action->requested != GameplayActionKind::None;
                 const bool requestAttack = action->requested == GameplayActionKind::LightAttack;
                 const bool requestInteract = action->requested == GameplayActionKind::Interact;
+                const bool requestJump = action->requested == GameplayActionKind::Jump;
                 const bool isAttacking = action->busy && action->current == GameplayActionKind::LightAttack;
                 const bool isInteracting = action->busy && action->current == GameplayActionKind::Interact;
+                const bool isJumping = action->busy && action->current == GameplayActionKind::Jump;
 
                 SetAnimationBoolParameterByAliases_(
                     controller,
@@ -961,6 +974,11 @@ export namespace rendern
 
                 SetAnimationBoolParameterByAliases_(
                     controller,
+                    { "JumpRequested", "WantsJump", "RequestJump" },
+                    requestJump);
+
+                SetAnimationBoolParameterByAliases_(
+                    controller,
                     { "IsAttacking", "Attacking", "bIsAttacking" },
                     isAttacking);
 
@@ -968,6 +986,12 @@ export namespace rendern
                     controller,
                     { "IsInteracting", "Interacting", "bIsInteracting" },
                     isInteracting);
+
+                SetAnimationBoolParameterByAliases_(
+                    controller,
+                    { "IsJumping", "Jumping", "bIsJumping" },
+                    isJumping);
+
 
                 SetAnimationNumericParameterByAliases_(
                     controller,
@@ -992,6 +1016,11 @@ export namespace rendern
                         FireAnimationTriggerByAliases_(
                             controller,
                             { "Interact", "Use", "InteractTrigger", "UseTrigger" });
+                        break;
+                    case GameplayActionKind::Jump:
+                        FireAnimationTriggerByAliases_(
+                            controller,
+                            { "Jump", "JumpTrigger", "StartJump" });
                         break;
                     case GameplayActionKind::None:
                     default:

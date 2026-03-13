@@ -73,7 +73,8 @@ export namespace rendern
     {
         None = 0,
         LightAttack,
-        Interact
+        Interact,
+        Jump
     };
 
     struct GameplayActionComponent

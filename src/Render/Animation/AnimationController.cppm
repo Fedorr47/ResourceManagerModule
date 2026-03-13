@@ -6,6 +6,7 @@ module;
 #include <cstdint>
 #include <type_traits>
 #include <cstddef>
+#include <cctype>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -137,6 +138,7 @@ export namespace rendern
 	{
 		AnimationControllerMode mode{ AnimationControllerMode::LegacyClip };
 		AnimationRootMotionMode rootMotionMode{ AnimationRootMotionMode::InPlace };
+		std::string rootMotionBoneName;
 		const Skeleton* skeleton{ nullptr };
 		const std::vector<AnimationClip>* clips{ nullptr };
 		const std::vector<std::string>* clipSourceAssetIds{ nullptr };
@@ -636,6 +638,146 @@ export namespace rendern
 			}
 		}
 
+		[[nodiscard]] inline char ToLowerAscii(char c) noexcept
+		{
+			return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+		}
+
+		[[nodiscard]] inline bool ContainsInsensitive(std::string_view text, std::string_view needle) noexcept
+		{
+			if (needle.empty() || needle.size() > text.size())
+			{
+				return false;
+			}
+			for (std::size_t i = 0; i + needle.size() <= text.size(); ++i)
+			{
+				bool match = true;
+				for (std::size_t j = 0; j < needle.size(); ++j)
+				{
+					if (ToLowerAscii(text[i + j]) != ToLowerAscii(needle[j]))
+					{
+						match = false;
+						break;
+					}
+				}
+				if (match)
+				{
+					return true;
+				}
+			}
+			return false;
+		}
+
+		[[nodiscard]] inline int GetBoneDepth(const Skeleton& skeleton, std::size_t boneIndex) noexcept
+		{
+			int depth = 0;
+			int current = static_cast<int>(boneIndex);
+			while (current >= 0 && static_cast<std::size_t>(current) < skeleton.bones.size())
+			{
+				current = skeleton.bones[static_cast<std::size_t>(current)].parentIndex;
+				if (current >= 0)
+				{
+					++depth;
+				}
+			}
+			return depth;
+		}
+
+		[[nodiscard]] inline bool ChannelHasMeaningfulTranslation(
+			const Skeleton& skeleton,
+			const BoneAnimationChannel& channel) noexcept
+		{
+			if (channel.boneIndex < 0 || static_cast<std::size_t>(channel.boneIndex) >= skeleton.bones.size())
+			{
+				return false;
+			}
+
+			mathUtils::Vec3 bindTranslation{ 0.0f, 0.0f, 0.0f };
+			mathUtils::Vec4 bindRotation{ 0.0f, 0.0f, 0.0f, 1.0f };
+			mathUtils::Vec3 bindScale{ 1.0f, 1.0f, 1.0f };
+			DecomposeTRS(
+				skeleton.bones[static_cast<std::size_t>(channel.boneIndex)].bindLocalTransform,
+				bindTranslation,
+				bindRotation,
+				bindScale);
+
+			for (const TranslationKey& key : channel.translationKeys)
+			{
+				const mathUtils::Vec3 delta = key.value - bindTranslation;
+				if (std::fabs(delta.x) > 1e-4f ||
+					std::fabs(delta.y) > 1e-4f ||
+					std::fabs(delta.z) > 1e-4f)
+				{
+					return true;
+				}
+			}
+
+			return false;
+		}
+
+		[[nodiscard]] inline std::size_t ResolveInPlaceMotionBoneIndex(
+			const AnimationControllerRuntime& runtime,
+			const AnimatorState& animator) noexcept
+		{
+			const Skeleton& skeleton = *animator.skeleton;
+			const std::size_t rootIndex = static_cast<std::size_t>(skeleton.rootBoneIndex);
+			if (rootIndex >= skeleton.bones.size())
+			{
+				return skeleton.bones.empty() ? 0u : skeleton.bones.size() - 1u;
+			}
+
+			if (!runtime.rootMotionBoneName.empty())
+			{
+				if (const auto explicitBone = FindBoneIndex(skeleton, runtime.rootMotionBoneName))
+				{
+					return static_cast<std::size_t>(*explicitBone);
+				}
+			}
+
+			if (animator.clip == nullptr)
+			{
+				return rootIndex;
+			}
+
+			const auto scoreChannel = [&](const BoneAnimationChannel& channel) noexcept -> int
+				{
+					if (!ChannelHasMeaningfulTranslation(skeleton, channel))
+					{
+						return -1;
+					}
+
+					int score = 0;
+					const std::string_view boneName = channel.boneName;
+					if (ContainsInsensitive(boneName, "hips")) score += 200;
+					if (ContainsInsensitive(boneName, "pelvis")) score += 180;
+					if (ContainsInsensitive(boneName, "root")) score += 120;
+					if (ContainsInsensitive(boneName, "master")) score += 80;
+					if (ContainsInsensitive(boneName, "ctrl")) score -= 10;
+					const std::size_t boneIndex = static_cast<std::size_t>(channel.boneIndex);
+					score -= GetBoneDepth(skeleton, boneIndex) * 4;
+					return score;
+				};
+
+			int bestScore = -1;
+			std::size_t bestIndex = rootIndex;
+			for (const BoneAnimationChannel& channel : animator.clip->channels)
+			{
+				if (channel.boneIndex < 0 || static_cast<std::size_t>(channel.boneIndex) >= skeleton.bones.size())
+				{
+					continue;
+				}
+
+				const int score = scoreChannel(channel);
+				if (score > bestScore)
+				{
+					bestScore = score;
+					bestIndex = static_cast<std::size_t>(channel.boneIndex);
+				}
+			}
+
+			return bestIndex;
+		}
+
 		inline void ApplyRootMotionModeToAnimatorPose(AnimationControllerRuntime& runtime, AnimatorState& animator)
 		{
 			runtime.lastAppliedRootMotionDelta = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
@@ -647,8 +789,8 @@ export namespace rendern
 				return;
 			}
 
-			const std::size_t rootIndex = static_cast<std::size_t>(animator.skeleton->rootBoneIndex);
-			if (rootIndex >= animator.localPose.size() || rootIndex >= animator.skeleton->bones.size())
+			const std::size_t motionBoneIndex = ResolveInPlaceMotionBoneIndex(runtime, animator);
+			if (motionBoneIndex >= animator.localPose.size() || motionBoneIndex >= animator.skeleton->bones.size())
 			{
 				return;
 			}
@@ -657,14 +799,18 @@ export namespace rendern
 			mathUtils::Vec4 bindRotation{ 0.0f, 0.0f, 0.0f, 1.0f };
 			mathUtils::Vec3 bindScale{ 1.0f, 1.0f, 1.0f };
 			DecomposeTRS(
-				animator.skeleton->bones[rootIndex].bindLocalTransform,
+				animator.skeleton->bones[motionBoneIndex].bindLocalTransform,
 				bindTranslation,
 				bindRotation,
 				bindScale);
 
-			LocalBoneTransform& rootTransform = animator.localPose[rootIndex];
-			runtime.lastAppliedRootMotionDelta = rootTransform.translation - bindTranslation;
-			rootTransform.translation = bindTranslation;
+			LocalBoneTransform& motionTransform = animator.localPose[motionBoneIndex];
+			runtime.lastAppliedRootMotionDelta = mathUtils::Vec3(
+				motionTransform.translation.x - bindTranslation.x,
+				0.0f,
+				motionTransform.translation.z - bindTranslation.z);
+			motionTransform.translation.x = bindTranslation.x;
+			motionTransform.translation.z = bindTranslation.z;
 		}
 
 		inline void PushNotifyEvent(

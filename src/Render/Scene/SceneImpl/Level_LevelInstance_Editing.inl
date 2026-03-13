@@ -635,6 +635,7 @@ void SetNodeMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, int node
 	n.animation.clear();
 	n.animationController.clear();
 	n.animationClip.clear();
+	n.animationRootMotionBone.clear();
 	n.animationAutoplay = true;
 	n.animationLoop = true;
 	n.animationPlayRate = 1.0f;
@@ -661,6 +662,7 @@ void SetNodeModel(LevelAsset& asset, Scene& scene, AssetManager& assets, int nod
 	n.animation.clear();
 	n.animationController.clear();
 	n.animationClip.clear();
+	n.animationRootMotionBone.clear();
 	n.animationAutoplay = true;
 	n.animationLoop = true;
 	n.animationPlayRate = 1.0f;
@@ -710,12 +712,14 @@ void SetNodeSkinnedMesh(LevelAsset& asset, Scene& scene, AssetManager& assets, i
 		n.animation.clear();
 		n.animationController.clear();
 		n.animationClip.clear();
+		n.animationRootMotionBone.clear();
 	}
 	if (skinnedMeshId.empty())
 	{
 		n.animation.clear();
 		n.animationController.clear();
 		n.animationClip.clear();
+		n.animationRootMotionBone.clear();
 		n.animationAutoplay = true;
 		n.animationLoop = true;
 		n.animationPlayRate = 1.0f;

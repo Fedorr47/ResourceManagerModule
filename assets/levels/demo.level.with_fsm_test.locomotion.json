@@ -87,6 +87,36 @@
       "path": "animations/right strafe.fbx",
       "flipUVs": true,
       "debugName": "right strafe"
+    },
+    "idle": {
+      "path": "animations/idle.fbx",
+      "flipUVs": true,
+      "debugName": "idle"
+    },
+    "jump": {
+      "path": "animations/jump.fbx",
+      "flipUVs": true,
+      "debugName": "jump"
+    },
+    "left_turn": {
+      "path": "animations/left turn.fbx",
+      "flipUVs": true,
+      "debugName": "left turn"
+    },
+    "left_turn_90": {
+      "path": "animations/left turn 90.fbx",
+      "flipUVs": true,
+      "debugName": "left turn 90"
+    },
+    "right_turn": {
+      "path": "animations/right turn.fbx",
+      "flipUVs": true,
+      "debugName": "right turn"
+    },
+    "right_turn_90": {
+      "path": "animations/right turn 90.fbx",
+      "flipUVs": true,
+      "debugName": "right turn 90"
     }
   },
   "textures": {
@@ -868,6 +898,10 @@
         "Attack": {
           "type": "trigger",
           "default": false
+        },
+        "Jump": {
+          "type": "trigger",
+          "default": false
         }
       },
       "states": {
@@ -1004,6 +1038,92 @@
               "time": 0.9
             }
           ]
+        },
+        "IdleRelaxed": {
+          "clip": "",
+          "clipSourceAssetId": "idle",
+          "loop": true,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "idle_relaxed_enter",
+              "time": 0.0,
+              "fireOnEnter": true
+            }
+          ]
+        },
+        "Jump": {
+          "clip": "",
+          "clipSourceAssetId": "jump",
+          "loop": false,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "JumpBegin",
+              "time": 0.0,
+              "fireOnEnter": true
+            },
+            {
+              "id": "JumpLand",
+              "time": 0.72
+            },
+            {
+              "id": "JumpEnd",
+              "time": 0.92
+            }
+          ]
+        },
+        "TurnLeftStart": {
+          "clip": "",
+          "clipSourceAssetId": "left_turn",
+          "loop": false,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "turn_left_enter",
+              "time": 0.0,
+              "fireOnEnter": true
+            }
+          ]
+        },
+        "TurnLeft90": {
+          "clip": "",
+          "clipSourceAssetId": "left_turn_90",
+          "loop": false,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "turn_left_90_enter",
+              "time": 0.0,
+              "fireOnEnter": true
+            }
+          ]
+        },
+        "TurnRightStart": {
+          "clip": "",
+          "clipSourceAssetId": "right_turn",
+          "loop": false,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "turn_right_enter",
+              "time": 0.0,
+              "fireOnEnter": true
+            }
+          ]
+        },
+        "TurnRight90": {
+          "clip": "",
+          "clipSourceAssetId": "right_turn_90",
+          "loop": false,
+          "playRate": 1.0,
+          "notifies": [
+            {
+              "id": "turn_right_90_enter",
+              "time": 0.0,
+              "fireOnEnter": true
+            }
+          ]
         }
       },
       "transitions": [
@@ -1019,6 +1139,574 @@
           ]
         },
         {
+          "from": "IdleRelaxed",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "WalkForward",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "RunForward",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeLeftWalk",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeLeftRun",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeRightWalk",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeRightRun",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeftStart",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeft90",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnRightStart",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnRight90",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "WalkForward",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "RunForward",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeLeftWalk",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeLeftRun",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeRightWalk",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "StrafeRightRun",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeftStart",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeft90",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnRightStart",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "TurnRight90",
+          "to": "Jump",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Jump",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "RunForward",
+          "blendDuration": 0.12,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "WalkForward",
+          "blendDuration": 0.12,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "TurnLeft90",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "TurnLeftStart",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "TurnRight90",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "TurnRightStart",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "RunForward",
+          "blendDuration": 0.12,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "WalkForward",
+          "blendDuration": 0.12,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "TurnLeft90",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "TurnLeftStart",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "TurnRight90",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "TurnRightStart",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "IdleRelaxed",
+          "exitTime": 1.0,
+          "blendDuration": 0.2,
+          "conditions": [
+            {
+              "parameter": "IsMoving",
+              "op": "false"
+            },
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "IdleRelaxed",
+          "to": "Idle",
+          "exitTime": 1.0,
+          "blendDuration": 0.2,
+          "conditions": [
+            {
+              "parameter": "IsMoving",
+              "op": "false"
+            },
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Idle",
+          "to": "LightAttack",
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "Attack",
+              "op": "triggered"
+            }
+          ]
+        },
+        {
           "from": "WalkForward",
           "to": "LightAttack",
           "blendDuration": 0.08,
@@ -1109,110 +1797,6 @@
               "parameter": "MoveY",
               "op": ">",
               "value": 0.1
-            },
-            {
-              "parameter": "IsRunning",
-              "op": "false"
-            }
-          ]
-        },
-        {
-          "from": "Idle",
-          "to": "StrafeLeftRun",
-          "blendDuration": 0.12,
-          "conditions": [
-            {
-              "parameter": "MoveX",
-              "op": "<",
-              "value": -0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": "<=",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": ">=",
-              "value": -0.1
-            },
-            {
-              "parameter": "IsRunning",
-              "op": "true"
-            }
-          ]
-        },
-        {
-          "from": "Idle",
-          "to": "StrafeLeftWalk",
-          "blendDuration": 0.12,
-          "conditions": [
-            {
-              "parameter": "MoveX",
-              "op": "<",
-              "value": -0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": "<=",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": ">=",
-              "value": -0.1
-            },
-            {
-              "parameter": "IsRunning",
-              "op": "false"
-            }
-          ]
-        },
-        {
-          "from": "Idle",
-          "to": "StrafeRightRun",
-          "blendDuration": 0.12,
-          "conditions": [
-            {
-              "parameter": "MoveX",
-              "op": ">",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": "<=",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": ">=",
-              "value": -0.1
-            },
-            {
-              "parameter": "IsRunning",
-              "op": "true"
-            }
-          ]
-        },
-        {
-          "from": "Idle",
-          "to": "StrafeRightWalk",
-          "blendDuration": 0.12,
-          "conditions": [
-            {
-              "parameter": "MoveX",
-              "op": ">",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": "<=",
-              "value": 0.1
-            },
-            {
-              "parameter": "MoveY",
-              "op": ">=",
-              "value": -0.1
             },
             {
               "parameter": "IsRunning",
@@ -2093,6 +2677,416 @@
           "conditions": [
             {
               "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeftStart",
+          "to": "StrafeLeftWalk",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeftStart",
+          "to": "WalkForward",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeftStart",
+          "to": "IdleRelaxed",
+          "exitTime": 0.95,
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeft90",
+          "to": "StrafeLeftRun",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeft90",
+          "to": "RunForward",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "TurnLeft90",
+          "to": "IdleRelaxed",
+          "exitTime": 0.95,
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnRightStart",
+          "to": "StrafeRightWalk",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnRightStart",
+          "to": "WalkForward",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnRightStart",
+          "to": "IdleRelaxed",
+          "exitTime": 0.95,
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "TurnRight90",
+          "to": "StrafeRightRun",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "TurnRight90",
+          "to": "RunForward",
+          "exitTime": 0.82,
+          "blendDuration": 0.08,
+          "conditions": [
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "TurnRight90",
+          "to": "IdleRelaxed",
+          "exitTime": 0.95,
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "RunForward",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "WalkForward",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "StrafeLeftRun",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "StrafeLeftWalk",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveX",
+              "op": "<",
+              "value": -0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "StrafeRightRun",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "true"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "StrafeRightWalk",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "MoveX",
+              "op": ">",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": "<=",
+              "value": 0.1
+            },
+            {
+              "parameter": "MoveY",
+              "op": ">=",
+              "value": -0.1
+            },
+            {
+              "parameter": "IsRunning",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "Jump",
+          "to": "IdleRelaxed",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            }
+          ]
+        },
+        {
+          "from": "LightAttack",
+          "to": "IdleRelaxed",
+          "blendDuration": 0.1,
+          "conditions": [
+            {
+              "parameter": "ActionBusy",
+              "op": "false"
+            },
+            {
+              "parameter": "IsMoving",
               "op": "false"
             }
           ]

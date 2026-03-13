@@ -685,6 +685,7 @@ LevelAsset LoadLevelAssetFromJson(std::string_view levelRelativePath)
 			n.animationController = GetStringOpt(nd, "animationController");
 			n.animationClip = GetStringOpt(nd, "animationClip");
 			n.animationInPlace = GetBoolOpt(nd, "animationInPlace", true);
+			n.animationRootMotionBone = GetStringOpt(nd, "animationRootMotionBone");
 			n.animationAutoplay = GetBoolOpt(nd, "animationAutoplay", true);
 			n.animationLoop = GetBoolOpt(nd, "animationLoop", true);
 			n.animationPlayRate = GetFloatOpt(nd, "animationPlayRate", 1.0f);

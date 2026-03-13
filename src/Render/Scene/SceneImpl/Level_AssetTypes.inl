@@ -81,6 +81,7 @@ struct LevelNode
 	std::string animationController; // controller asset id
 	std::string animationClip;
 	bool animationInPlace{ true };
+	std::string animationRootMotionBone;
 	bool animationAutoplay{ true };
 	bool animationLoop{ true };
 	float animationPlayRate{ 1.0f };

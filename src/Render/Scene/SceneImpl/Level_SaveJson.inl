@@ -688,6 +688,11 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 		{
 			ss << ", \"animationInPlace\": false";
 		}
+		if (!n.animationRootMotionBone.empty())
+		{
+			ss << ", \"animationRootMotionBone\": ";
+			WriteJsonEscaped(ss, n.animationRootMotionBone);
+		}
 		if (!n.animationAutoplay)
 		{
 			ss << ", \"animationAutoplay\": false";
