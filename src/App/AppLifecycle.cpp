@@ -60,7 +60,7 @@ namespace appLifecycle
 #if defined(CORE_USE_DX12)
         appBootstrap::CreateDebugSwapChainIfNeeded(app.requestedBackend, *app.device, app.debugWindow, app.debugSwapChain);
 #endif
-        
+
         // Create async CPU job system (texture/mesh decoding etc.).
         // Must exist before TextureIO/MeshIO are constructed.
         app.jobSystem = std::make_unique<rendern::JobSystemThreadPool>(ComputeStreamingWorkerCount());
@@ -70,7 +70,7 @@ namespace appLifecycle
         app.meshIO = std::make_unique<rendern::MeshIO>(*app.device, *app.jobSystem, app.renderQueue);
         app.assets = std::make_unique<AssetManager>(*app.textureIO, *app.meshIO);
 
-        app.levelAsset = std::make_unique<rendern::LevelAsset>(rendern::LoadLevelAssetFromJson("levels/demo.level.with_fsm_test.json"));
+        app.levelAsset = std::make_unique<rendern::LevelAsset>(rendern::LoadLevelAssetFromJson("levels/demo.level.with_fsm_test.locomotion.json"));
 
         app.rendererSettings.drawLightGizmos = true;
         app.rendererSettings.loadingOverlayVisible = true;
@@ -180,7 +180,7 @@ namespace appLifecycle
             app.gameplayRuntime->BeginFrame();
             app.gameplayRuntime->PreAnimationUpdate(gameplayCtx);
         }
-        
+
         // Advance CPU animation before gameplay post-processing so freshly updated notify state is visible this frame.
         app.scene.UpdateSkinned(deltaSeconds);
 
