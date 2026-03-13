@@ -55,6 +55,7 @@ namespace appLifecycle
         rendern::Scene scene{};
         std::unique_ptr<rendern::BindlessTable> bindless;
         std::unique_ptr<rendern::LevelInstance> levelInstance;
+        std::unique_ptr<rendern::GameplayRuntime> gameplayRuntime;
         std::unique_ptr<rendern::CameraController> cameraController;
         appEditor::EditorViewportInteraction editorViewportInteraction{};
         GameTimer frameTimer{};

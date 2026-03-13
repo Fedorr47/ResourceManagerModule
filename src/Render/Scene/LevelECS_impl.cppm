@@ -11,18 +11,7 @@ import :level_ecs;
 
 namespace rendern
 {
-    namespace
-    {
-        [[nodiscard]] entt::entity ToEnTT(const EntityHandle entity) noexcept
-        {
-            return static_cast<entt::entity>(entity);
-        }
-
-        [[nodiscard]] EntityHandle FromEnTT(const entt::entity entity) noexcept
-        {
-            return static_cast<EntityHandle>(entt::to_integral(entity));
-        }
-    }
+	using namespace EnTT_helpers;
 
     struct LevelWorld::Impl
     {

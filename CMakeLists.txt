@@ -306,6 +306,12 @@ set(COMMON_MODULES
   Input/ControllerBase.cppm
   Input/Win32Input.cppm
 
+  ECS/EnTTHelpers.cppm
+
+  Gameplay/Gameplay.cppm
+  Gameplay/Gameplay_impl.cppm
+  Gameplay/GameplayRuntime.cppm
+
   Timer/GameTimer.ixx
   Timer/GameTimer.cppm
 

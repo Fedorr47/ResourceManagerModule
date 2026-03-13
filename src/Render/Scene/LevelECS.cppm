@@ -13,11 +13,11 @@ export module core:level_ecs;
 
 import :scene;
 import :math_utils;
+import :EnTTHelpers;
 
 export namespace rendern
 {
-    using EntityHandle = std::uint32_t;
-    inline constexpr EntityHandle kNullEntity = (std::numeric_limits<EntityHandle>::max)();
+	using namespace EnTT_helpers;
 
     struct LevelNodeId
     {

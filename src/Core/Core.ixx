@@ -17,6 +17,9 @@ export import :skinned_mesh;
 export import :obj_loader;
 export import :math_utils;
 export import :geometry;
+export import :EnTTHelpers;
+export import :gameplay;
+export import :gameplay_runtime;
 
 #if defined(CORE_USE_DX12)
 export import :render_dx12;

@@ -93,6 +93,9 @@ namespace appLifecycle
             *app.levelAsset,
             mathUtils::Mat4(1.0f)));
 
+        app.gameplayRuntime = std::make_unique<rendern::GameplayRuntime>();
+        app.gameplayRuntime->Initialize(*app.levelAsset, *app.levelInstance, app.scene);
+
         app.cameraController = std::make_unique<rendern::CameraController>();
         app.cameraController->ResetFromCamera(app.scene.camera);
 
@@ -165,9 +168,33 @@ namespace appLifecycle
         appEditor::UpdateViewportGizmoHover(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, app.scene, app.win32Input.State());
         appEditor::HandleViewportMouseInteraction(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, *app.levelAsset, *app.levelInstance, app.scene, app.win32Input.State());
 
+        if (app.gameplayRuntime)
+        {
+            rendern::GameplayUpdateContext gameplayCtx{};
+            gameplayCtx.deltaSeconds = deltaSeconds;
+            gameplayCtx.input = &app.win32Input.State();
+            gameplayCtx.levelAsset = app.levelAsset.get();
+            gameplayCtx.levelInstance = app.levelInstance.get();
+            gameplayCtx.scene = &app.scene;
+
+            app.gameplayRuntime->BeginFrame();
+            app.gameplayRuntime->PreAnimationUpdate(gameplayCtx);
+        }
+        
         // Advance CPU animation/particle simulation before UI/rendering so freshly updated state is visible this frame.
         app.scene.UpdateSkinned(deltaSeconds);
         app.scene.UpdateParticles(deltaSeconds);
+
+        if (app.gameplayRuntime)
+        {
+            rendern::GameplayUpdateContext gameplayCtx{};
+            gameplayCtx.deltaSeconds = deltaSeconds;
+            gameplayCtx.input = &app.win32Input.State();
+            gameplayCtx.levelAsset = app.levelAsset.get();
+            gameplayCtx.levelInstance = app.levelInstance.get();
+            gameplayCtx.scene = &app.scene;
+            app.gameplayRuntime->PostAnimationUpdate(gameplayCtx);
+        }
 
         const void* imguiDrawData = appUi::BuildImGuiFrameIfEnabled(
             *app.device,
@@ -217,6 +244,7 @@ namespace appLifecycle
 #endif
         app.swapChain.reset();
         app.renderer.reset();
+        app.gameplayRuntime.reset();
         app.levelInstance.reset();
         app.bindless.reset();
         app.levelAsset.reset();
