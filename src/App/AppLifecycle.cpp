@@ -70,7 +70,7 @@ namespace appLifecycle
         app.meshIO = std::make_unique<rendern::MeshIO>(*app.device, *app.jobSystem, app.renderQueue);
         app.assets = std::make_unique<AssetManager>(*app.textureIO, *app.meshIO);
 
-        app.levelAsset = std::make_unique<rendern::LevelAsset>(rendern::LoadLevelAssetFromJson("levels/demo.level.with_fsm_test.locomotion.json"));
+        app.levelAsset = std::make_unique<rendern::LevelAsset>(rendern::LoadLevelAssetFromJson("levels/demo.level.with_fsm_test.locomotion.phaseA.json"));
 
         app.rendererSettings.drawLightGizmos = true;
         app.rendererSettings.loadingOverlayVisible = true;

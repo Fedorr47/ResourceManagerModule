@@ -345,6 +345,17 @@ namespace
 		return def;
 	}
 
+	int GetIntOpt(const JsonObject& o, std::string_view key, int def)
+	{
+		if (auto* v = TryGet(o, key))
+		{
+			if (v->IsNumber()) return static_cast<int>(v->AsNumber());
+			throw std::runtime_error(std::string("Level JSON: expected number at '") + std::string(key) + "'");
+		}
+		return def;
+	}
+
+
 	std::vector<float> ReadFloatArray(const JsonValue& v, std::size_t expected, std::string_view what)
 	{
 		if (!v.IsArray())

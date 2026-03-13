@@ -18,6 +18,7 @@ import :level;
 import :scene;
 import :animation_controller;
 import :math_utils;
+import :gameplay_animation_bridge;
 
 export namespace rendern
 {
@@ -181,7 +182,7 @@ export namespace rendern
             {
                 if (GameplayAnimationNotifyStateComponent* notifyState = world_.TryGetAnimationNotifyState(entity))
                 {
-                    ResetAnimationNotifyStateFrame_(*notifyState);
+                    ResetGameplayAnimationNotifyFrame(*notifyState);
                 }
             }
         }
@@ -236,7 +237,7 @@ export namespace rendern
                         .event = event
                         });
 
-                    ApplyAnimationNotifyToGameplay_(*notifyState, action, event);
+                    ApplyAnimationNotifyToGameplayState(*notifyState, action, event);
                 }
             }
         }
@@ -499,219 +500,6 @@ export namespace rendern
             outForward = forward;
         }
 
-        [[nodiscard]] static float NormalizeYawDegrees_(float yawDegrees) noexcept
-        {
-            while (yawDegrees > 180.0f)
-            {
-                yawDegrees -= 360.0f;
-            }
-            while (yawDegrees <= -180.0f)
-            {
-                yawDegrees += 360.0f;
-            }
-            return yawDegrees;
-        }
-
-        [[nodiscard]] static float ShortestYawDeltaDegrees_(const float fromDegrees, const float toDegrees) noexcept
-        {
-            return NormalizeYawDegrees_(toDegrees - fromDegrees);
-        }
-
-        [[nodiscard]] static float AdvanceYawTowards_(
-            const float currentDegrees,
-            const float targetDegrees,
-            const float maxStepDegrees) noexcept
-        {
-            const float deltaDegrees = ShortestYawDeltaDegrees_(currentDegrees, targetDegrees);
-            if (std::fabs(deltaDegrees) <= maxStepDegrees)
-            {
-                return NormalizeYawDegrees_(targetDegrees);
-            }
-
-            return NormalizeYawDegrees_(
-                currentDegrees + (deltaDegrees > 0.0f ? maxStepDegrees : -maxStepDegrees));
-        }
-
-        [[nodiscard]] static float YawDegreesFromDirection_(const mathUtils::Vec3& direction) noexcept
-        {
-            if (mathUtils::Length(direction) <= 1e-6f)
-            {
-                return 0.0f;
-            }
-            return NormalizeYawDegrees_(mathUtils::RadToDeg(std::atan2(direction.x, direction.z)));
-        }
-
-        [[nodiscard]] static bool IsIdleLikeAnimationState_(const std::string_view stateName) noexcept
-        {
-            return stateName == "Idle" || stateName == "IdleRelaxed";
-        }
-
-        [[nodiscard]] static bool IsTurnInPlaceAnimationState_(const std::string_view stateName) noexcept
-        {
-            return stateName == "TurnLeftStart" ||
-                stateName == "TurnLeft90" ||
-                stateName == "TurnRightStart" ||
-                stateName == "TurnRight90";
-        }
-
-        [[nodiscard]] static std::string CanonicalizeAnimationParameterName_(std::string_view name)
-        {
-            std::string canonical;
-            canonical.reserve(name.size());
-            for (const unsigned char ch : name)
-            {
-                if (std::isalnum(ch))
-                {
-                    canonical.push_back(static_cast<char>(std::tolower(ch)));
-                }
-            }
-            return canonical;
-        }
-
-        [[nodiscard]] static bool AnimationParameterNameMatchesAnyAlias_(
-            const std::string_view candidate,
-            const std::initializer_list<std::string_view> aliases)
-        {
-            const std::string canonicalCandidate = CanonicalizeAnimationParameterName_(candidate);
-            for (const std::string_view alias : aliases)
-            {
-                if (canonicalCandidate == CanonicalizeAnimationParameterName_(alias))
-                {
-                    return true;
-                }
-            }
-            return false;
-        }
-
-        [[nodiscard]] static const AnimationParameterDesc* FindAnimationParameterByAliases_(
-            const AnimationControllerAsset& asset,
-            const AnimationParameterType expectedType,
-            const std::initializer_list<std::string_view> aliases)
-        {
-            for (const AnimationParameterDesc& desc : asset.parameters)
-            {
-                if (desc.defaultValue.type != expectedType)
-                {
-                    continue;
-                }
-                if (AnimationParameterNameMatchesAnyAlias_(desc.name, aliases))
-                {
-                    return &desc;
-                }
-            }
-            return nullptr;
-        }
-
-        static void SetAnimationFloatParameterByAliases_(
-            AnimationControllerRuntime& controller,
-            const std::initializer_list<std::string_view> aliases,
-            const float value)
-        {
-            if (controller.stateMachineAsset == nullptr)
-            {
-                return;
-            }
-
-            if (const AnimationParameterDesc* desc = FindAnimationParameterByAliases_(
-                *controller.stateMachineAsset,
-                AnimationParameterType::Float,
-                aliases))
-            {
-                SetAnimationParameter(controller.parameters, desc->name, value);
-            }
-        }
-
-        static void SetAnimationBoolParameterByAliases_(
-            AnimationControllerRuntime& controller,
-            const std::initializer_list<std::string_view> aliases,
-            const bool value)
-        {
-            if (controller.stateMachineAsset == nullptr)
-            {
-                return;
-            }
-
-            if (const AnimationParameterDesc* desc = FindAnimationParameterByAliases_(
-                *controller.stateMachineAsset,
-                AnimationParameterType::Bool,
-                aliases))
-            {
-                SetAnimationParameter(controller.parameters, desc->name, value);
-            }
-        }
-
-        static void SetAnimationIntParameterByAliases_(
-            AnimationControllerRuntime& controller,
-            const std::initializer_list<std::string_view> aliases,
-            const int value)
-        {
-            if (controller.stateMachineAsset == nullptr)
-            {
-                return;
-            }
-
-            if (const AnimationParameterDesc* desc = FindAnimationParameterByAliases_(
-                *controller.stateMachineAsset,
-                AnimationParameterType::Int,
-                aliases))
-            {
-                SetAnimationParameter(controller.parameters, desc->name, value);
-            }
-        }
-
-        static void SetAnimationNumericParameterByAliases_(
-            AnimationControllerRuntime& controller,
-            const std::initializer_list<std::string_view> aliases,
-            const int value)
-        {
-            SetAnimationIntParameterByAliases_(controller, aliases, value);
-            SetAnimationFloatParameterByAliases_(controller, aliases, static_cast<float>(value));
-        }
-
-        static void FireAnimationTriggerByAliases_(
-            AnimationControllerRuntime& controller,
-            const std::initializer_list<std::string_view> aliases)
-        {
-            if (controller.stateMachineAsset == nullptr)
-            {
-                return;
-            }
-
-            if (const AnimationParameterDesc* desc = FindAnimationParameterByAliases_(
-                *controller.stateMachineAsset,
-                AnimationParameterType::Trigger,
-                aliases))
-            {
-                FireAnimationTrigger(controller.parameters, desc->name);
-            }
-        }
-
-        [[nodiscard]] static GameplayActionKind InferGameplayActionKindFromNotifyId_(const std::string_view notifyId) noexcept
-        {
-            if (NotifyIdMatchesAnyAlias_(
-                notifyId,
-                { "LightAttackBegin", "LightAttackStart", "AttackBegin", "AttackStart", "Attack" }))
-            {
-                return GameplayActionKind::LightAttack;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                notifyId,
-                { "InteractBegin", "InteractStart", "UseBegin", "UseStart", "Use" }))
-            {
-                return GameplayActionKind::Interact;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                notifyId,
-                { "JumpBegin", "JumpStart", "Jump" }))
-            {
-                return GameplayActionKind::Jump;
-            }
-
-            return GameplayActionKind::None;
-        }
-
         static void QueueActionRequest_(GameplayActionComponent& action, const GameplayActionKind kind) noexcept
         {
             if (kind == GameplayActionKind::None || action.busy)
@@ -726,100 +514,6 @@ export namespace rendern
 
             action.requested = kind;
             action.requestDispatched = false;
-        }
-
-        [[nodiscard]] static bool NotifyIdMatchesAnyAlias_(
-            const std::string_view candidate,
-            const std::initializer_list<std::string_view> aliases)
-        {
-            return AnimationParameterNameMatchesAnyAlias_(candidate, aliases);
-        }
-
-        static void ResetAnimationNotifyStateFrame_(GameplayAnimationNotifyStateComponent& notifyState)
-        {
-            notifyState.anyThisFrame = false;
-            notifyState.footstepThisFrame = false;
-            notifyState.interactionPointThisFrame = false;
-            notifyState.actionStartedThisFrame = false;
-            notifyState.actionFinishedThisFrame = false;
-            notifyState.hitWindowOpenedThisFrame = false;
-            notifyState.hitWindowClosedThisFrame = false;
-        }
-
-        static void ApplyAnimationNotifyToGameplay_(
-            GameplayAnimationNotifyStateComponent& notifyState,
-            GameplayActionComponent* action,
-            const AnimationNotifyEvent& event)
-        {
-            notifyState.anyThisFrame = true;
-            notifyState.lastSequence = event.sequence;
-            notifyState.lastNormalizedTime = event.normalizedTime;
-            notifyState.lastNotifyId = event.id;
-            notifyState.lastStateName = event.stateName;
-            notifyState.lastClipName = event.clipName;
-
-            if (NotifyIdMatchesAnyAlias_(event.id, { "Footstep", "Step", "FootStep" }))
-            {
-                notifyState.footstepThisFrame = true;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(event.id, { "Interact", "Interaction", "InteractionPoint", "UsePoint" }))
-            {
-                notifyState.interactionPointThisFrame = true;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                event.id,
-                { "HitWindowBegin", "HitWindowStart", "AttackWindowBegin", "AttackWindowStart", "HitEnable", "EnableHit", "DamageWindowBegin", "DamageOn" }))
-            {
-                notifyState.hitWindowOpenedThisFrame = true;
-                notifyState.hitWindowActive = true;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                event.id,
-                { "HitWindowEnd", "HitWindowStop", "AttackWindowEnd", "AttackWindowStop", "HitDisable", "DisableHit", "DamageWindowEnd", "DamageOff" }))
-            {
-                notifyState.hitWindowClosedThisFrame = true;
-                notifyState.hitWindowActive = false;
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                event.id,
-                { "ActionBegin", "ActionStart", "AttackBegin", "AttackStart", "LightAttackBegin", "LightAttackStart", "InteractBegin", "InteractStart", "JumpBegin", "JumpStart" }))
-            {
-                notifyState.actionStartedThisFrame = true;
-                if (action != nullptr)
-                {
-                    action->busy = true;
-                    GameplayActionKind startedKind = action->requested;
-                    if (startedKind == GameplayActionKind::None)
-                    {
-                        startedKind = InferGameplayActionKindFromNotifyId_(event.id);
-                    }
-                    if (startedKind != GameplayActionKind::None)
-                    {
-                        action->current = startedKind;
-                    }
-
-                    action->requested = GameplayActionKind::None;
-                    action->requestDispatched = false;
-                }
-            }
-
-            if (NotifyIdMatchesAnyAlias_(
-                event.id,
-                { "ActionEnd", "ActionFinish", "ActionFinished", "AttackEnd", "AttackFinish", "AttackFinished", "LightAttackEnd", "InteractEnd", "InteractFinish", "JumpEnd", "JumpFinish" }))
-            {
-                notifyState.actionFinishedThisFrame = true;
-                if (action != nullptr)
-                {
-                    action->busy = false;
-                    action->current = GameplayActionKind::None;
-                    action->requested = GameplayActionKind::None;
-                    action->requestDispatched = false;
-                }
-            }
         }
 
         void UpdateIntentSources_(const GameplayUpdateContext& ctx)
@@ -848,38 +542,12 @@ export namespace rendern
             }
         }
 
-        [[nodiscard]] std::string_view GetCurrentAnimationStateName_(const GameplayUpdateContext& ctx, const EntityHandle entity) const noexcept
-        {
-            if (ctx.levelInstance == nullptr || ctx.scene == nullptr)
-            {
-                return {};
-            }
-
-            const GameplayAnimationLinkComponent* animLink = world_.TryGetAnimationLink(entity);
-            if (animLink == nullptr || animLink->skinnedDrawIndex < 0)
-            {
-                return {};
-            }
-
-            const SkinnedDrawItem* skinnedItem = ctx.levelInstance->GetSkinnedDrawItem(*ctx.scene, animLink->skinnedDrawIndex);
-            if (skinnedItem == nullptr || skinnedItem->controller.stateMachineAsset == nullptr)
-            {
-                return {};
-            }
-
-            return skinnedItem->controller.currentStateName;
-        }
-
         void UpdateMotorEntities_(const GameplayUpdateContext& ctx)
         {
             if (ctx.scene == nullptr)
             {
                 return;
             }
-
-            constexpr float kForwardFacingTurnSpeedDegPerSecond = 540.0f;
-            constexpr float kTurnInPlaceSpeedDegPerSecond = 180.0f;
-            constexpr float kTurnInPlaceSpeedThreshold = 0.05f;
 
             mathUtils::Vec3 basisRight(1.0f, 0.0f, 0.0f);
             mathUtils::Vec3 basisForward(0.0f, 0.0f, 1.0f);
@@ -896,15 +564,6 @@ export namespace rendern
                     continue;
                 }
 
-                const std::string_view currentAnimationState = GetCurrentAnimationStateName_(ctx, entity);
-                const bool isTurnInPlaceState = IsTurnInPlaceAnimationState_(currentAnimationState);
-                const bool wantsTurnFromIdle =
-                    !isTurnInPlaceState &&
-                    IsIdleLikeAnimationState_(currentAnimationState) &&
-                    mathUtils::Length(motor->velocity) <= kTurnInPlaceSpeedThreshold &&
-                    std::fabs(intent->moveX) > 0.1f &&
-                    std::fabs(intent->moveY) <= 0.1f;
-
                 mathUtils::Vec3 desiredMoveWorld =
                     basisRight * intent->moveX +
                     basisForward * intent->moveY;
@@ -914,11 +573,6 @@ export namespace rendern
                     desiredMoveWorld = mathUtils::Normalize(desiredMoveWorld);
                 }
                 else
-                {
-                    desiredMoveWorld = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
-                }
-
-                if (wantsTurnFromIdle || isTurnInPlaceState)
                 {
                     desiredMoveWorld = mathUtils::Vec3(0.0f, 0.0f, 0.0f);
                 }
@@ -946,29 +600,12 @@ export namespace rendern
 
                 transform->position = transform->position + motor->velocity * ctx.deltaSeconds;
 
-                if (wantsTurnFromIdle || isTurnInPlaceState)
-                {
-                    const float turnDirection =
-                        (intent->moveX > 0.1f) ? 1.0f :
-                        ((intent->moveX < -0.1f) ? -1.0f : 0.0f);
-                    transform->rotationDegrees.y = NormalizeYawDegrees_(
-                        transform->rotationDegrees.y + turnDirection * kTurnInPlaceSpeedDegPerSecond * ctx.deltaSeconds);
-                }
-                else if (intent->moveY > 0.1f && mathUtils::Length(desiredMoveWorld) > 1e-6f)
-                {
-                    const float targetYawDegrees = YawDegreesFromDirection_(desiredMoveWorld);
-                    transform->rotationDegrees.y = AdvanceYawTowards_(
-                        transform->rotationDegrees.y,
-                        targetYawDegrees,
-                        kForwardFacingTurnSpeedDegPerSecond * std::max(ctx.deltaSeconds, 0.0f));
-                }
-                else
-                {
-                    transform->rotationDegrees.y = NormalizeYawDegrees_(transform->rotationDegrees.y);
-                }
-
                 const float planarSpeed = mathUtils::Length(motor->velocity);
                 const bool isMoving = planarSpeed > 1e-4f;
+                if (isMoving)
+                {
+                    transform->rotationDegrees.y = mathUtils::RadToDeg(std::atan2(motor->velocity.x, motor->velocity.z));
+                }
 
                 if (locomotion != nullptr)
                 {
@@ -1004,32 +641,7 @@ export namespace rendern
                     continue;
                 }
 
-                AnimationControllerRuntime& controller = skinnedItem->controller;
-
-                SetAnimationFloatParameterByAliases_(
-                    controller,
-                    { "MoveX", "InputX", "LocomotionX", "DirectionX", "Strafe", "StrafeX" },
-                    locomotion->moveX);
-
-                SetAnimationFloatParameterByAliases_(
-                    controller,
-                    { "MoveY", "InputY", "LocomotionY", "DirectionY", "Forward", "ForwardY" },
-                    locomotion->moveY);
-
-                SetAnimationFloatParameterByAliases_(
-                    controller,
-                    { "Speed", "MoveSpeed", "PlanarSpeed", "GroundSpeed", "LocomotionSpeed" },
-                    locomotion->planarSpeed);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "IsMoving", "Moving", "bIsMoving" },
-                    locomotion->isMoving);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "IsRunning", "Running", "bIsRunning" },
-                    locomotion->isRunning);
+                WriteGameplayLocomotionAnimationParameters(skinnedItem->controller, *locomotion);
             }
         }
 
@@ -1055,92 +667,7 @@ export namespace rendern
                     continue;
                 }
 
-                AnimationControllerRuntime& controller = skinnedItem->controller;
-                const bool hasRequest = action->requested != GameplayActionKind::None;
-                const bool requestAttack = action->requested == GameplayActionKind::LightAttack;
-                const bool requestInteract = action->requested == GameplayActionKind::Interact;
-                const bool requestJump = action->requested == GameplayActionKind::Jump;
-                const bool isAttacking = action->busy && action->current == GameplayActionKind::LightAttack;
-                const bool isInteracting = action->busy && action->current == GameplayActionKind::Interact;
-                const bool isJumping = action->busy && action->current == GameplayActionKind::Jump;
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "ActionRequested", "HasActionRequest", "WantsAction", "bActionRequested" },
-                    hasRequest);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "ActionBusy", "Busy", "IsBusy", "bBusy" },
-                    action->busy);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "LightAttackRequested", "AttackRequested", "WantsAttack", "RequestAttack" },
-                    requestAttack);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "InteractRequested", "UseRequested", "WantsInteract", "RequestInteract" },
-                    requestInteract);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "JumpRequested", "WantsJump", "RequestJump" },
-                    requestJump);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "IsAttacking", "Attacking", "bIsAttacking" },
-                    isAttacking);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "IsInteracting", "Interacting", "bIsInteracting" },
-                    isInteracting);
-
-                SetAnimationBoolParameterByAliases_(
-                    controller,
-                    { "IsJumping", "Jumping", "bIsJumping" },
-                    isJumping);
-
-
-                SetAnimationNumericParameterByAliases_(
-                    controller,
-                    { "RequestedAction", "RequestedActionKind", "ActionRequestKind", "ActionKindRequested" },
-                    static_cast<int>(action->requested));
-
-                SetAnimationNumericParameterByAliases_(
-                    controller,
-                    { "CurrentAction", "CurrentActionKind", "ActiveAction", "ActionKind" },
-                    static_cast<int>(action->current));
-
-                if (!action->requestDispatched && hasRequest)
-                {
-                    switch (action->requested)
-                    {
-                    case GameplayActionKind::LightAttack:
-                        FireAnimationTriggerByAliases_(
-                            controller,
-                            { "LightAttack", "Attack", "LightAttackTrigger", "AttackTrigger" });
-                        break;
-                    case GameplayActionKind::Interact:
-                        FireAnimationTriggerByAliases_(
-                            controller,
-                            { "Interact", "Use", "InteractTrigger", "UseTrigger" });
-                        break;
-                    case GameplayActionKind::Jump:
-                        FireAnimationTriggerByAliases_(
-                            controller,
-                            { "Jump", "JumpTrigger", "StartJump" });
-                        break;
-                    case GameplayActionKind::None:
-                    default:
-                        break;
-                    }
-
-                    action->requestDispatched = true;
-                }
+                WriteGameplayActionAnimationParameters(skinnedItem->controller, *action);
             }
         }
 

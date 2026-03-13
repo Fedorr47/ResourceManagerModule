@@ -56,7 +56,15 @@ export namespace rendern
 #include "SceneImpl/Level_LevelInstance_State.inl"
 	};
 
+	[[nodiscard]] LevelAsset LoadLevelAssetFromJson(std::string_view levelRelativePath);
+	[[nodiscard]] LevelInstance InstantiateLevel(Scene& scene, AssetManager& assets, BindlessTable& bindless, const LevelAsset& asset, const mathUtils::Mat4& root);
+	void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAsset& level);
+}
+
+namespace rendern
+{
 #include "SceneImpl/Level_LoadJson.inl"
 #include "SceneImpl/Level_InstantiateRuntime.inl"
 #include "SceneImpl/Level_SaveJson.inl"
 }
+

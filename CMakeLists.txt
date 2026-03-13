@@ -310,6 +310,7 @@ set(COMMON_MODULES
 
   Gameplay/Gameplay.cppm
   Gameplay/Gameplay_impl.cppm
+  Gameplay/GameplayAnimationBridge.cppm
   Gameplay/GameplayRuntime.cppm
 
   Timer/GameTimer.ixx

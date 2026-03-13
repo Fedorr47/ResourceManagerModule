@@ -12,6 +12,7 @@ module;
 #include <unordered_map>
 #include <vector>
 #include <utility>
+#include <limits>
 
 export module core:animation_controller;
 
@@ -83,6 +84,7 @@ export namespace rendern
 		std::string blendParameter;
 		std::vector<AnimationBlend1DPoint> blend1D;
 		std::vector<AnimationNotifyDesc> notifies;
+		std::vector<std::string> tags;
 		bool looping{ true };
 		float playRate{ 1.0f };
 	};
@@ -101,6 +103,7 @@ export namespace rendern
 		bool hasExitTime{ false };
 		float exitTimeNormalized{ 1.0f };
 		float blendDurationSeconds{ 0.15f };
+		int priority{ 0 };
 		std::vector<AnimationConditionDesc> conditions;
 	};
 
@@ -1153,6 +1156,24 @@ export namespace rendern
 		return detail::FindStateIndexByName(asset, stateName);
 	}
 
+	[[nodiscard]] inline const AnimationStateDesc* FindAnimationControllerState(const AnimationControllerAsset& asset, std::string_view stateName) noexcept
+	{
+		const int index = detail::FindStateIndexByName(asset, stateName);
+		return (index >= 0) ? &asset.states[static_cast<std::size_t>(index)] : nullptr;
+	}
+
+	[[nodiscard]] inline bool AnimationStateHasTag(const AnimationStateDesc& state, std::string_view tag) noexcept
+	{
+		for (const std::string& candidate : state.tags)
+		{
+			if (candidate == tag)
+			{
+				return true;
+			}
+		}
+		return false;
+	}
+
 	inline void ResetAnimationControllerRuntime(AnimationControllerRuntime& runtime)
 	{
 		runtime = {};
@@ -1319,6 +1340,7 @@ export namespace rendern
 
 			int targetStateIndex = -1;
 			const AnimationTransitionDesc* matchedTransition = nullptr;
+			int matchedTransitionPriority = std::numeric_limits<int>::min();
 
 			if (!runtime.requestedStateName.empty())
 			{
@@ -1351,9 +1373,17 @@ export namespace rendern
 					{
 						continue;
 					}
-					targetStateIndex = detail::FindStateIndexByName(*runtime.stateMachineAsset, transition.toState);
-					matchedTransition = &transition;
-					break;
+					const int candidateStateIndex = detail::FindStateIndexByName(*runtime.stateMachineAsset, transition.toState);
+					if (candidateStateIndex < 0)
+					{
+						continue;
+					}
+					if (matchedTransition == nullptr || transition.priority > matchedTransitionPriority)
+					{
+						targetStateIndex = candidateStateIndex;
+						matchedTransition = &transition;
+						matchedTransitionPriority = transition.priority;
+					}
 				}
 			}
 

@@ -100,6 +100,7 @@ struct LevelAsset
 	std::unordered_map<std::string, LevelSkinnedMeshDef> skinnedMeshes;
 	std::unordered_map<std::string, LevelAnimationDef> animations;
 	std::unordered_map<std::string, AnimationControllerAsset> animationControllers;
+	std::unordered_map<std::string, std::string> animationControllerAssetPaths;
 	std::unordered_map<std::string, LevelTextureDef> textures;
 	std::unordered_map<std::string, LevelMaterialDef> materials;
 

@@ -110,7 +110,7 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 			}
 			ss << "}";
 		}
-		if (!keys.empty()) ss << "\n  ";
+		if (!level.animationControllers.empty()) ss << "\n  ";
 	}
 	ss << "},\n";
 
@@ -196,15 +196,39 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 	}
 	ss << "},\n";
 
+	// animationControllerAssets
+	ss << "  \"animationControllerAssets\": {";
+	{
+		auto keys = SortedStringKeys(level.animationControllerAssetPaths);
+		for (std::size_t i = 0; i < keys.size(); ++i)
+		{
+			const auto& id = keys[i];
+			if (i == 0) ss << "\n"; else ss << ",\n";
+			ss << "    ";
+			WriteJsonEscaped(ss, id);
+			ss << ": {\"path\": ";
+			WriteJsonEscaped(ss, level.animationControllerAssetPaths.at(id));
+			ss << "}";
+		}
+		if (!keys.empty()) ss << "\n  ";
+	}
+	ss << "},\n";
+
 	// animationControllers
 	ss << "  \"animationControllers\": {";
 	{
 		auto keys = SortedStringKeys(level.animationControllers);
+		bool firstController = true;
 		for (std::size_t i = 0; i < keys.size(); ++i)
 		{
 			const auto& id = keys[i];
+			if (level.animationControllerAssetPaths.contains(id))
+			{
+				continue;
+			}
 			const AnimationControllerAsset& controller = level.animationControllers.at(id);
-			if (i == 0) ss << "\n"; else ss << ",\n";
+			if (firstController) ss << "\n"; else ss << ",\n";
+			firstController = false;
 			ss << "    ";
 			WriteJsonEscaped(ss, id);
 			ss << ": {";
@@ -281,6 +305,16 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 					if (!state.notifies.empty()) ss << "\n      ";
 					ss << "]";
 				}
+				if (!state.tags.empty())
+				{
+					ss << ", \"tags\": [";
+					for (std::size_t tagIndex = 0; tagIndex < state.tags.size(); ++tagIndex)
+					{
+						if (tagIndex != 0) ss << ", ";
+						WriteJsonEscaped(ss, state.tags[tagIndex]);
+					}
+					ss << "]";
+				}
 				if (!state.looping)
 				{
 					ss << ", \"loop\": false";
@@ -308,6 +342,10 @@ void SaveLevelAssetToJson(std::string_view levelRelativeOrAbsPath, const LevelAs
 				if (std::fabs(transition.blendDurationSeconds - 0.15f) > 1e-6f)
 				{
 					ss << ", \"blendDuration\": " << transition.blendDurationSeconds;
+				}
+				if (transition.priority != 0)
+				{
+					ss << ", \"priority\": " << transition.priority;
 				}
 				if (!transition.conditions.empty())
 				{
