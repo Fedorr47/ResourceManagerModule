@@ -428,6 +428,99 @@ if (scene.editorGizmoMode == GizmoMode::Translate && scene.editorTranslateGizmo.
 	}
 }
 
+if (settings_.drawGameplayMovementDebug)
+{
+	auto AddMovementLabel = [&](const mathUtils::Vec3& worldPos, std::string_view label, std::uint32_t rgba)
+		{
+			mathUtils::Vec2 pPx{};
+			if (!ProjectWorldToScreenPx(worldPos, pPx))
+			{
+				return;
+			}
+
+			const float scale = std::max(0.5f, settings_.gameplayMovementLabelScale);
+			const float outlinePx = std::clamp(scale * 0.6f, 1.0f, 3.0f);
+			textList.AddOutlinedTextAlignedPx(
+				pPx.x + 10.0f,
+				pPx.y - 10.0f,
+				label,
+				debugText::TextAlignH::Left,
+				debugText::TextAlignV::Bottom,
+				rgba,
+				debugText::PackRGBA8(0, 0, 0, 210),
+				scale,
+				outlinePx);
+		};
+
+	auto AddMovementArrow = [&](const mathUtils::Vec3& start,
+		const mathUtils::Vec3& vec,
+		const float scale,
+		const std::uint32_t rgba,
+		std::string_view label)
+		{
+			const float len = mathUtils::Length(vec);
+			if (len <= 1e-4f || scale <= 1e-4f)
+			{
+				return;
+			}
+
+			const mathUtils::Vec3 end = start + vec * scale;
+			debugList.AddArrow(start, end, rgba, 0.18f, 0.10f, true);
+			if (settings_.drawGameplayMovementDebugLabels)
+			{
+				const mathUtils::Vec3 dir = vec / len;
+				AddMovementLabel(end + dir * 0.08f, label, rgba);
+			}
+		};
+
+	const std::uint32_t colVel = debugDraw::PackRGBA8(80, 255, 120, 255);
+	const std::uint32_t colTarget = debugDraw::PackRGBA8(80, 220, 255, 255);
+	const std::uint32_t colDesired = debugDraw::PackRGBA8(90, 140, 255, 255);
+	const std::uint32_t colFacing = debugDraw::PackRGBA8(255, 220, 80, 255);
+	const std::uint32_t colText = debugDraw::PackRGBA8(255, 255, 255, 255);
+	const std::uint32_t colControlledText = debugDraw::PackRGBA8(255, 245, 180, 255);
+	const float lift = std::max(0.0f, settings_.gameplayMovementLift);
+	const float textScale = std::max(0.5f, settings_.gameplayMovementTextScale);
+
+	for (const GameplayMovementDebugSample& sample : scene.gameplayMovementDebug.samples)
+	{
+		const mathUtils::Vec3 anchor = sample.origin + mathUtils::Vec3(0.0f, lift, 0.0f);
+		AddMovementArrow(anchor, sample.velocity, settings_.gameplayMovementVelocityScale, colVel, "VEL");
+		AddMovementArrow(anchor, sample.targetVelocity, settings_.gameplayMovementTargetVelocityScale, colTarget, "TARGET");
+		AddMovementArrow(anchor, sample.desiredMoveWorld, settings_.gameplayMovementDesiredMoveScale, colDesired, "DESIRED");
+		AddMovementArrow(anchor, sample.facingForward, settings_.gameplayMovementFacingScale, colFacing, "FACING");
+
+		debugList.AddAxesCross(anchor, 0.045f, debugDraw::PackRGBA8(255, 255, 255, 255));
+
+		if (settings_.drawGameplayMovementDebugText)
+		{
+			mathUtils::Vec2 anchorPx{};
+			if (ProjectWorldToScreenPx(anchor + mathUtils::Vec3(0.0f, 0.18f, 0.0f), anchorPx))
+			{
+				char buf[192]{};
+				std::snprintf(buf, sizeof(buf),
+					"fwd %.2f\n"
+					"right %.2f\n"
+					"planar %.2f",
+					sample.forwardSpeed,
+					sample.rightSpeed,
+					sample.planarSpeed);
+
+				textList.AddOutlinedTextAlignedPx(
+					anchorPx.x + 12.0f,
+					anchorPx.y - 18.0f,
+					buf,
+					debugText::TextAlignH::Left,
+					debugText::TextAlignV::Bottom,
+					sample.controlled ? colControlledText : colText,
+					debugText::PackRGBA8(0, 0, 0, 210),
+					textScale,
+					std::clamp(textScale * 0.6f, 1.0f, 3.0f));
+			}
+		}
+	}
+}
+
 if (settings_.drawPlanarMirrorNormals)
 {
 	const std::uint32_t colPosN = debugDraw::PackRGBA8(80, 255, 120, 255);

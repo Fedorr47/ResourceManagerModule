@@ -262,6 +262,11 @@ export namespace rendern
             return controlledEntity_;
         }
 
+        [[nodiscard]] const std::vector<EntityHandle>& GetNodeBoundEntities() const noexcept
+        {
+            return nodeBoundEntities_;
+        }
+
         [[nodiscard]] const std::vector<GameplayAnimationNotifyRecord>& GetRecentNotifyEvents() const noexcept
         {
             return recentNotifyEvents_;

@@ -143,8 +143,12 @@ export namespace rendern
                 return;
             }
 
+            if (ctx.scene != nullptr)
+            {
+                followCameraController_.Update(world_, controlledEntity_, ctx);
+            }
+
             UpdateGameplayIntentSources(world_, intentBindings_, ctx);
-            UpdateControlledFollowCamera_(ctx);
             BuildGameplayCharacterCommands(world_, nodeBoundEntities_, ctx);
             UpdateGameplayCombatRequests(world_, nodeBoundEntities_);
             UpdateGameplayInteractionRequests(world_, nodeBoundEntities_);
@@ -152,6 +156,12 @@ export namespace rendern
             UpdateGameplayCharacterMovement(world_, nodeBoundEntities_, ctx.deltaSeconds);
             UpdateGameplayCharacterLocomotion(world_, nodeBoundEntities_);
             SyncGameplayTransformsToRuntime(world_, nodeBoundEntities_, ctx);
+            if (ctx.scene != nullptr)
+            {
+                GameplayUpdateContext cameraCtx = ctx;
+                cameraCtx.input = nullptr;
+                followCameraController_.Update(world_, controlledEntity_, ctx);
+            }
             PushGameplayStateToAnimation(world_, nodeBoundEntities_, ctx);
         }
 
@@ -192,6 +202,11 @@ export namespace rendern
         [[nodiscard]] EntityHandle GetControlledEntity() const noexcept
         {
             return controlledEntity_;
+        }
+
+        [[nodiscard]] const std::vector<EntityHandle>& GetNodeBoundEntities() const noexcept
+        {
+            return nodeBoundEntities_;
         }
 
         [[nodiscard]] EntityHandle SpawnNodeBoundEntity(
@@ -548,23 +563,17 @@ export namespace rendern
             }
         }
 
-        void UpdateControlledFollowCamera_(const GameplayUpdateContext& ctx)
-        {
-            if (controlledEntity_ == kNullEntity || !world_.IsEntityValid(controlledEntity_))
-            {
-                return;
-            }
-
-            followCameraController_.Update(world_, controlledEntity_, ctx);
-        }
-
         void HandleRuntimeModeChanged_(const GameplayUpdateContext& ctx)
         {
             recentNotifyEvents_.clear();
             recentGameplayEvents_.clear();
-            if (controlledEntity_ != kNullEntity && world_.IsEntityValid(controlledEntity_))
+
+            for (const EntityHandle entity : nodeBoundEntities_)
             {
-                followCameraController_.Reset(world_, controlledEntity_);
+                if (GameplayFollowCameraComponent* followCamera = world_.TryGetFollowCamera(entity))
+                {
+                    followCamera->initialized = false;
+                }
             }
 
             if (ctx.mode == GameplayRuntimeMode::Editor)
@@ -604,9 +613,9 @@ export namespace rendern
         std::vector<EntityHandle> nodeBoundEntities_{};
         std::unordered_map<EntityHandle, GameplayGraphInstance> graphInstances_{};
         GameplayGraphAsset defaultGraphAsset_{};
-        GameplayFollowCameraController followCameraController_{};
         GameplayRuntimeMode lastMode_{ GameplayRuntimeMode::Editor };
         std::vector<GameplayAnimationNotifyRecord> recentNotifyEvents_{};
         std::vector<GameplayEventRecord> recentGameplayEvents_{};
+        GameplayFollowCameraController followCameraController_{};
     };
 }

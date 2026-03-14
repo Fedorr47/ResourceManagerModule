@@ -41,6 +41,56 @@ namespace appLifecycle
         app.scene.EditorClearSelection();
     }
 
+    static void UpdateGameplayMovementDebug(AppState& app)
+    {
+        app.scene.gameplayMovementDebug.Clear();
+
+        if (!app.gameplayRuntime || !app.rendererSettings.drawGameplayMovementDebug)
+        {
+            return;
+        }
+
+        const rendern::EntityHandle controlledEntity = app.gameplayRuntime->GetControlledEntity();
+        const auto& entities = app.gameplayRuntime->GetNodeBoundEntities();
+        app.scene.gameplayMovementDebug.samples.reserve(entities.size());
+
+        for (const rendern::EntityHandle entity : entities)
+        {
+            if (app.rendererSettings.drawGameplayMovementDebugOnlyControlled
+                && controlledEntity != rendern::kNullEntity
+                && entity != controlledEntity)
+            {
+                continue;
+            }
+
+            const rendern::GameplayTransformComponent* transform = app.gameplayRuntime->GetWorld().TryGetTransform(entity);
+            const rendern::GameplayCharacterMotorComponent* motor = app.gameplayRuntime->GetWorld().TryGetCharacterMotor(entity);
+            if (transform == nullptr || motor == nullptr)
+            {
+                continue;
+            }
+
+            const rendern::GameplayLocomotionComponent* locomotion = app.gameplayRuntime->GetWorld().TryGetLocomotion(entity);
+            const bool isRunning = locomotion != nullptr && locomotion->isRunning;
+            const float targetSpeed = isRunning ? motor->maxRunSpeed : motor->maxWalkSpeed;
+
+            const float yawRad = mathUtils::DegToRad(transform->rotationDegrees.y);
+            const mathUtils::Vec3 facingForward(std::sin(yawRad), 0.0f, std::cos(yawRad));
+
+            rendern::GameplayMovementDebugSample sample{};
+            sample.entity = entity;
+            sample.origin = transform->position;
+            sample.velocity = motor->velocity;
+            sample.targetVelocity = motor->desiredMoveWorld * targetSpeed;
+            sample.desiredMoveWorld = motor->desiredMoveWorld;
+            sample.facingForward = facingForward;
+            sample.forwardSpeed = locomotion != nullptr ? locomotion->forwardSpeed : 0.0f;
+            sample.rightSpeed = locomotion != nullptr ? locomotion->rightSpeed : 0.0f;
+            sample.planarSpeed = locomotion != nullptr ? locomotion->planarSpeed : mathUtils::Length(motor->velocity);
+            sample.controlled = entity == controlledEntity;
+            app.scene.gameplayMovementDebug.samples.push_back(sample);
+        }
+    }
 
     void InitializeApp(AppState& app, int argc, char** argv)
     {
@@ -204,10 +254,6 @@ namespace appLifecycle
 
             app.gameplayRuntime->BeginFrame();
             app.gameplayRuntime->PreAnimationUpdate(gameplayCtx);
-            if (app.gameplayMode == rendern::GameplayRuntimeMode::Game)
-            {
-                app.cameraController->ResetFromCamera(app.scene.camera);
-            }
         }
 
         app.scene.UpdateSkinned(deltaSeconds);
@@ -224,6 +270,7 @@ namespace appLifecycle
             app.gameplayRuntime->PostAnimationUpdate(gameplayCtx);
         }
 
+        UpdateGameplayMovementDebug(app);
         app.scene.UpdateParticles(deltaSeconds);
 
         const void* imguiDrawData = appUi::BuildImGuiFrameIfEnabled(

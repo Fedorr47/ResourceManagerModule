@@ -18,6 +18,7 @@ import :skinned_mesh;
 import :animation_clip;
 import :animator;
 import :animation_controller;
+import :EnTTHelpers;
 
 export namespace rendern
 {
@@ -96,6 +97,30 @@ export namespace rendern
 		mathUtils::Vec3 direction{ 0.0f, 0.0f, 1.0f }; // should be normalized
 		float length{ 0.0f };
 		bool hit{ false };
+	};
+
+	struct GameplayMovementDebugSample
+	{
+		EnTT_helpers::EntityHandle entity{ EnTT_helpers::kNullEntity};
+		mathUtils::Vec3 origin{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 velocity{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 targetVelocity{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 desiredMoveWorld{ 0.0f, 0.0f, 0.0f };
+		mathUtils::Vec3 facingForward{ 0.0f, 0.0f, 1.0f };
+		float forwardSpeed{ 0.0f };
+		float rightSpeed{ 0.0f };
+		float planarSpeed{ 0.0f };
+		bool controlled{ false };
+	};
+
+	struct GameplayMovementDebugState
+	{
+		std::vector<GameplayMovementDebugSample> samples;
+
+		void Clear()
+		{
+			samples.clear();
+		}
 	};
 
 	struct Particle
@@ -373,6 +398,7 @@ export namespace rendern
 		rhi::TextureDescIndex skyboxDescIndex{ 0 };
 
 		DebugRay debugPickRay{};
+		GameplayMovementDebugState gameplayMovementDebug{};
 
 		// Editor selection (runtime-only). Index into LevelAsset::nodes.
 		int editorSelectedNode{ -1 };
@@ -435,6 +461,7 @@ export namespace rendern
 			particleEmitters.clear();
 			skyboxDescIndex = 0;
 			debugPickRay = {};
+			gameplayMovementDebug = {};
 			editorSelectedNode = -1;
 			editorSelectedParticleEmitter = -1;
 			editorSelectedNodes.clear();

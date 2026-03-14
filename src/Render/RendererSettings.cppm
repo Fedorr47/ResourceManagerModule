@@ -74,6 +74,17 @@ export namespace rendern
 
 		bool drawLightGizmos{ false };
 		bool debugDrawDepthTest{ true };
+		bool drawGameplayMovementDebug{ true };
+		bool drawGameplayMovementDebugOnlyControlled{ true };
+		bool drawGameplayMovementDebugLabels{ true };
+		bool drawGameplayMovementDebugText{ true };
+		float gameplayMovementVelocityScale{ 0.35f };
+		float gameplayMovementTargetVelocityScale{ 0.35f };
+		float gameplayMovementDesiredMoveScale{ 1.4f };
+		float gameplayMovementFacingScale{ 1.1f };
+		float gameplayMovementLift{ 0.08f };
+		float gameplayMovementLabelScale{ 1.45f };
+		float gameplayMovementTextScale{ 1.30f };
 		float lightGizmoHalfSize{ 0.15f };
 		float debugLightGizmoScale = 1.0f;
 		float lightGizmoArrowLength{ 1.5f };

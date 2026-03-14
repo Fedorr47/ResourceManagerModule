@@ -272,6 +272,20 @@ namespace rendern::ui
         ImGui::Separator();
         ImGui::Text("Debug draw");
         ImGui::Checkbox("Light gizmos", &rs.drawLightGizmos);
+        ImGui::Checkbox("Gameplay movement", &rs.drawGameplayMovementDebug);
+        if (rs.drawGameplayMovementDebug)
+        {
+            ImGui::Checkbox("Movement debug: controlled only", &rs.drawGameplayMovementDebugOnlyControlled);
+            ImGui::Checkbox("Movement labels", &rs.drawGameplayMovementDebugLabels);
+            ImGui::Checkbox("Movement speed text", &rs.drawGameplayMovementDebugText);
+            ImGui::SliderFloat("Velocity scale", &rs.gameplayMovementVelocityScale, 0.05f, 3.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Target velocity scale", &rs.gameplayMovementTargetVelocityScale, 0.05f, 3.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Desired move scale", &rs.gameplayMovementDesiredMoveScale, 0.05f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Facing scale", &rs.gameplayMovementFacingScale, 0.05f, 4.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Movement lift", &rs.gameplayMovementLift, 0.0f, 2.0f, "%.3f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Movement label scale", &rs.gameplayMovementLabelScale, 0.5f, 3.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+            ImGui::SliderFloat("Movement text scale", &rs.gameplayMovementTextScale, 0.5f, 3.0f, "%.2f", ImGuiSliderFlags_AlwaysClamp);
+        }
         ImGui::Checkbox("Planar mirror normals", &rs.drawPlanarMirrorNormals);
         if (rs.drawPlanarMirrorNormals)
         {
