@@ -82,6 +82,18 @@ export namespace rendern
         float previousFacingYawDegrees{ 0.0f };
     };
 
+    struct GameplayFollowCameraComponent
+    {
+        float yawRad{ 0.0f };
+        float pitchRad{ mathUtils::DegToRad(-18.0f) };
+        float distance{ 3.75f };
+        mathUtils::Vec3 focusOffset{ 0.0f, 1.55f, 0.0f };
+        float mouseSensitivity{ 0.0025f };
+        float maxPitchRad{ mathUtils::DegToRad(80.0f) };
+        bool initialized{ false };
+        bool consumeMouseLook{ true };
+    };
+
     struct GameplayLocomotionComponent
     {
         float moveX{ 0.0f };
@@ -202,6 +214,13 @@ export namespace rendern
         [[nodiscard]] const GameplayCharacterMovementStateComponent* TryGetCharacterMovementState(EntityHandle entity) const noexcept;
         [[nodiscard]] bool HasCharacterMovementState(EntityHandle entity) const noexcept;
         void RemoveCharacterMovementState(EntityHandle entity);
+
+        void AddFollowCamera(EntityHandle entity, const GameplayFollowCameraComponent& value = {});
+        void SetFollowCamera(EntityHandle entity, const GameplayFollowCameraComponent& value);
+        [[nodiscard]] GameplayFollowCameraComponent* TryGetFollowCamera(EntityHandle entity) noexcept;
+        [[nodiscard]] const GameplayFollowCameraComponent* TryGetFollowCamera(EntityHandle entity) const noexcept;
+        [[nodiscard]] bool HasFollowCamera(EntityHandle entity) const noexcept;
+        void RemoveFollowCamera(EntityHandle entity);
 
         void AddLocomotion(EntityHandle entity, const GameplayLocomotionComponent& value = {});
         void SetLocomotion(EntityHandle entity, const GameplayLocomotionComponent& value);

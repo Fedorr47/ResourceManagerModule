@@ -98,6 +98,7 @@ export namespace rendern
         if (playerControlled)
         {
             world.AddPlayerControlled(entity);
+            world.AddFollowCamera(entity);
         }
 
         trackedEntities.push_back(entity);

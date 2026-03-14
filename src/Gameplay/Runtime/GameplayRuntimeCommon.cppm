@@ -16,6 +16,12 @@ import :animation_controller;
 
 export namespace rendern
 {
+    enum class GameplayRuntimeMode : std::uint8_t
+    {
+        Editor = 0,
+        Game
+    };
+
     struct GameplayAnimationNotifyRecord
     {
         EntityHandle entity{ kNullEntity };
@@ -40,6 +46,7 @@ export namespace rendern
     struct GameplayUpdateContext
     {
         float deltaSeconds{ 0.0f };
+        GameplayRuntimeMode mode{ GameplayRuntimeMode::Editor };
         const InputState* input{ nullptr };
         LevelAsset* levelAsset{ nullptr };
         LevelInstance* levelInstance{ nullptr };

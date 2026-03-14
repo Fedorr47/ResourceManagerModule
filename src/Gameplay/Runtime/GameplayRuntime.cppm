@@ -15,6 +15,7 @@ import :gameplay_graph_assets;
 import :gameplay_input_system;
 import :gameplay_bootstrap;
 import :gameplay_scene_sync;
+import :gameplay_follow_camera;
 import :character_controller;
 import :character_movement;
 import :combat_system;
@@ -34,10 +35,12 @@ export namespace rendern
             defaultGraphAsset_ = MakeDefaultHumanoidGameplayGraphAsset();
 
             GameplayUpdateContext ctx{};
+            ctx.mode = GameplayRuntimeMode::Editor;
             ctx.levelAsset = &levelAsset;
             ctx.levelInstance = &levelInstance;
             ctx.scene = &scene;
             EnsureBootstrapEntity_(ctx);
+            lastMode_ = GameplayRuntimeMode::Editor;
         }
 
         void Shutdown()
@@ -49,6 +52,7 @@ export namespace rendern
             nodeBoundEntities_.clear();
             graphInstances_.clear();
             controlledEntity_ = kNullEntity;
+            lastMode_ = GameplayRuntimeMode::Editor;
         }
 
         void BindIntentSource(const EntityHandle entity, GameplayIntentSourceCallback callback)
@@ -73,7 +77,7 @@ export namespace rendern
                     GameplayInputIntentComponent& outIntent,
                     [[maybe_unused]] GameplayActionComponent* action)
                 {
-                    if (ctx.input == nullptr)
+                    if (ctx.mode != GameplayRuntimeMode::Game || ctx.input == nullptr)
                     {
                         return;
                     }
@@ -127,7 +131,20 @@ export namespace rendern
         void PreAnimationUpdate(const GameplayUpdateContext& ctx)
         {
             EnsureBootstrapEntity_(ctx);
+
+            if (ctx.mode != lastMode_)
+            {
+                HandleRuntimeModeChanged_(ctx);
+                lastMode_ = ctx.mode;
+            }
+
+            if (ctx.mode != GameplayRuntimeMode::Game)
+            {
+                return;
+            }
+
             UpdateGameplayIntentSources(world_, intentBindings_, ctx);
+            UpdateControlledFollowCamera_(ctx);
             BuildGameplayCharacterCommands(world_, nodeBoundEntities_, ctx);
             UpdateGameplayCombatRequests(world_, nodeBoundEntities_);
             UpdateGameplayInteractionRequests(world_, nodeBoundEntities_);
@@ -140,6 +157,11 @@ export namespace rendern
 
         void PostAnimationUpdate(const GameplayUpdateContext& ctx)
         {
+            if (ctx.mode != GameplayRuntimeMode::Game)
+            {
+                return;
+            }
+
             ConsumeGameplayAnimationEvents(
                 world_,
                 nodeBoundEntities_,
@@ -155,6 +177,21 @@ export namespace rendern
                     PushGameplayGraphEvent(it->second, eventRecord.gameplayEventId);
                 }
             }
+        }
+
+        [[nodiscard]] GameplayWorld& GetWorld() noexcept
+        {
+            return world_;
+        }
+
+        [[nodiscard]] const GameplayWorld& GetWorld() const noexcept
+        {
+            return world_;
+        }
+
+        [[nodiscard]] EntityHandle GetControlledEntity() const noexcept
+        {
+            return controlledEntity_;
         }
 
         [[nodiscard]] EntityHandle SpawnNodeBoundEntity(
@@ -456,6 +493,90 @@ export namespace rendern
             SetGameplayGraphInt(graph.parameters, "currentAction", static_cast<int>(action->current));
         }
 
+        void ResetSimulationState_()
+        {
+            for (const EntityHandle entity : nodeBoundEntities_)
+            {
+                if (GameplayInputIntentComponent* intent = world_.TryGetInputIntent(entity))
+                {
+                    *intent = {};
+                }
+
+                if (GameplayCharacterCommandComponent* command = world_.TryGetCharacterCommand(entity))
+                {
+                    *command = {};
+                }
+
+                if (GameplayCharacterMotorComponent* motor = world_.TryGetCharacterMotor(entity))
+                {
+                    motor->velocity = {};
+                    motor->desiredMoveWorld = {};
+                }
+
+                if (GameplayCharacterMovementStateComponent* movementState = world_.TryGetCharacterMovementState(entity))
+                {
+                    movementState->grounded = true;
+                    movementState->jumping = false;
+                    movementState->falling = false;
+                    movementState->desiredFacingYawDegrees = movementState->facingYawDegrees;
+                    movementState->previousFacingYawDegrees = movementState->facingYawDegrees;
+                }
+
+                if (GameplayLocomotionComponent* locomotion = world_.TryGetLocomotion(entity))
+                {
+                    *locomotion = {};
+                }
+
+                if (GameplayActionComponent* action = world_.TryGetAction(entity))
+                {
+                    action->requested = GameplayActionKind::None;
+                    action->current = GameplayActionKind::None;
+                    action->busy = false;
+                    action->requestDispatched = false;
+                }
+
+                if (GameplayAnimationNotifyStateComponent* notifyState = world_.TryGetAnimationNotifyState(entity))
+                {
+                    *notifyState = {};
+                }
+
+                if (auto it = graphInstances_.find(entity); it != graphInstances_.end())
+                {
+                    ClearGameplayGraphFrameState(it->second);
+                    SyncActionStateToGraphParameters_(entity, it->second);
+                }
+            }
+        }
+
+        void UpdateControlledFollowCamera_(const GameplayUpdateContext& ctx)
+        {
+            if (controlledEntity_ == kNullEntity || !world_.IsEntityValid(controlledEntity_))
+            {
+                return;
+            }
+
+            followCameraController_.Update(world_, controlledEntity_, ctx);
+        }
+
+        void HandleRuntimeModeChanged_(const GameplayUpdateContext& ctx)
+        {
+            recentNotifyEvents_.clear();
+            recentGameplayEvents_.clear();
+            if (controlledEntity_ != kNullEntity && world_.IsEntityValid(controlledEntity_))
+            {
+                followCameraController_.Reset(world_, controlledEntity_);
+            }
+
+            if (ctx.mode == GameplayRuntimeMode::Editor)
+            {
+                ResetSimulationState_();
+                if (ctx.scene != nullptr && ctx.levelInstance != nullptr)
+                {
+                    PushGameplayStateToAnimation(world_, nodeBoundEntities_, ctx);
+                }
+            }
+        }
+
         void EnsureBootstrapEntity_(const GameplayUpdateContext& ctx)
         {
             if (controlledEntity_ != kNullEntity && world_.IsEntityValid(controlledEntity_))
@@ -483,6 +604,8 @@ export namespace rendern
         std::vector<EntityHandle> nodeBoundEntities_{};
         std::unordered_map<EntityHandle, GameplayGraphInstance> graphInstances_{};
         GameplayGraphAsset defaultGraphAsset_{};
+        GameplayFollowCameraController followCameraController_{};
+        GameplayRuntimeMode lastMode_{ GameplayRuntimeMode::Editor };
         std::vector<GameplayAnimationNotifyRecord> recentNotifyEvents_{};
         std::vector<GameplayEventRecord> recentGameplayEvents_{};
     };

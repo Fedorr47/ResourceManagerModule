@@ -91,3 +91,23 @@ This is intentionally a **minimal first refactor**:
 - no fully data-driven gameplay configs yet
 
 Those can be added later once the gameplay/domain boundaries are cleaner.
+
+## Editor/Game mode and gameplay camera
+
+A lightweight runtime mode split is now expected by the app layer:
+
+- `GameplayRuntimeMode::Editor`
+  - editor gizmos, selection and viewport editing stay enabled
+  - gameplay input / movement / transform sync are disabled
+- `GameplayRuntimeMode::Game`
+  - editor gizmos, selection and viewport interaction are disabled
+  - gameplay simulation runs
+  - a follow gameplay camera drives the camera basis for movement/controller
+  - character facing follows gameplay camera yaw
+
+Current app-level behavior:
+
+- `F5` toggles `Editor <-> Game`
+- debug UI exposes the same mode toggle in `App Runtime`
+- in `Game` mode the camera follows the controlled gameplay entity and mouse motion updates camera yaw/pitch
+- controller reads the updated camera basis and movement keeps the character facing camera yaw

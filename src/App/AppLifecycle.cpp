@@ -15,8 +15,6 @@ namespace appLifecycle
 {
     static std::uint32_t ComputeStreamingWorkerCount() noexcept
     {
-        // NOTE: Avoid including <thread>/<algorithm> in headers when using MSVC `import std;`.
-        // Keep the computation in this TU.
         const unsigned int hc = std::thread::hardware_concurrency();
         if (hc <= 1u)
         {
@@ -31,6 +29,18 @@ namespace appLifecycle
 
         return static_cast<std::uint32_t>(wc);
     }
+
+    static void ResetEditorInteractionState(AppState& app)
+    {
+        appEditor::EndAllGizmoDrags(app.editorViewportInteraction, app.scene);
+        appEditor::ClearAllGizmoHover(app.editorViewportInteraction, app.scene);
+        appEditor::ResetGizmoState(app.scene.editorTranslateGizmo);
+        appEditor::ResetGizmoState(app.scene.editorRotateGizmo);
+        appEditor::ResetGizmoState(app.scene.editorScaleGizmo);
+        app.scene.editorParticleEmitterTranslateDrag = {};
+        app.scene.EditorClearSelection();
+    }
+
 
     void InitializeApp(AppState& app, int argc, char** argv)
     {
@@ -61,8 +71,6 @@ namespace appLifecycle
         appBootstrap::CreateDebugSwapChainIfNeeded(app.requestedBackend, *app.device, app.debugWindow, app.debugSwapChain);
 #endif
 
-        // Create async CPU job system (texture/mesh decoding etc.).
-        // Must exist before TextureIO/MeshIO are constructed.
         app.jobSystem = std::make_unique<rendern::JobSystemThreadPool>(ComputeStreamingWorkerCount());
 
         app.textureUploader = appBootstrap::CreateTextureUploader(app.device->GetBackend(), *app.device);
@@ -98,6 +106,8 @@ namespace appLifecycle
 
         app.cameraController = std::make_unique<rendern::CameraController>();
         app.cameraController->ResetFromCamera(app.scene.camera);
+
+        app.gameplayMode = rendern::GameplayRuntimeMode::Editor;
 
         app.frameTimer.SetMaxDelta(0.05);
         app.frameTimer.Reset();
@@ -161,17 +171,32 @@ namespace appLifecycle
 
         app.win32Input.SetCaptureMode(appUi::GetInputCaptureForImGui());
         app.win32Input.NewFrame(app.window.hwnd);
-        app.cameraController->Update(deltaSeconds, app.win32Input.State(), app.scene.camera);
 
-        appEditor::ApplyGizmoModeHotkeys(app.editorViewportInteraction, app.scene, app.win32Input.State());
-        appEditor::SyncEditorGizmoVisuals(app.editorViewportInteraction, *app.levelAsset, *app.levelInstance, app.scene);
-        appEditor::UpdateViewportGizmoHover(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, app.scene, app.win32Input.State());
-        appEditor::HandleViewportMouseInteraction(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, *app.levelAsset, *app.levelInstance, app.scene, app.win32Input.State());
+        if (app.win32Input.State().KeyPressed(VK_F5))
+        {
+            app.gameplayMode = (app.gameplayMode == rendern::GameplayRuntimeMode::Editor)
+                ? rendern::GameplayRuntimeMode::Game
+                : rendern::GameplayRuntimeMode::Editor;
+        }
+
+        if (app.gameplayMode == rendern::GameplayRuntimeMode::Game)
+        {
+            ResetEditorInteractionState(app);
+        }
+        else
+        {
+            app.cameraController->Update(deltaSeconds, app.win32Input.State(), app.scene.camera);
+            appEditor::ApplyGizmoModeHotkeys(app.editorViewportInteraction, app.scene, app.win32Input.State());
+            appEditor::SyncEditorGizmoVisuals(app.editorViewportInteraction, *app.levelAsset, *app.levelInstance, app.scene);
+            appEditor::UpdateViewportGizmoHover(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, app.scene, app.win32Input.State());
+            appEditor::HandleViewportMouseInteraction(app.editorViewportInteraction, app.window.hwnd, app.window.width, app.window.height, *app.levelAsset, *app.levelInstance, app.scene, app.win32Input.State());
+        }
 
         if (app.gameplayRuntime)
         {
             rendern::GameplayUpdateContext gameplayCtx{};
             gameplayCtx.deltaSeconds = deltaSeconds;
+            gameplayCtx.mode = app.gameplayMode;
             gameplayCtx.input = &app.win32Input.State();
             gameplayCtx.levelAsset = app.levelAsset.get();
             gameplayCtx.levelInstance = app.levelInstance.get();
@@ -179,15 +204,19 @@ namespace appLifecycle
 
             app.gameplayRuntime->BeginFrame();
             app.gameplayRuntime->PreAnimationUpdate(gameplayCtx);
+            if (app.gameplayMode == rendern::GameplayRuntimeMode::Game)
+            {
+                app.cameraController->ResetFromCamera(app.scene.camera);
+            }
         }
 
-        // Advance CPU animation before gameplay post-processing so freshly updated notify state is visible this frame.
         app.scene.UpdateSkinned(deltaSeconds);
 
         if (app.gameplayRuntime)
         {
             rendern::GameplayUpdateContext gameplayCtx{};
             gameplayCtx.deltaSeconds = deltaSeconds;
+            gameplayCtx.mode = app.gameplayMode;
             gameplayCtx.input = &app.win32Input.State();
             gameplayCtx.levelAsset = app.levelAsset.get();
             gameplayCtx.levelInstance = app.levelInstance.get();
@@ -204,7 +233,8 @@ namespace appLifecycle
             *app.cameraController,
             *app.levelAsset,
             *app.levelInstance,
-            *app.assets);
+            *app.assets,
+            app.gameplayMode);
 
         app.renderer->SetSettings(app.rendererSettings);
         app.renderer->RenderFrame(*app.swapChain, app.scene, /*imguiDrawData=*/nullptr);

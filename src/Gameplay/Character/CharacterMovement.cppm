@@ -53,13 +53,8 @@ export namespace rendern
             if (movementState != nullptr)
             {
                 movementState->previousFacingYawDegrees = movementState->facingYawDegrees;
+                transform->rotationDegrees.y = movementState->desiredFacingYawDegrees;
                 movementState->facingYawDegrees = transform->rotationDegrees.y;
-                if (command->moveInputY > 0.1f && mathUtils::Length(motor->velocity) > 1e-4f)
-                {
-                    transform->rotationDegrees.y = mathUtils::RadToDeg(std::atan2(motor->velocity.x, motor->velocity.z));
-                    movementState->facingYawDegrees = transform->rotationDegrees.y;
-                    movementState->desiredFacingYawDegrees = transform->rotationDegrees.y;
-                }
 
                 const bool jumping = action != nullptr &&
                     (action->current == GameplayActionKind::Jump || action->requested == GameplayActionKind::Jump);

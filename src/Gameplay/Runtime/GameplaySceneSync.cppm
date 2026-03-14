@@ -17,7 +17,8 @@ export namespace rendern
         const std::vector<EntityHandle>& entities,
         const GameplayUpdateContext& ctx)
     {
-        if (ctx.levelAsset == nullptr || ctx.levelInstance == nullptr || ctx.scene == nullptr)
+        if (ctx.mode != GameplayRuntimeMode::Game ||
+            ctx.levelAsset == nullptr || ctx.levelInstance == nullptr || ctx.scene == nullptr)
         {
             return;
         }

@@ -387,6 +387,46 @@ namespace rendern
         impl_->registry.remove<GameplayCharacterMovementStateComponent>(ToEnTT(entity));
     }
 
+    void GameplayWorld::AddFollowCamera(const EntityHandle entity, const GameplayFollowCameraComponent& value)
+    {
+        if (!IsEntityValid(entity))
+        {
+            return;
+        }
+
+        impl_->registry.emplace_or_replace<GameplayFollowCameraComponent>(ToEnTT(entity), value);
+    }
+
+    void GameplayWorld::SetFollowCamera(const EntityHandle entity, const GameplayFollowCameraComponent& value)
+    {
+        AddFollowCamera(entity, value);
+    }
+
+    GameplayFollowCameraComponent* GameplayWorld::TryGetFollowCamera(const EntityHandle entity) noexcept
+    {
+        return IsEntityValid(entity) ? impl_->registry.try_get<GameplayFollowCameraComponent>(ToEnTT(entity)) : nullptr;
+    }
+
+    const GameplayFollowCameraComponent* GameplayWorld::TryGetFollowCamera(const EntityHandle entity) const noexcept
+    {
+        return IsEntityValid(entity) ? impl_->registry.try_get<GameplayFollowCameraComponent>(ToEnTT(entity)) : nullptr;
+    }
+
+    bool GameplayWorld::HasFollowCamera(const EntityHandle entity) const noexcept
+    {
+        return IsEntityValid(entity) && impl_->registry.all_of<GameplayFollowCameraComponent>(ToEnTT(entity));
+    }
+
+    void GameplayWorld::RemoveFollowCamera(const EntityHandle entity)
+    {
+        if (!HasFollowCamera(entity))
+        {
+            return;
+        }
+
+        impl_->registry.remove<GameplayFollowCameraComponent>(ToEnTT(entity));
+    }
+
     void GameplayWorld::AddLocomotion(const EntityHandle entity, const GameplayLocomotionComponent& value)
     {
         if (!IsEntityValid(entity))

@@ -52,7 +52,8 @@ namespace appUi
         rendern::CameraController& cameraController,
         rendern::LevelAsset& levelAsset,
         rendern::LevelInstance& levelInstance,
-        AssetManager& assets)
+        AssetManager& assets,
+        rendern::GameplayRuntimeMode& runtimeMode)
     {
         if (!appWin32::g_imguiInitialized || !appWin32::g_showDebugWindow || !appWin32::g_debugWindow || !appWin32::g_debugWindow->hwnd)
         {
@@ -70,7 +71,27 @@ namespace appUi
 
         rendern::ui::BeginDebugDockSpace();
         rendern::ui::DrawRendererDebugUI(settings, scene, cameraController);
-        rendern::ui::DrawLevelEditorUI(levelAsset, levelInstance, assets, scene, cameraController);
+
+        ImGui::Begin("App Runtime");
+        const bool inGameMode = runtimeMode == rendern::GameplayRuntimeMode::Game;
+        ImGui::TextUnformatted(inGameMode ? "Mode: Game" : "Mode: Editor");
+        if (ImGui::Button(inGameMode ? "Return to Editor Mode" : "Enter Game Mode (F5)"))
+        {
+            runtimeMode = inGameMode ? rendern::GameplayRuntimeMode::Editor : rendern::GameplayRuntimeMode::Game;
+        }
+        ImGui::End();
+
+        if (runtimeMode == rendern::GameplayRuntimeMode::Editor)
+        {
+            rendern::ui::DrawLevelEditorUI(levelAsset, levelInstance, assets, scene, cameraController);
+        }
+        else
+        {
+            ImGui::Begin("Level Editor");
+            ImGui::TextUnformatted("Level editor interaction is disabled in Game mode.");
+            ImGui::TextUnformatted("Return to Editor mode to use gizmos, selection and viewport editing.");
+            ImGui::End();
+        }
 
         ImGui::Render();
         return static_cast<const void*>(ImGui::GetDrawData());
@@ -138,7 +159,8 @@ namespace appUi
         rendern::CameraController&,
         rendern::LevelAsset&,
         rendern::LevelInstance&,
-        AssetManager&)
+        AssetManager&,
+        rendern::GameplayRuntimeMode&)
     {
         return nullptr;
     }

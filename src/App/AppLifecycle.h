@@ -23,6 +23,7 @@ namespace appLifecycle
         appRuntime::UploadBudget uploadBudget{};
     };
 
+
     struct AppState
     {
         AppConfig config{};
@@ -58,6 +59,7 @@ namespace appLifecycle
         std::unique_ptr<rendern::GameplayRuntime> gameplayRuntime;
         std::unique_ptr<rendern::CameraController> cameraController;
         appEditor::EditorViewportInteraction editorViewportInteraction{};
+        rendern::GameplayRuntimeMode gameplayMode{ rendern::GameplayRuntimeMode::Editor };
         GameTimer frameTimer{};
         LoadingOverlayState loadingOverlay{};
 
